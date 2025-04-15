@@ -77,4 +77,4 @@ export async function PATCH() {
     { message: 'Method not allowed. Only POST requests are supported.' },
     { status: 405 }
   );
-}
+}  
