@@ -1,54 +1,64 @@
-import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
-import json from "react-syntax-highlighter/dist/esm/languages/hljs/json";
-import { a11yLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
-import { Thoughts } from "@/types/models";
+// ThoughtProcess.tsx
+import React from 'react';
+import { Lightbulb } from 'lucide-react';
 
-// Register the JSON language for syntax highlighting
-SyntaxHighlighter.registerLanguage("json", json);
-
-interface Props {
-  thoughts: Thoughts[];
+interface ThoughtItem {
+  title?: string;
+  thought: string;
 }
 
-export const ThoughtProcess = ({ thoughts }: Props) => {
+interface Props {
+  thoughts: ThoughtItem[] | string[] | null | undefined;
+}
+
+export const ThoughtProcess: React.FC<Props> = ({ thoughts }) => {
+  // Handle different formats of thought data
+  const processedThoughts = React.useMemo(() => {
+    if (!thoughts) return [];
+    
+    return Array.isArray(thoughts) 
+      ? thoughts.map(item => {
+          if (typeof item === 'string') {
+            return { thought: item };
+          }
+          return item;
+        })
+      : [];
+  }, [thoughts]);
+
   return (
-    <ul className="p-4 bg-gray-50 rounded-lg w-full">
-      {thoughts.map((t, ind) => (
-        <li key={ind} className="mb-6 last:mb-0 pb-6 border-b last:border-b-0 border-gray-200">
-          {/* Thought Step Title */}
-          <div className="font-semibold text-blue-700 mb-2">{t.title}</div>
-          
-          {/* Thought Properties */}
-          {t.props && Object.keys(t.props).length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              {Object.keys(t.props).map((key) => (
-                <span 
-                  key={key} 
-                  className="bg-gray-200 text-gray-700 text-xs px-2 py-1 rounded-md"
-                >
-                  {key}: {JSON.stringify(t.props?.[key] ?? null)}
-                </span>
-              ))}
+    <div>
+      <div className="flex justify-between items-center mb-4 px-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Thought Process ({processedThoughts.length} steps)
+        </h3>
+      </div>
+      
+      <ul className="list-none p-0 m-0">
+        {processedThoughts.length > 0 ? (
+          processedThoughts.map((thought, index) => (
+            <li key={`thought-${index}`} className="p-4 mb-3 bg-blue-50 border border-blue-200 rounded-lg overflow-hidden">
+              <div className="flex items-center mb-2">
+                <div className="flex items-center text-xs font-semibold text-blue-600 bg-blue-100 px-2 py-1 rounded-full mr-2">
+                  <Lightbulb size={14} className="mr-1" />
+                  <span>Step {index + 1}</span>
+                </div>
+                {thought.title && (
+                  <div className="text-sm font-semibold text-blue-700">{thought.title}</div>
+                )}
+              </div>
+              <div className="text-sm leading-relaxed whitespace-pre-wrap text-blue-900">{thought.thought}</div>
+            </li>
+          ))
+        ) : (
+          <li className="p-4 mb-3 bg-gray-50 border border-gray-200 rounded-lg">
+            <div className="flex flex-col items-center justify-center py-8 text-gray-500">
+              <Lightbulb size={24} className="mb-2" />
+              <p>No thought process information available</p>
             </div>
-          )}
-          
-          {/* Thought Description */}
-          <div className="mt-2">
-            {Array.isArray(t.description) ? (
-              <SyntaxHighlighter 
-                language="json" 
-                wrapLongLines 
-                className="max-h-96 overflow-auto rounded-md" 
-                style={a11yLight}
-              >
-                {JSON.stringify(t.description, null, 2)}
-              </SyntaxHighlighter>
-            ) : (
-              <div className="whitespace-pre-wrap">{t.description}</div>
-            )}
-          </div>
-        </li>
-      ))}
-    </ul>
+          </li>
+        )}
+      </ul>
+    </div>
   );
 };

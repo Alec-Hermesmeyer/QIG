@@ -10,7 +10,6 @@ import {
   MessageBar,
   MessageBarType,
   DefaultButton,
-  Link,
 } from "@fluentui/react";
 import { AnalysisPanelTabs } from "./AnalysisPanelTabs";
 import { ThoughtProcess } from "@/components/ThoughtProcess";
@@ -19,11 +18,11 @@ import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { GraphVisualization } from "@/components/GraphVisualization";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
 import { getCitationFilePath } from "@/lib/api";
+import { FileText, AlertTriangle } from "lucide-react";
 
 // Initialize Fluent UI icons
 initializeIcons();
 
-// Add a new tab ID for the file viewer
 const FILE_VIEWER_TAB = "fileViewer";
 
 interface AnalysisPanelProps {
@@ -36,7 +35,7 @@ interface AnalysisPanelProps {
   citationHeight?: string;
   response?: any;
   mostRecentUserMessage?: string;
-  contractFileName?: string; // Add this prop for current contract file
+  contractFileName?: string;
 }
 
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
@@ -57,29 +56,33 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [fileContent, setFileContent] = useState<string>("");
   const [fileLoading, setFileLoading] = useState<boolean>(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [citationLoading, setCitationLoading] = useState<boolean>(false);
+  const [citationError, setCitationError] = useState<string | null>(null);
 
   const activeTab = externalActiveTab || internalActiveTab;
 
-  // Fetch file content when tab changes to file viewer or when contractFileName changes
   useEffect(() => {
     if ((activeTab === FILE_VIEWER_TAB || !activeTab) && contractFileName) {
       fetchFileContent(contractFileName);
     }
   }, [activeTab, contractFileName]);
 
+  useEffect(() => {
+    if (activeTab === AnalysisPanelTabs.CitationTab && activeCitation) {
+      setCitationLoading(true);
+      setCitationError(null);
+      const timer = setTimeout(() => setCitationLoading(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, activeCitation]);
+
   const fetchFileContent = async (fileName: string) => {
     if (!fileName) return;
-
     try {
       setFileLoading(true);
       setFileError(null);
-
       const res = await fetch(`/api/proxy-content?filename=${encodeURIComponent(fileName)}`);
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch file content: ${res.status} ${res.statusText}`);
-      }
-
+      if (!res.ok) throw new Error(`Failed to fetch file content: ${res.status} ${res.statusText}`);
       const text = await res.text();
       setFileContent(text);
     } catch (err: any) {
@@ -92,16 +95,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   const handleTabChange = (item?: PivotItem) => {
     const tabKey = item?.props.itemKey || AnalysisPanelTabs.ThoughtProcessTab;
-    if (onActiveTabChanged) {
-      onActiveTabChanged(tabKey);
-    } else {
-      setInternalActiveTab(tabKey);
-    }
+    onActiveTabChanged ? onActiveTabChanged(tabKey) : setInternalActiveTab(tabKey);
   };
 
   const getResponseData = () => {
     if (!response) return { thoughts: [], data_points: [], graphData: null };
-
     if (response.context) {
       return {
         thoughts: response.context.thoughts || [],
@@ -109,7 +107,15 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         graphData: response.context.graphData || null,
       };
     }
-
+    if (typeof response.content === 'string') {
+      const content = response.content;
+      const sentences = content.split(/(?<=\.)\s+/);
+      const thoughts = sentences.slice(0, 3);
+      const citationRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
+      const matches = [...content.matchAll(citationRegex)];
+      const data_points = matches.map(match => `${match[1]}: Referenced in the response.`);
+      return { thoughts, data_points, graphData: null };
+    }
     if (response.message?.content) {
       try {
         const parsed = JSON.parse(response.message.content);
@@ -119,26 +125,92 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           graphData: parsed.context?.graphData || null,
         };
       } catch {
-        return { thoughts: [], data_points: [], graphData: null };
+        const sentences = response.message.content.split(/(?<=\.)\s+/);
+        const thoughts = sentences.slice(0, 3);
+        return { thoughts, data_points: [], graphData: null };
       }
     }
-
-    if (typeof response === "object") {
-      return {
-        thoughts: response.thoughts || [],
-        data_points: response.data_points || [],
-        graphData: response.graphData || null,
-      };
-    }
-
     return { thoughts: [], data_points: [], graphData: null };
   };
 
   const { thoughts, data_points, graphData } = getResponseData();
   const isDisabledGraphTab = !graphData;
-
-  // Determine if we should show the file viewer tab
   const showFileViewerTab = !!contractFileName;
+
+  const handleIframeError = () => {
+    setCitationError("Failed to load the PDF document. The file may be corrupted or in an unsupported format.");
+    setCitationLoading(false);
+  };
+
+  const handleIframeLoad = () => {
+    setCitationLoading(false);
+    setCitationError(null);
+  };
+
+  const renderPdfViewer = () => {
+    if (!activeCitation) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-500">
+          <FileText size={48} className="text-gray-400 mb-4" />
+          <Text>Select a citation to view the document</Text>
+        </div>
+      );
+    }
+    const iframeSrc = getCitationFilePath(activeCitation);
+    return (
+      <div className="h-full flex flex-col">
+        <div className="bg-gray-100 p-3 border-b border-gray-200 flex justify-between items-center">
+          <Text variant="mediumPlus" className="font-medium truncate max-w-md">
+            {activeCitation}
+          </Text>
+          <a 
+            href={iframeSrc} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 text-sm no-underline hover:underline"
+          >
+            Open in new tab
+          </a>
+        </div>
+        {citationLoading && (
+          <div className="flex-1 flex items-center justify-center bg-gray-50">
+            <Spinner label="Loading document..." />
+          </div>
+        )}
+        {citationError && (
+          <div className="flex-1 flex items-center justify-center bg-gray-50 p-4">
+            <div className="max-w-md text-center">
+              <AlertTriangle size={48} className="text-amber-500 mx-auto mb-4" />
+              <Text className="text-gray-700 mb-2 font-medium">Document Error</Text>
+              <Text className="text-gray-600">{citationError}</Text>
+              <DefaultButton 
+                className="mt-4"
+                text="Try again" 
+                onClick={() => {
+                  setCitationError(null);
+                  setCitationLoading(true);
+                }}
+              />
+            </div>
+          </div>
+        )}
+        <div 
+          className={`flex-1 ${citationLoading || citationError ? 'hidden' : ''}`}
+          style={{ height: citationError || citationLoading ? 0 : 'calc(100% - 50px)' }}
+        >
+          <iframe
+            src={iframeSrc}
+            width="100%"
+            height="100%"
+            style={{ border: 'none', backgroundColor: '#f9fafb', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.05)' }}
+            title="Document Viewer"
+            onLoad={handleIframeLoad}
+            onError={handleIframeError}
+          />
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Panel
@@ -150,32 +222,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       className={className}
       styles={{
         closeButton: {
-          color: "#1F2937", // dark gray
-          selectors: {
-            ":hover": {
-              color: "#111827", // darker on hover
-            },
-          },
+          color: "#1F2937",
+          selectors: { ":hover": { color: "#111827" } },
         },
-        main: {
-          overflow: "hidden", // Prevent double scrollbars
-        },
-        contentInner: {
-          height: "calc(100vh - 70px)", // Adjust based on your header height
-        },
+        main: { overflow: "hidden" },
+        contentInner: { height: "calc(100vh - 70px)" },
       }}
     >
       <Pivot selectedKey={activeTab} onLinkClick={handleTabChange}>
         {showFileViewerTab && (
-          <PivotItem
-            headerText="Contract File"
-            itemKey={FILE_VIEWER_TAB}
-          >
+          <PivotItem headerText="Contract File" itemKey={FILE_VIEWER_TAB}>
             <Stack tokens={{ childrenGap: 10 }} styles={{ root: { height: "calc(100vh - 120px)", overflow: "hidden" } }}>
               <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
-                <Text variant="large" className="font-semibold">
-                  {contractFileName}
-                </Text>
+                <Text variant="large" className="font-semibold">{contractFileName}</Text>
                 <DefaultButton
                   text="Refresh"
                   iconProps={{ iconName: 'Refresh' }}
@@ -183,9 +242,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   disabled={fileLoading}
                 />
               </Stack>
-
               {fileLoading && <Spinner label="Loading file content..." />}
-
               {fileError && (
                 <MessageBar
                   messageBarType={MessageBarType.error}
@@ -196,16 +253,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   {fileError}
                 </MessageBar>
               )}
-
               {!fileLoading && !fileError && fileContent && (
-                <div
-                  className="overflow-auto p-4 border border-gray-200 rounded bg-white"
-                  style={{ height: "100%", maxHeight: "calc(100vh - 180px)" }}
-                >
+                <div className="overflow-auto p-4 border border-gray-200 rounded bg-white" style={{ height: "100%", maxHeight: "calc(100vh - 180px)" }}>
                   <pre className="whitespace-pre-wrap font-mono text-sm">{fileContent}</pre>
                 </div>
               )}
-
               {!fileLoading && !fileError && !fileContent && (
                 <MessageBar messageBarType={MessageBarType.warning}>
                   No file content available. This could be due to file format limitations or access restrictions.
@@ -214,71 +266,59 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </Stack>
           </PivotItem>
         )}
-
-        <PivotItem
-          headerText="Thought Process"
-          itemKey={AnalysisPanelTabs.ThoughtProcessTab}
-        >
-          <Stack tokens={{ childrenGap: 10 }} styles={{ root: { height: "calc(100vh - 120px)", overflow: "auto" } }}>
+        <PivotItem headerText="Thought Process" itemKey={AnalysisPanelTabs.ThoughtProcessTab}>
+          <div className="h-[calc(100vh-160px)] overflow-auto p-4">
             {mostRecentUserMessage && (
-              <Stack
-                tokens={{ childrenGap: 4 }}
-                className="bg-blue-50 p-3 rounded border border-blue-100"
-              >
-                <Text variant="mediumPlus" className="text-blue-800">
-                  Last user query:
-                </Text>
-                <Text>{mostRecentUserMessage}</Text>
-              </Stack>
+              <div className="bg-blue-50 p-3 rounded border border-blue-100 mb-4">
+                <p className="text-base font-medium text-blue-800 mb-1">Last user query:</p>
+                <p className="text-sm text-blue-900">{mostRecentUserMessage}</p>
+              </div>
             )}
-
             {Array.isArray(thoughts) && thoughts.length > 0 ? (
               <ThoughtProcess thoughts={thoughts} />
             ) : (
-              <Text className="text-gray-500 text-center py-10">
-                No thought process information available
-              </Text>
+              <div className="flex flex-col items-center justify-center h-60 text-gray-500">
+                <Text className="text-center py-10">No thought process information available</Text>
+              </div>
             )}
-          </Stack>
+          </div>
         </PivotItem>
-
-        <PivotItem
-          headerText="Supporting Content"
-          itemKey={AnalysisPanelTabs.SupportingContentTab}
-        >
-          <div style={{ height: "calc(100vh - 120px)", overflow: "auto" }}>
+        <PivotItem headerText="Supporting Content" itemKey={AnalysisPanelTabs.SupportingContentTab}>
+          <div className="h-[calc(100vh-160px)] overflow-auto p-4">
             {data_points && (Array.isArray(data_points) || data_points?.text?.length > 0) ? (
               <SupportingContent supportingContent={data_points} />
             ) : (
-              <Text className="text-gray-500 text-center py-10">
-                No supporting content available
-              </Text>
+              <div className="flex flex-col items-center justify-center h-60 text-gray-500">
+                <FileText size={32} className="mb-4" />
+                <Text>No supporting content available</Text>
+              </div>
             )}
           </div>
         </PivotItem>
-
         <PivotItem headerText="Citation" itemKey={AnalysisPanelTabs.CitationTab}>
-          <div style={{ height: "calc(100vh - 120px)", overflow: "auto" }}>
+          <div style={{ height: "calc(100vh - 160px)", overflow: "hidden" }}>
             {activeCitation?.toLowerCase().endsWith(".pdf") ? (
-              <iframe
-                src={getCitationFilePath(activeCitation)}
-                width="100%"
-                height={citationHeight}
-                style={{ border: 'none' }}
-                title="PDF Viewer"
-              />
+              renderPdfViewer()
+            ) : activeCitation ? (
+              <div className="h-full flex flex-col">
+                <div className="bg-gray-100 p-3 border-b border-gray-200">
+                  <Text variant="mediumPlus" className="font-medium">{activeCitation}</Text>
+                </div>
+                <div className="flex-1 overflow-auto">
+                  <MarkdownViewer src={getCitationFilePath(activeCitation)} />
+                </div>
+              </div>
             ) : (
-              <MarkdownViewer src={getCitationFilePath(activeCitation ?? "")} />
+              <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                <FileText size={48} className="text-gray-400 mb-4" />
+                <Text>Select a citation to view the document</Text>
+              </div>
             )}
           </div>
         </PivotItem>
-
         {!isDisabledGraphTab && (
-          <PivotItem
-            headerText="Graph"
-            itemKey={AnalysisPanelTabs.GraphVisualization}
-          >
-            <div style={{ height: "calc(100vh - 120px)", overflow: "auto" }}>
+          <PivotItem headerText="Graph" itemKey={AnalysisPanelTabs.GraphVisualization}>
+            <div style={{ height: "calc(100vh - 160px)", overflow: "auto" }}>
               <GraphVisualization relations={data_points || []} />
             </div>
           </PivotItem>
