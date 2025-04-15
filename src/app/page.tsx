@@ -6,10 +6,10 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { SettingsSidebar } from "@/components/settings-sidebar";
-import { ImprovedChat } from "@/components/chat";
+import { ImprovedChatHandle, ImprovedChat } from "@/components/chat";
 import Answer from "@/components/Answer";
 import { ContractAnalyzerPanel } from "@/components/ContractAnalyzerPanel";
-import { useContractAnalysis, Risk } from "@/lib/useContractAnalyst";
+import { Risk } from "@/lib/useContractAnalyst";
 import ContractAnalysisDisplay from "@/components/ContractAnalystDisplay";
 import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { AnalysisPanelTabs } from "@/components/AnalysisPanelTabs";
@@ -46,6 +46,7 @@ export default function Page() {
   const [mostRecentUserMessage, setMostRecentUserMessage] = useState("");
 
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
+  const chatRef = useRef<ImprovedChatHandle>(null);
   const [showFileCabinetPanel, setShowFileCabinetPanel] = useState(false);
 
   // Scroll to latest message
@@ -212,7 +213,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
       <header className="bg-[#1C1C1C] text-white">
         <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
           <Link href="/" className="text-lg font-medium">
-           QIG Contract Analyst
+            QIG Contract Analyst
           </Link>
           <div className="flex items-center gap-6">
             <Link href="/chat" className="hover:text-gray-300">Chat</Link>
@@ -283,7 +284,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 <button
                   key={question}
                   className="px-4 py-12 bg-gray-200 rounded-lg text-left hover:bg-gray-300 transition-colors"
-                  onClick={() => handleExampleQuestion(question)}
+                  onClick={() => chatRef.current?.submitMessage(question)}
                 >
                   {question}
                 </button>
@@ -306,8 +307,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 Analyze Contract
               </Button>
               <Button onClick={() => setShowFileCabinetPanel(true)} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md flex items-center gap-2">
-            Open File Cabinet
-          </Button>
+                Open File Cabinet
+              </Button>
             </div>
           </>
         )}
@@ -322,12 +323,14 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 <div key={index} className="mb-4">
                   {/* User Message */}
                   {message.role === 'user' && (
-                    <div className="w-full display-flex justify-right">
-                      <div className="bg-blue-100 p-4 rounded-lg">
-                        <p>{message.content}</p>
+                    <div className="w-full flex justify-end">
+                      <div className="bg-blue-100 text-right p-4 rounded-lg max-w-lg">
+                        <p className="text-right">{message.content}</p>
                       </div>
                     </div>
                   )}
+
+
 
                   {/* Assistant Message */}
                   {message.role === 'assistant' && (
@@ -357,11 +360,13 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             {/* Chat Input */}
             <div className="w-full max-w-7xl flex justify-center mb-4">
               <ImprovedChat
+                ref={chatRef}
                 onUserMessage={handleUserMessage}
                 onAssistantMessage={handleAssistantMessage}
                 onConversationStart={() => setConversationStarted(true)}
                 onStreamingChange={setIsStreaming}
               />
+
             </div>
 
             {/* Contract Analysis Button - always visible when chat has started */}
@@ -378,9 +383,9 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </svg>
                   Analyze Contract
                 </Button>
-                
+
               </div>
-              
+
             )}
           </div>
 
@@ -397,7 +402,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   >
                     Close
                   </Button>
-                  
+
                 </div>
 
                 {contractAnalysisResults.risks.length > 0 ? (
@@ -453,12 +458,12 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         mostRecentUserMessage={mostRecentUserMessage}
       />
       <FileCabinetPanel
-          isOpen={showFileCabinetPanel}
-          onDismiss={() => setShowFileCabinetPanel(false)}
-          onRunAnalysis={(fileName) => {
-            handleUserMessage(`Analyze the contract for ${fileName}`);
-          }}
-        />
+        isOpen={showFileCabinetPanel}
+        onDismiss={() => setShowFileCabinetPanel(false)}
+        onRunAnalysis={(fileName) => {
+          handleUserMessage(`Analyze the contract for ${fileName}`);
+        }}
+      />
 
       {/* Settings Sidebar */}
       <SettingsSidebar open={settingsOpen} onOpenChange={setSettingsOpen} />
