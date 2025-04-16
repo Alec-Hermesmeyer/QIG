@@ -36,16 +36,16 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { ContractTextPreview } from './ContractTextPreview';
 import { initializeIcons } from '@fluentui/react/lib/Icons';
-import { 
-  CancelIcon, 
-  ClearIcon, 
-  SettingsIcon, 
-  DownloadIcon, 
-  CopyIcon, 
-  InfoIcon, 
-  WarningIcon, 
-  RefreshIcon, 
-  TableIcon 
+import {
+  CancelIcon,
+  ClearIcon,
+  SettingsIcon,
+  DownloadIcon,
+  CopyIcon,
+  InfoIcon,
+  WarningIcon,
+  RefreshIcon,
+  TableIcon
 } from '@fluentui/react-icons-mdl2';
 import { Prompt } from '@/lib/prompt';
 
@@ -68,8 +68,8 @@ interface Props {
   isOpen: boolean;
   onDismiss: () => void;
   onAnalysisComplete?: (
-    analysisText: string, 
-    risks: Risk[], 
+    analysisText: string,
+    risks: Risk[],
     mitigationPoints: string[],
     contractText: string
   ) => void;
@@ -117,40 +117,40 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [parsedRisks, setParsedRisks] = useState<Risk[]>([]);
   const [mitigationPoints, setMitigationPoints] = useState<string[]>([]);
-  
+
   // Settings
   const [settings, setSettings] = useState<AnalysisSettings>({
     model: 'gpt-4',
     temperature: 0.4,
     chunkSize: 1500,
   });
-  
+
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisContainerRef = useRef<HTMLDivElement>(null);
-  
+
   // Model options
   const modelOptions: IDropdownOption[] = [
     { key: 'gpt-4', text: 'GPT-4 (Most Accurate)' },
     { key: 'gpt-4-turbo', text: 'GPT-4 Turbo (Faster)' },
     { key: 'gpt-3.5-turbo', text: 'GPT-3.5 Turbo (Economical)' },
   ];
-  
+
   // Table columns for risk table view
   const riskColumns: IColumn[] = [
-    { 
-      key: 'category', 
-      name: 'Risk Category', 
-      fieldName: 'category', 
-      minWidth: 120, 
+    {
+      key: 'category',
+      name: 'Risk Category',
+      fieldName: 'category',
+      minWidth: 120,
       maxWidth: 180,
       isResizable: true,
     },
-    { 
-      key: 'score', 
-      name: 'Score', 
-      fieldName: 'score', 
-      minWidth: 80, 
+    {
+      key: 'score',
+      name: 'Score',
+      fieldName: 'score',
+      minWidth: 80,
       maxWidth: 100,
       isResizable: true,
       onRender: (item: Risk) => (
@@ -159,33 +159,33 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         </div>
       ),
     },
-    { 
-      key: 'location', 
-      name: 'Location', 
-      fieldName: 'location', 
-      minWidth: 100, 
+    {
+      key: 'location',
+      name: 'Location',
+      fieldName: 'location',
+      minWidth: 100,
       maxWidth: 150,
       isResizable: true,
     },
-    { 
-      key: 'text', 
-      name: 'Contract Text', 
-      fieldName: 'text', 
-      minWidth: 150, 
+    {
+      key: 'text',
+      name: 'Contract Text',
+      fieldName: 'text',
+      minWidth: 150,
       isResizable: true,
       onRender: (item: Risk) => (
         <div className="italic">"{item.text}"</div>
       ),
     },
-    { 
-      key: 'reason', 
-      name: 'Why This Is a Risk', 
-      fieldName: 'reason', 
-      minWidth: 200, 
+    {
+      key: 'reason',
+      name: 'Why This Is a Risk',
+      fieldName: 'reason',
+      minWidth: 200,
       isResizable: true,
     },
   ];
-  
+
   // Helper function to get color based on risk score
   const getRiskScoreColor = (score: string) => {
     switch (score.toLowerCase()) {
@@ -196,7 +196,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       default: return '#6b7280';         // Gray
     }
   };
-  
+
   // Reset state
   const resetState = () => {
     setFileName('');
@@ -211,45 +211,45 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     setParsedRisks([]);
     setMitigationPoints([]);
   };
-  
+
   // Handle file upload via drag and drop
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
   };
-  
+
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
   };
-  
+
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    
+
     const files = e.dataTransfer.files;
     if (files.length) {
       await processFile(files[0]);
     }
   };
-  
+
   // Handle file upload via file input
   const handleFileUploadClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
   };
-  
+
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       await processFile(file);
     }
   };
-  
+
   // Process the uploaded file
   const processFile = async (file: File) => {
     try {
@@ -257,18 +257,18 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       setLoading(true);
       setFileName(file.name);
       setFileSize(file.size);
-      
+
       // Check file size
       const maxSizeInBytes = 15 * 1024 * 1024; // 15MB
       if (file.size > maxSizeInBytes) {
-        throw { 
-          message: 'File too large', 
-          details: 'The maximum file size is 15MB. Please try a smaller file or split your contract.' 
+        throw {
+          message: 'File too large',
+          details: 'The maximum file size is 15MB. Please try a smaller file or split your contract.'
         };
       }
-      
+
       let text = '';
-      
+
       // Process based on file type
       if (
         file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
@@ -278,40 +278,40 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           const arrayBuffer = await file.arrayBuffer();
           const result = await mammoth.extractRawText({ arrayBuffer });
           text = result.value;
-          
+
           if (result.messages.length > 0 && result.messages.some(m => m.type === 'warning')) {
             console.warn('Mammoth warnings:', result.messages);
           }
         } catch (docxError) {
-          throw { 
-            message: 'DOCX processing error', 
-            details: 'Unable to extract text from this Word document. The file might be corrupted or in an unsupported format.' 
+          throw {
+            message: 'DOCX processing error',
+            details: 'Unable to extract text from this Word document. The file might be corrupted or in an unsupported format.'
           };
         }
       } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
         text = await file.text();
       } else {
-        throw { 
-          message: 'Unsupported file type', 
-          details: 'Please upload a DOCX or TXT file.' 
+        throw {
+          message: 'Unsupported file type',
+          details: 'Please upload a DOCX or TXT file.'
         };
       }
-      
+
       if (!text.trim()) {
-        throw { 
-          message: 'Empty document', 
-          details: 'No text could be extracted from this document. It might be empty or in an unsupported format.' 
+        throw {
+          message: 'Empty document',
+          details: 'No text could be extracted from this document. It might be empty or in an unsupported format.'
         };
       }
-      
+
       setContractText(text);
       setShowPreview(true);
       setActiveTab('preview');
-      
+
     } catch (error: any) {
       console.error('File processing error:', error);
-      setError(error.message && typeof error.message === 'string' 
-        ? error 
+      setError(error.message && typeof error.message === 'string'
+        ? error
         : { message: 'Unknown error', details: 'An unknown error occurred while processing the file.' });
     } finally {
       setLoading(false);
@@ -322,25 +322,25 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   const chunkText = (text: string, maxWords = 1500): string[] => {
     // Clean up the text
     const cleanText = text.replace(/\r\n/g, '\n')
-                          .replace(/\n{3,}/g, '\n\n')
-                          .trim();
-    
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
     // If text is small enough to fit in one chunk, return it
     if (cleanText.split(/\s+/).length <= maxWords) {
       return [cleanText];
     }
-    
+
     // Split by paragraphs
     const paragraphs = cleanText.split(/\n{2,}/).filter(p => p.trim().length > 0);
-    
+
     const chunks: string[] = [];
     let currentChunk: string[] = [];
     let currentWordCount = 0;
-    
+
     // Group paragraphs into chunks
     for (const paragraph of paragraphs) {
       const paragraphWordCount = paragraph.split(/\s+/).length;
-      
+
       // If a single paragraph is larger than maxWords, split it
       if (paragraphWordCount > maxWords) {
         // If we have anything in the current chunk, add it first
@@ -349,15 +349,15 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           currentChunk = [];
           currentWordCount = 0;
         }
-        
+
         // Split large paragraph into sentences
         const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
         let sentenceChunk: string[] = [];
         let sentenceWordCount = 0;
-        
+
         for (const sentence of sentences) {
           const sentenceWords = sentence.trim().split(/\s+/).length;
-          
+
           if (sentenceWordCount + sentenceWords <= maxWords) {
             sentenceChunk.push(sentence.trim());
             sentenceWordCount += sentenceWords;
@@ -371,7 +371,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               // If a single sentence is too long, force-split it by words
               const words = sentence.trim().split(/\s+/);
               let wordChunk: string[] = [];
-              
+
               for (const word of words) {
                 if (wordChunk.length < maxWords) {
                   wordChunk.push(word);
@@ -380,19 +380,19 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                   wordChunk = [word];
                 }
               }
-              
+
               if (wordChunk.length > 0) {
                 chunks.push(wordChunk.join(' '));
               }
             }
           }
         }
-        
+
         // Add any remaining sentences
         if (sentenceChunk.length > 0) {
           chunks.push(sentenceChunk.join(' '));
         }
-      } 
+      }
       // Normal paragraph handling
       else if (currentWordCount + paragraphWordCount <= maxWords) {
         currentChunk.push(paragraph);
@@ -404,12 +404,12 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         currentWordCount = paragraphWordCount;
       }
     }
-    
+
     // Add the last chunk if not empty
     if (currentChunk.length > 0) {
       chunks.push(currentChunk.join('\n\n'));
     }
-    
+
     return chunks;
   };
 
@@ -420,11 +420,11 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   // Parse risks from raw analysis text
   const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
     const risks: Risk[] = [];
-    
+
     // Approach 1: Use alternative to 's' flag with character class instead of dot
     // Replace '.' with '[\\s\\S]' to match any character including newlines
     const riskRegex = /Risk Category: ([\\s\\S]*?) Risk Score: ([\\s\\S]*?) Risky Contract Text: "([\\s\\S]*?)" Why This Is a Risk: ([\\s\\S]*?) Contract Location: ([\\s\\S]*?)(?=\n\nRisk Category:|$|\n\nMitigation Summary:)/g;
-    
+
     let match;
     while ((match = riskRegex.exec(rawAnalysis)) !== null) {
       risks.push({
@@ -435,23 +435,23 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         location: match[5].trim(),
       });
     }
-    
+
     // If no risks were found with the main regex, try an alternative approach
     if (risks.length === 0) {
       // Split by risk sections
       const sections = rawAnalysis.split(/\n\n(?=Risk Category)/);
-      
+
       for (let i = 0; i < sections.length; i++) {
         const section = sections[i];
         if (!section.toLowerCase().includes('risk category')) continue;
-        
+
         try {
           const categoryMatch = section.match(/Risk Category:?\s*([\s\S]*?)(?=\s*Risk Score:|$)/);
           const scoreMatch = section.match(/Risk Score:?\s*([\s\S]*?)(?=\s*Risky Contract Text:|$)/);
           const textMatch = section.match(/Risky Contract Text:?\s*(?:"([\s\S]*?)"|([^"]+?))(?=\s*Why This Is a Risk:|$)/);
           const reasonMatch = section.match(/Why This Is a Risk:?\s*([\s\S]*?)(?=\s*Contract Location:|$)/);
           const locationMatch = section.match(/Contract Location:?\s*([\s\S]*?)(?=$)/);
-          
+
           if (categoryMatch && scoreMatch) {
             const risk: Risk = {
               category: categoryMatch[1] ? categoryMatch[1].trim() : 'Unknown Category',
@@ -460,22 +460,22 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               reason: 'Unknown Reason',
               location: 'Unknown Location',
             };
-            
+
             // Handle text match
             if (textMatch) {
               risk.text = (textMatch[1] || textMatch[2] || '').trim();
             }
-            
+
             // Handle reason match
             if (reasonMatch && reasonMatch[1]) {
               risk.reason = reasonMatch[1].trim();
             }
-            
+
             // Handle location match
             if (locationMatch && locationMatch[1]) {
               risk.location = locationMatch[1].trim();
             }
-            
+
             risks.push(risk);
           }
         } catch (e) {
@@ -483,10 +483,10 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         }
       }
     }
-    
+
     return risks;
   };
-  
+
   // Parse mitigation points from raw analysis text
   const parseMitigationFromAnalysis = (rawAnalysis: string): string[] => {
     const mitigationPatterns = [
@@ -495,7 +495,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       /Recommended Mitigations:([\s\S]*?)(?=$)/,
       /Mitigation Strategies:([\s\S]*?)(?=$)/,
     ];
-    
+
     for (let i = 0; i < mitigationPatterns.length; i++) {
       const mitigationMatch = rawAnalysis.match(mitigationPatterns[i]);
       if (mitigationMatch) {
@@ -513,14 +513,14 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           });
       }
     }
-    
+
     return [];
   };
 
   // Handle the analysis process
   const handleAnalyze = async () => {
     if (!contractText) return;
-
+  
     try {
       setLoading(true);
       setError(null);
@@ -597,13 +597,37 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         }
       }
       
+      // Analysis is complete - determine if we should show the highlighted view
+      const finalRisks = parseRisksFromAnalysis(fullAnalysis);
+      const finalMitigation = parseMitigationFromAnalysis(fullAnalysis);
+      
+      // Set final state
+      setParsedRisks(finalRisks);
+      setMitigationPoints(finalMitigation);
+      
       // Call the onAnalysisComplete callback if provided
       if (onAnalysisComplete) {
-        onAnalysisComplete(fullAnalysis, parsedRisks, mitigationPoints, contractText);
+        onAnalysisComplete(fullAnalysis, finalRisks, finalMitigation, contractText);
       }
       
-      if (analysisContainerRef.current) {
-        analysisContainerRef.current.scrollTop = 0;
+      // If we found risks, switch to the highlighted view to show them in context
+      if (finalRisks.length > 0) {
+        // If using the separate tab approach:
+        if (viewMode === 'card' || viewMode === 'table') {
+          // Wait a moment to let the UI update with analysis before switching tabs
+          setTimeout(() => {
+            // Option 1: Switch directly to preview tab with highlights
+            setActiveTab('preview');
+            
+            // Option 2: If you added a dedicated highlights tab
+            // setActiveTab('highlighted');
+          }, 500);
+        }
+        
+        // Scroll to top of analysis
+        if (analysisContainerRef.current) {
+          analysisContainerRef.current.scrollTop = 0;
+        }
       }
       
     } catch (analysisError: any) {
@@ -617,14 +641,13 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       setProgress(100);
     }
   };
-  
-  
+
   // Handle copy to clipboard
   const handleCopyToClipboard = async () => {
     try {
       // Format the analysis into a clean markdown document when copying
       let formattedOutput = "# Contract Risk Analysis\n\n";
-      
+
       // Add the risks
       parsedRisks.forEach((risk, index) => {
         formattedOutput += `## Risk ${index + 1}: ${risk.category} (${risk.score})\n\n`;
@@ -633,13 +656,13 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         formattedOutput += `**Risk Assessment:**\n${risk.reason}\n\n`;
         formattedOutput += `---\n\n`;
       });
-      
+
       // Add mitigation summary
       formattedOutput += "# Mitigation Summary\n\n";
       mitigationPoints.forEach((point) => {
         formattedOutput += `- ${point}\n`;
       });
-      
+
       await navigator.clipboard.writeText(formattedOutput);
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
@@ -647,14 +670,14 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       console.error('Failed to copy:', err);
     }
   };
-  
+
   // Handle export as markdown
   const handleExportMarkdown = () => {
     setIsExporting(true);
     try {
       // Format the analysis into a clean markdown document for export
       let formattedOutput = "# Contract Risk Analysis\n\n";
-      
+
       // Add the risks
       parsedRisks.forEach((risk, index) => {
         formattedOutput += `## Risk ${index + 1}: ${risk.category} (${risk.score})\n\n`;
@@ -663,13 +686,13 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         formattedOutput += `**Risk Assessment:**\n${risk.reason}\n\n`;
         formattedOutput += `---\n\n`;
       });
-      
+
       // Add mitigation summary
       formattedOutput += "# Mitigation Summary\n\n";
       mitigationPoints.forEach((point) => {
         formattedOutput += `- ${point}\n`;
       });
-      
+
       const blob = new Blob([formattedOutput], { type: 'text/markdown' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -685,28 +708,28 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       setIsExporting(false);
     }
   };
-  
+
   // Format file size for display
   const formatFileSize = (bytes: number | null): string => {
     if (bytes === null) return '';
     if (bytes === 0) return '0 Bytes';
-    
+
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
   };
-  
+
   // Effect to reset error state when file changes
   useEffect(() => {
     if (fileName) {
       setError(null);
     }
   }, [fileName]);
-  
+
   // Render error message
   const renderError = () => {
     if (!error) return null;
-    
+
     return (
       <MessageBar
         messageBarType={MessageBarType.error}
@@ -719,41 +742,41 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       </MessageBar>
     );
   };
-  
+
   // Render risk card component
   const RiskCard = ({ risk, index }: { risk: Risk, index: number }) => {
     return (
       <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-white shadow-sm"
-           style={{ borderLeftWidth: '4px', borderLeftColor: getRiskScoreColor(risk.score) }}>
+        style={{ borderLeftWidth: '4px', borderLeftColor: getRiskScoreColor(risk.score) }}>
         <div className="flex justify-between items-center mb-2">
           <Text variant="large" className="font-semibold">
             Risk {index + 1}: {risk.category}
           </Text>
           <div className="px-2 py-1 rounded text-xs font-bold text-white"
-               style={{ backgroundColor: getRiskScoreColor(risk.score) }}>
+            style={{ backgroundColor: getRiskScoreColor(risk.score) }}>
             {risk.score}
           </div>
         </div>
-        
+
         <Text variant="small" className="text-gray-500 mb-2">
           <b>Location:</b> {risk.location}
         </Text>
-        
+
         <div className="bg-gray-50 p-3 rounded mb-2 border-l-2 border-gray-300 italic">
           "{risk.text}"
         </div>
-        
+
         <Text>
           <b>Why This Is a Risk:</b> {risk.reason}
         </Text>
       </div>
     );
   };
-  
+
   // Render analysis content based on view mode
   const renderAnalysisContent = () => {
     if (!analysis || loading) return null;
-    
+
     switch (viewMode) {
       case 'card':
         return (
@@ -761,17 +784,17 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             <Text variant="xLarge" className="font-semibold mb-4">
               Contract Risk Analysis
             </Text>
-            
+
             {parsedRisks.map((risk, index) => (
               <RiskCard key={index} risk={risk} index={index} />
             ))}
-            
+
             {mitigationPoints.length > 0 && (
               <>
                 <Text variant="xLarge" className="font-semibold mt-6 mb-4">
                   Mitigation Summary
                 </Text>
-                
+
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
                   {mitigationPoints.map((point, index) => (
                     <div key={index} className={index === mitigationPoints.length - 1 ? '' : 'mb-2'}>
@@ -783,14 +806,14 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             )}
           </div>
         );
-        
+
       case 'table':
         return (
           <div>
             <Text variant="xLarge" className="font-semibold mb-4">
               Contract Risk Analysis
             </Text>
-            
+
             <DetailsList
               items={parsedRisks}
               columns={riskColumns}
@@ -799,13 +822,13 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               isHeaderVisible={true}
               styles={{ root: { marginBottom: '24px' } }}
             />
-            
+
             {mitigationPoints.length > 0 && (
               <>
                 <Text variant="xLarge" className="font-semibold mt-6 mb-4">
                   Mitigation Summary
                 </Text>
-                
+
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
                   {mitigationPoints.map((point, index) => (
                     <div key={index} className={index === mitigationPoints.length - 1 ? '' : 'mb-2'}>
@@ -817,7 +840,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             )}
           </div>
         );
-        
+
       case 'markdown':
         return (
           <div className="prose max-w-none">
@@ -829,12 +852,12 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             </ReactMarkdown>
           </div>
         );
-        
+
       default:
         return null;
     }
   };
-  
+
   // Settings dialog
   const renderSettingsPanel = () => (
     <Dialog
@@ -855,9 +878,9 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             label="AI Model"
             selectedKey={settings.model}
             options={modelOptions}
-            onChange={(_, option) => option && setSettings({...settings, model: option.key as string})}
+            onChange={(_, option) => option && setSettings({ ...settings, model: option.key as string })}
             styles={{
-              dropdown: { 
+              dropdown: {
                 border: '1px solid #d1d5db',
                 selectors: {
                   ':hover': { borderColor: '#9ca3af' },
@@ -872,7 +895,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               label: { fontWeight: 600, color: '#111827' }
             }}
           />
-          
+
           <Stack tokens={{ childrenGap: 10 }}>
             <Text>Temperature: {settings.temperature.toFixed(1)}</Text>
             <Stack horizontal tokens={{ childrenGap: 8 }}>
@@ -884,7 +907,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                   max="1"
                   step="0.1"
                   value={settings.temperature}
-                  onChange={(e) => setSettings({...settings, temperature: parseFloat(e.target.value)})}
+                  onChange={(e) => setSettings({ ...settings, temperature: parseFloat(e.target.value) })}
                   className="w-full"
                 />
               </Stack.Item>
@@ -895,13 +918,13 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             </Text>
           </Stack>
         </div>
-        
+
         <div className="mb-4">
           <TextField
             label="Chunk Size (words)"
             type="number"
             value={settings.chunkSize.toString()}
-            onChange={(_, value) => value && setSettings({...settings, chunkSize: Math.max(100, Math.min(3000, parseInt(value)))})}
+            onChange={(_, value) => value && setSettings({ ...settings, chunkSize: Math.max(100, Math.min(3000, parseInt(value))) })}
             min={100}
             max={3000}
             styles={{
@@ -924,7 +947,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             Larger chunks provide more context but may be less accurate (100-3000)
           </Text>
         </div>
-        
+
         <div className="mb-4">
           <Label className="font-semibold text-gray-900 mb-2">Results View</Label>
           <Stack horizontal tokens={{ childrenGap: 10 }}>
@@ -955,7 +978,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           </Text>
         </div>
       </div>
-      
+
       <DialogFooter>
         <DefaultButton
           onClick={() => setSettings({
@@ -966,15 +989,15 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           text="Reset to Defaults"
           className="bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
         />
-        <PrimaryButton 
-          onClick={() => setShowSettings(false)} 
+        <PrimaryButton
+          onClick={() => setShowSettings(false)}
           text="Apply"
           className="bg-indigo-600 hover:bg-indigo-700"
         />
       </DialogFooter>
     </Dialog>
   );
-  
+
   // Confirmation dialog for reset
   const renderResetConfirmation = () => (
     <Dialog
@@ -991,23 +1014,23 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       }}
     >
       <DialogFooter>
-        <DefaultButton 
-          onClick={() => setConfirmReset(false)} 
+        <DefaultButton
+          onClick={() => setConfirmReset(false)}
           text="Cancel"
           className="bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
         />
-        <PrimaryButton 
+        <PrimaryButton
           onClick={() => {
             resetState();
             setConfirmReset(false);
-          }} 
-          text="Yes, Reset" 
+          }}
+          text="Yes, Reset"
           className="bg-red-500 hover:bg-red-600"
         />
       </DialogFooter>
     </Dialog>
   );
-  
+
   return (
     <Panel
       isOpen={isOpen}
@@ -1017,9 +1040,9 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       closeButtonAriaLabel="Close"
       isFooterAtBottom={true}
       styles={{
-        main: { 
-          marginTop: 0, 
-          minHeight: '80vh', 
+        main: {
+          marginTop: 0,
+          minHeight: '80vh',
           padding: '10px 16px',
           width: '80%',
         },
@@ -1031,12 +1054,12 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           width: '32px',
           height: '32px',
           margin: '8px',
-          selectors: { 
-            ':hover': { 
+          selectors: {
+            ':hover': {
               color: '#4338ca',
               backgroundColor: '#ede9fe',
               borderColor: '#c7d2fe',
-            } 
+            }
           },
         },
         content: {
@@ -1087,7 +1110,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     >
       <div className="flex flex-col space-y-4 h-full">
         {renderError()}
-        
+
         {!fileName ? (
           <div
             className={`rounded border-2 border-dashed border-gray-300 p-6 bg-gray-50 hover:bg-gray-100 transition cursor-pointer text-center my-4 ${isDragging ? 'bg-indigo-50 border-indigo-300' : ''}`}
@@ -1111,8 +1134,8 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               <Text className="text-gray-500">
                 or click to browse (DOCX or TXT)
               </Text>
-              <DefaultButton 
-                text="Select File" 
+              <DefaultButton
+                text="Select File"
                 className="mt-2 bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
               />
             </div>
@@ -1128,7 +1151,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                   </Text>
                 )}
               </div>
-              
+
               <TooltipHost content="Upload a different file">
                 <IconButton
                   iconProps={refreshIcon}
@@ -1139,43 +1162,65 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                 />
               </TooltipHost>
             </div>
-            
+
             <Pivot
               selectedKey={activeTab}
               onLinkClick={(item) => item && setActiveTab(item.props.itemKey || 'analysis')}
-              styles={{ 
+              styles={{
                 root: { display: fileName ? 'block' : 'none' },
               }}
               className="border-b border-gray-200"
             >
-              <PivotItem 
-                headerText="Analysis" 
+              <PivotItem
+                headerText="Analysis"
                 itemKey="analysis"
                 headerButtonProps={{
                   className: activeTab === 'analysis' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
                 }}
               />
-              <PivotItem 
-                headerText="Text Preview" 
+              <PivotItem
+                headerText="Text Preview"
                 itemKey="preview"
                 headerButtonProps={{
-                  className: activeTab === 'preview' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
+                  className: activeTab === 'preview' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600 overflow-scroll' : 'text-gray-600'
                 }}
               />
+              {/* Add this new tab for highlighted view if you want */}
+              {parsedRisks.length > 0 && (
+                <PivotItem
+                  headerText="Highlighted Text"
+                  itemKey="highlighted"
+                  headerButtonProps={{
+                    className: activeTab === 'highlighted' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
+                  }}
+                />
+              )}
             </Pivot>
-            
-            <div className="mt-4 h-[calc(100vh-180px)] flex flex-col overflow-hidden">
+
+            <div className="mt-4 h-[calc(100vh-180px)] flex flex-col overflow-scroll">
               {activeTab === 'preview' && (
                 <div className="h-full flex flex-col">
-                  <ContractTextPreview 
-                    contractText={contractText} 
+                  <ContractTextPreview
+                    contractText={contractText}
                     lineNumbers={true}
                     enableSearch={true}
                     enableWordWrap={true}
+                    risks={parsedRisks} // Add this line to pass the risks
                   />
                 </div>
               )}
-              
+              {activeTab === 'highlighted' && (
+                <div className="h-full flex flex-col">
+                  <ContractTextPreview
+                    contractText={contractText}
+                    lineNumbers={true}
+                    enableSearch={true}
+                    enableWordWrap={true}
+                    risks={parsedRisks}
+                  />
+                </div>
+              )}
+
               {activeTab === 'analysis' && (
                 <>
                   {!analysis && !loading && (
@@ -1186,22 +1231,22 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                         disabled={!contractText || loading}
                         className="mb-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded disabled:bg-gray-200 disabled:text-gray-400"
                       />
-                      
+
                       <Text className="text-gray-500 max-w-lg">
                         Click to analyze your contract for legal risks, obligations, and key terms. Analysis will be performed in {chunkText(contractText, settings.chunkSize).length} parts.
                       </Text>
                     </div>
                   )}
-                  
+
                   {loading && (
                     <div className="my-4">
                       <div className="mb-3">
                         <Text className="font-medium text-gray-800">
                           Analyzing contract...
                         </Text>
-                        <ProgressIndicator 
-                          percentComplete={progress / 100} 
-                          description={`Processing part ${currentChunk} of ${totalChunks}`} 
+                        <ProgressIndicator
+                          percentComplete={progress / 100}
+                          description={`Processing part ${currentChunk} of ${totalChunks}`}
                           styles={{
                             progressBar: {
                               backgroundColor: '#4f46e5',
@@ -1211,7 +1256,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                       </div>
                     </div>
                   )}
-                  
+
                   {analysis && (
                     <>
                       <div className="flex justify-between items-center py-2 border-b border-gray-200 mb-3">
@@ -1219,49 +1264,46 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                           <Text className="font-semibold text-lg text-gray-800">
                             Contract Analysis Results
                           </Text>
-                          
+
                           <div className="flex bg-gray-100 p-0.5 rounded border border-gray-300">
                             <TooltipHost content="Card View">
                               <button
                                 onClick={() => setViewMode('card')}
-                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${
-                                  viewMode === 'card' 
-                                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
-                                    : 'text-gray-600 hover:bg-gray-200'
-                                }`}
+                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${viewMode === 'card'
+                                  ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                  : 'text-gray-600 hover:bg-gray-200'
+                                  }`}
                               >
                                 <span className="text-sm">Card</span>
                               </button>
                             </TooltipHost>
-                            
+
                             <TooltipHost content="Table View">
                               <button
                                 onClick={() => setViewMode('table')}
-                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${
-                                  viewMode === 'table' 
-                                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
-                                    : 'text-gray-600 hover:bg-gray-200'
-                                }`}
+                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${viewMode === 'table'
+                                  ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                  : 'text-gray-600 hover:bg-gray-200'
+                                  }`}
                               >
                                 <span className="text-sm">Table</span>
                               </button>
                             </TooltipHost>
-                            
+
                             <TooltipHost content="Raw View">
                               <button
                                 onClick={() => setViewMode('markdown')}
-                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${
-                                  viewMode === 'markdown' 
-                                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
-                                    : 'text-gray-600 hover:bg-gray-200'
-                                }`}
+                                className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${viewMode === 'markdown'
+                                  ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                  : 'text-gray-600 hover:bg-gray-200'
+                                  }`}
                               >
                                 <span className="text-sm">Raw</span>
                               </button>
                             </TooltipHost>
                           </div>
                         </div>
-                        
+
                         <div className="flex gap-2">
                           <TooltipHost content={copySuccess ? "Copied!" : "Copy to clipboard"}>
                             <button
@@ -1277,16 +1319,15 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                               onClick={handleExportMarkdown}
                               aria-label="Export as Markdown"
                               disabled={isExporting}
-                              className={`bg-gray-50 border border-gray-300 rounded p-1.5 text-gray-600 hover:bg-gray-100 ${
-                                isExporting ? 'opacity-50 cursor-not-allowed' : ''
-                              }`}
+                              className={`bg-gray-50 border border-gray-300 rounded p-1.5 text-gray-600 hover:bg-gray-100 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''
+                                }`}
                             >
                               {isExporting ? "Exporting..." : "Export"}
                             </button>
                           </TooltipHost>
                         </div>
                       </div>
-                      
+
                       <div ref={analysisContainerRef} className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm overflow-auto flex-1">
                         {renderAnalysisContent()}
                       </div>
@@ -1298,7 +1339,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
           </>
         )}
       </div>
-      
+
       {renderSettingsPanel()}
       {renderResetConfirmation()}
     </Panel>

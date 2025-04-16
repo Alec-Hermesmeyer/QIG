@@ -18,6 +18,222 @@ import { FileCabinetPanel } from "@/components/FileCabinetPanel";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
+// Create the StyledFallbackAnalysis component directly in this file
+// until we can move it to its own file
+const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
+  const [activeTab, setActiveTab] = useState(0);
+  
+  // Helper function to extract risks from raw text
+  const extractRisksFromText = (text: string) => {
+    // Look for patterns like "Risk Category: X" in the text
+    const risks: any[] = [];
+    const riskRegex = /Risk Category:\s*(.*?)\s*\n\s*Risk Score:\s*(.*?)\s*\n\s*Risky Contract Text:\s*"(.*?)"\s*\n\s*Why This Is a Risk:\s*(.*?)\s*\n\s*Contract Location:\s*(.*?)(?:\n\n|\n$|$)/gs;
+    
+    let match;
+    while ((match = riskRegex.exec(text)) !== null) {
+      risks.push({
+        category: match[1]?.trim(),
+        score: match[2]?.trim(),
+        text: match[3]?.trim(),
+        reason: match[4]?.trim(),
+        location: match[5]?.trim()
+      });
+    }
+    
+    return risks;
+  };
+
+  // Helper function to extract mitigation points from raw text
+  const extractMitigationFromText = (text: string) => {
+    const mitigations: string[] = [];
+    
+    // Look for a mitigation section
+    const mitigationSectionRegex = /Mitigation Summary:(.+?)(?:\n\n|\n[A-Z]|$)/gs;
+    const mitigationSection = mitigationSectionRegex.exec(text);
+    
+    if (mitigationSection && mitigationSection[1]) {
+      // Extract bullet points
+      const mitigationText = mitigationSection[1];
+      const bulletPointRegex = /-\s*(.*?)(?:\n-|\n\n|$)/gs;
+      
+      let bulletMatch;
+      while ((bulletMatch = bulletPointRegex.exec(mitigationText)) !== null) {
+        if (bulletMatch[1]?.trim()) {
+          mitigations.push(bulletMatch[1].trim());
+        }
+      }
+      
+      // If no bullet points found, try paragraph extraction
+      if (mitigations.length === 0) {
+        mitigations.push(...mitigationText.split('\n').map(line => line.trim()).filter(line => line));
+      }
+    }
+    
+    return mitigations;
+  };
+
+  // Helper function to get color based on risk score
+  const getRiskScoreColor = (score: string) => {
+    switch (score.toLowerCase()) {
+      case 'critical': return '#ef4444'; // Red
+      case 'high': return '#f97316';     // Orange
+      case 'medium': return '#eab308';   // Yellow
+      case 'low': return '#22c55e';      // Green
+      default: return '#6b7280';         // Gray
+    }
+  };
+  
+  // Parse the raw text to extract risks and mitigation points
+  const extractedRisks = extractRisksFromText(analysisText);
+  const extractedMitigations = extractMitigationFromText(analysisText);
+  
+  // Group risks by severity for easy filtering
+  const criticalRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'critical');
+  const highRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'high');
+  const mediumRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'medium');
+  const lowRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'low');
+
+  // Individual risk card component
+  const RiskCard = ({ risk, index }: { risk: any; index: number }) => {
+    return (
+      <div 
+        className="mb-4 p-4 rounded-lg border shadow-sm"
+        style={{ borderLeftWidth: '4px', borderLeftColor: getRiskScoreColor(risk.score) }}
+      >
+        <div className="flex justify-between items-center mb-2">
+          <h4 className="font-medium text-gray-900">
+            {index + 1}. {risk.category}
+          </h4>
+          <span 
+            className="px-2 py-1 text-xs font-bold text-white rounded-md"
+            style={{ backgroundColor: getRiskScoreColor(risk.score) }}
+          >
+            {risk.score}
+          </span>
+        </div>
+        
+        <div className="mb-2">
+          <span className="text-sm text-gray-500">Location: {risk.location}</span>
+        </div>
+        
+        <div className="bg-gray-100 p-2 rounded-md mb-3 italic text-gray-700">
+          "{risk.text}"
+        </div>
+        
+        <div>
+          <span className="font-medium">Why This Is a Risk:</span>
+          <p className="text-gray-700">{risk.reason}</p>
+        </div>
+      </div>
+    );
+  };
+  
+  // Import react-tabs styles directly with CSS
+  return (
+    <div className="h-96 overflow-scroll flex flex-col">
+      <div className="tabs">
+        <div className="flex border-b">
+          {/* <div 
+            className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 0 ? 'border-blue-600 text-blue-600' : 'border-transparent hover:text-blue-600 hover:border-blue-600'}`}
+            onClick={() => setActiveTab(0)}
+          >
+            Raw Analysis
+          </div> */}
+          {extractedRisks.length > 0 && (
+            <div 
+              className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 1 ? 'border-blue-600 text-blue-600' : 'border-transparent hover:text-blue-600 hover:border-blue-600'}`}
+              onClick={() => setActiveTab(1)}
+            >
+              Parsed Risks ({extractedRisks.length})
+            </div>
+          )}
+          {criticalRisks.length > 0 && (
+            <div 
+              className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 2 ? 'border-red-600 text-red-600' : 'border-transparent hover:text-red-600 hover:border-red-600'}`}
+              onClick={() => setActiveTab(2)}
+            >
+              Critical ({criticalRisks.length})
+            </div>
+          )}
+          {highRisks.length > 0 && (
+            <div 
+              className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 3 ? 'border-orange-600 text-orange-600' : 'border-transparent hover:text-orange-600 hover:border-orange-600'}`}
+              onClick={() => setActiveTab(3)}
+            >
+              High ({highRisks.length})
+            </div>
+          )}
+          {extractedMitigations.length > 0 && (
+            <div 
+              className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 4 ? 'border-purple-600 text-purple-600' : 'border-transparent hover:text-purple-600 hover:border-purple-600'}`}
+              onClick={() => setActiveTab(4)}
+            >
+              Mitigation
+            </div>
+          )}
+        </div>
+
+        {/* Tab panels */}
+        <div className="overflow-y-auto flex-grow">
+          {/* Raw text panel */}
+          {activeTab === 0 && (
+            <div className="p-4">
+              <h3 className="text-lg font-semibold mb-4">Full Analysis</h3>
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 whitespace-pre-wrap">
+                {analysisText}
+              </div>
+            </div>
+          )}
+          
+          {/* All extracted risks */}
+          {activeTab === 1 && extractedRisks.length > 0 && (
+            <div className="p-4">
+              <h3 className="text-lg font-semibold mb-4">All Identified Risks</h3>
+              {extractedRisks.map((risk, index) => (
+                <RiskCard key={index} risk={risk} index={index} />
+              ))}
+            </div>
+          )}
+          
+          {/* Critical risks */}
+          {activeTab === 2 && criticalRisks.length > 0 && (
+            <div className="p-4">
+              <h3 className="text-lg font-semibold mb-4">Critical Risks</h3>
+              {criticalRisks.map((risk, index) => (
+                <RiskCard key={index} risk={risk} index={index} />
+              ))}
+            </div>
+          )}
+          
+          {/* High risks */}
+          {activeTab === 3 && highRisks.length > 0 && (
+            <div className="p-4">
+              <h3 className="text-lg font-semibold mb-4">High Risks</h3>
+              {highRisks.map((risk, index) => (
+                <RiskCard key={index} risk={risk} index={index} />
+              ))}
+            </div>
+          )}
+          
+          {/* Mitigation suggestions */}
+          {activeTab === 4 && extractedMitigations.length > 0 && (
+            <div className="p-4">
+              <h3 className="text-lg font-semibold mb-4">Mitigation Strategies</h3>
+              <div className="bg-green-50 border-l-4 border-green-400 p-4">
+                <ul className="list-disc ml-5 space-y-2">
+                  {extractedMitigations.map((point, index) => (
+                    <li key={index} className="text-gray-800">{point}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Define simple message type
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -414,7 +630,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             {/* Contract Analysis Panel */}
             {showContractPanel && contractAnalysisResults && (
               <div className="w-full lg:w-1/2 flex flex-col">
-                <div className="bg-white rounded-lg shadow-md p-4 h-full">
+                <div className="bg-white rounded-lg shadow-md p-4 h-full overflow-hidden flex flex-col">
                   <div className="flex justify-between items-center mb-4">
                     <h2 className="text-lg font-semibold">Contract Risk Analysis</h2>
                     <Button
@@ -425,35 +641,19 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       Close
                     </Button>
                   </div>
-
-                  {contractAnalysisResults.risks.length > 0 ? (
+                  
+                  {contractAnalysisResults.risks && contractAnalysisResults.risks.length > 0 ? (
                     // Normal case: Display structured risks and mitigation points
                     <ContractAnalysisDisplay
                       risks={contractAnalysisResults.risks}
-                      mitigationPoints={contractAnalysisResults.mitigationPoints}
-                      contractText={contractAnalysisResults.contractText}
+                      mitigationPoints={contractAnalysisResults.mitigationPoints || []}
+                      contractText={contractAnalysisResults.contractText || ''}
                     />
                   ) : (
-                    // Fallback case: Display the raw analysis text when no structured risks are found
-                    <div className="overflow-y-auto h-full">
-                      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
-                        <p className="text-yellow-700">
-                          No structured risks were detected in the provided format, but here's the full analysis:
-                        </p>
-                      </div>
-                      <div className="prose max-w-none">
-                        {contractAnalysisResults.analysisText ? (
-                          // If we have analysis text, render it
-                          <div className="whitespace-pre-wrap">{contractAnalysisResults.analysisText}</div>
-                        ) : (
-                          // No analysis text either
-                          <p className="text-gray-500 italic">
-                            No analysis was generated. This might be due to an issue with the document format or content.
-                            Please try uploading the contract again or contact support.
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    // Fallback case: Use our new styled fallback component when no structured risks are found
+                    <StyledFallbackAnalysis 
+                      analysisText={contractAnalysisResults.analysisText || ''}
+                    />
                   )}
                 </div>
               </div>

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tab, Tabs, TabList, TabPanel } from 'react-tabs';
 import 'react-tabs/style/react-tabs.css';
 import { Risk } from '@/lib/useContractAnalyst';
 import { ContractTextHighlighter } from './ContractTextHighlighter';
+import { ContractExporter } from './ContractExporter';
 
 // Helper function to get color based on risk score
 const getRiskScoreColor = (score: string) => {
@@ -18,13 +19,17 @@ const getRiskScoreColor = (score: string) => {
 interface ContractAnalysisDisplayProps {
   risks: Risk[];
   mitigationPoints: string[];
-  contractText?: string; // Add contractText prop
+  contractText?: string;
+  onTabChange?: (index: number) => void;
+  documentTitle?: string;
 }
 
 const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({ 
   risks, 
   mitigationPoints,
-  contractText = '' // Default to empty string
+  contractText = '',
+  onTabChange,
+  documentTitle = 'Contract Analysis'
 }) => {
   const [activeTab, setActiveTab] = useState(0);
   
@@ -36,6 +41,50 @@ const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({
   
   // Check if we have any risks to display
   const hasRisks = risks.length > 0;
+
+  // Determine if we should show the export button
+  const showExportButton = hasRisks && contractText;
+
+  // If risks are found and contractText is provided, auto-select the Redline View tab
+  useEffect(() => {
+    if (hasRisks && contractText && risks.length > 0) {
+      // Find the index of the Redline View tab
+      let redlineTabIndex = 0;
+      
+      // Count tabs to find redline tab index
+      if (hasRisks) redlineTabIndex++; // Summary tab
+      if (criticalRisks.length > 0) redlineTabIndex++;
+      if (highRisks.length > 0) redlineTabIndex++;
+      if (mediumRisks.length > 0) redlineTabIndex++;
+      if (lowRisks.length > 0) redlineTabIndex++;
+      redlineTabIndex++; // Mitigation tab
+      
+      // Set the active tab to the Redline View
+      setActiveTab(redlineTabIndex);
+    }
+  }, [hasRisks, contractText, risks.length]);
+  
+  // Handle tab changes
+  const handleTabChange = (index: number) => {
+    setActiveTab(index);
+    if (onTabChange) {
+      onTabChange(index);
+    }
+  };
+
+  // Load the document export script
+  useEffect(() => {
+    if (typeof window !== 'undefined' && showExportButton) {
+      const script = document.createElement('script');
+      script.src = '/js/document-export.js'; // Adjust the path based on your public folder structure
+      script.async = true;
+      document.body.appendChild(script);
+      
+      return () => {
+        document.body.removeChild(script);
+      };
+    }
+  }, [showExportButton]);
   
   return (
     <div className="h-full overflow-hidden flex flex-col">
@@ -52,44 +101,58 @@ const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({
       {hasRisks && (
         <Tabs 
           selectedIndex={activeTab} 
-          onSelect={index => setActiveTab(index)}
+          onSelect={handleTabChange}
           className="h-full flex flex-col"
         >
-          <TabList className="flex border-b">
-            <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-blue-600 hover:border-blue-600 focus:outline-none aria-selected:border-blue-600 aria-selected:text-blue-600">
-              Summary ({risks.length})
-            </Tab>
-            {criticalRisks.length > 0 && (
-              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-red-600 hover:border-red-600 focus:outline-none aria-selected:border-red-600 aria-selected:text-red-600">
-                Critical ({criticalRisks.length})
+          <div className="flex justify-between items-center border-b">
+            <TabList className="flex overflow-x-auto">
+              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-blue-600 hover:border-blue-600 focus:outline-none aria-selected:border-blue-600 aria-selected:text-blue-600 whitespace-nowrap">
+                Summary ({risks.length})
               </Tab>
-            )}
-            {highRisks.length > 0 && (
-              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-orange-600 hover:border-orange-600 focus:outline-none aria-selected:border-orange-600 aria-selected:text-orange-600">
-                High ({highRisks.length})
+              {criticalRisks.length > 0 && (
+                <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-red-600 hover:border-red-600 focus:outline-none aria-selected:border-red-600 aria-selected:text-red-600 whitespace-nowrap">
+                  Critical ({criticalRisks.length})
+                </Tab>
+              )}
+              {highRisks.length > 0 && (
+                <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-orange-600 hover:border-orange-600 focus:outline-none aria-selected:border-orange-600 aria-selected:text-orange-600 whitespace-nowrap">
+                  High ({highRisks.length})
+                </Tab>
+              )}
+              {mediumRisks.length > 0 && (
+                <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-yellow-600 hover:border-yellow-600 focus:outline-none aria-selected:border-yellow-600 aria-selected:text-yellow-600 whitespace-nowrap">
+                  Medium ({mediumRisks.length})
+                </Tab>
+              )}
+              {lowRisks.length > 0 && (
+                <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-green-600 hover:border-green-600 focus:outline-none aria-selected:border-green-600 aria-selected:text-green-600 whitespace-nowrap">
+                  Low ({lowRisks.length})
+                </Tab>
+              )}
+              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-purple-600 hover:border-purple-600 focus:outline-none aria-selected:border-purple-600 aria-selected:text-purple-600 whitespace-nowrap">
+                Mitigation
               </Tab>
-            )}
-            {mediumRisks.length > 0 && (
-              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-yellow-600 hover:border-yellow-600 focus:outline-none aria-selected:border-yellow-600 aria-selected:text-yellow-600">
-                Medium ({mediumRisks.length})
-              </Tab>
-            )}
-            {lowRisks.length > 0 && (
-              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-green-600 hover:border-green-600 focus:outline-none aria-selected:border-green-600 aria-selected:text-green-600">
-                Low ({lowRisks.length})
-              </Tab>
-            )}
-            <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-purple-600 hover:border-purple-600 focus:outline-none aria-selected:border-purple-600 aria-selected:text-purple-600">
-              Mitigation
-            </Tab>
+              
+              {/* Redline tab - always show if contract text is available */}
+              {contractText && (
+                <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-rose-600 hover:border-rose-600 focus:outline-none aria-selected:border-rose-600 aria-selected:text-rose-600 whitespace-nowrap">
+                  Redline View
+                </Tab>
+              )}
+            </TabList>
             
-            {/* New redline tab */}
-            {contractText && (
-              <Tab className="px-4 py-2 cursor-pointer border-b-2 border-transparent hover:text-rose-600 hover:border-rose-600 focus:outline-none aria-selected:border-rose-600 aria-selected:text-rose-600">
-                Redline View
-              </Tab>
+            {/* Export button - show when we have risks and contract text */}
+            {showExportButton && (
+              <div className="px-4">
+                <ContractExporter 
+                  contractText={contractText}
+                  risks={risks}
+                  mitigationPoints={mitigationPoints}
+                  documentTitle={documentTitle}
+                />
+              </div>
             )}
-          </TabList>
+          </div>
 
           {/* Tab panels */}
           <div className="overflow-y-auto flex-grow">
@@ -169,12 +232,30 @@ const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({
               </div>
             </TabPanel>
             
-            {/* Redline View */}
+            {/* Redline View - always provide panel if contract text exists */}
             {contractText && (
               <TabPanel>
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold mb-4">Contract Redline View</h3>
-                  <ContractTextHighlighter contractText={contractText} risks={risks} />
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Contract Redline View</h3>
+                    {showExportButton && (
+                      <ContractExporter 
+                        contractText={contractText}
+                        risks={risks}
+                        mitigationPoints={mitigationPoints}
+                        documentTitle={documentTitle}
+                      />
+                    )}
+                  </div>
+                  <ContractTextHighlighter 
+                    contractText={contractText} 
+                    risks={risks} 
+                    containerClassName="min-h-screen"
+                    containerStyle={{ 
+                      height: 'calc(100vh - 240px)',
+                      maxHeight: '800px'
+                    }}
+                  />
                 </div>
               </TabPanel>
             )}

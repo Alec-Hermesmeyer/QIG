@@ -1,226 +1,282 @@
-'use client';
+import React, { useState, useEffect, useMemo } from 'react';
+import { SearchBox, Stack, Text, Toggle } from '@fluentui/react';
 
-import { useRef, useState, useEffect } from 'react';
-import { 
-  Text, 
-  Stack, 
-  SearchBox, 
-  DefaultButton, 
-  IconButton, 
-  TooltipHost 
-} from '@fluentui/react';
+// Define the Risk type to match your existing interface
+interface Risk {
+  category: string;
+  score: string;
+  text: string;
+  reason: string;
+  location: string;
+}
 
 interface ContractTextPreviewProps {
   contractText: string;
   lineNumbers?: boolean;
   enableSearch?: boolean;
   enableWordWrap?: boolean;
+  risks?: Risk[]; // Add the risks prop
 }
+
+// Helper function to get color based on risk score
+const getRiskScoreColor = (score: string) => {
+  switch (score.toLowerCase()) {
+    case 'critical': return '#fecaca'; // Light red
+    case 'high': return '#fed7aa';     // Light orange
+    case 'medium': return '#fef08a';   // Light yellow
+    case 'low': return '#bbf7d0';      // Light green
+    default: return '#e5e7eb';         // Light gray
+  }
+};
 
 export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
   contractText,
   lineNumbers = true,
   enableSearch = true,
   enableWordWrap = true,
+  risks = []
 }) => {
   const [searchText, setSearchText] = useState('');
-  const [searchResults, setSearchResults] = useState<number[]>([]);
-  const [currentSearchIndex, setCurrentSearchIndex] = useState(-1);
   const [wordWrap, setWordWrap] = useState(enableWordWrap);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [showRiskHighlights, setShowRiskHighlights] = useState(true);
+
+  // Clean up risk texts to improve matching
+  const cleanedRisks = useMemo(() => {
+    return risks.map(risk => ({
+      ...risk,
+      // Clean and normalize the risk text for better matching
+      cleanText: risk.text
+        .replace(/^["']|["']$/g, '') // Remove leading/trailing quotes
+        .trim()
+    }));
+  }, [risks]);
   
-  // Search functionality
-  useEffect(() => {
-    if (!searchText || !contractText) {
-      setSearchResults([]);
-      setCurrentSearchIndex(-1);
-      return;
+  // Prepare search regex if needed
+  const searchRegex = useMemo(() => {
+    if (!searchText) return null;
+    try {
+      return new RegExp(`(${escapeRegExp(searchText)})`, 'gi');
+    } catch (e) {
+      return null;
+    }
+  }, [searchText]);
+
+  // Function to escape regex special characters
+  const escapeRegExp = (string: string) => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
+
+  // Highlight a single line of text
+  const highlightLine = (line: string, lineIndex: number) => {
+    let segments: any[] = [{ text: line, type: 'normal' }];
+    
+    // First, apply risk highlighting
+    if (showRiskHighlights && cleanedRisks.length > 0) {
+      for (const risk of cleanedRisks) {
+        const riskText = risk.cleanText;
+        if (!riskText || riskText.length < 5) continue; // Skip very short risk texts
+        
+        // Check if this line contains the risk text
+        const riskIndex = line.indexOf(riskText);
+        if (riskIndex >= 0) {
+          // Split this segment to highlight the risk
+          const newSegments: any[] = [];
+          
+          for (const segment of segments) {
+            if (segment.type !== 'normal') {
+              newSegments.push(segment);
+              continue;
+            }
+            
+            const segmentText = segment.text;
+            const segmentRiskIndex = segmentText.indexOf(riskText);
+            
+            if (segmentRiskIndex >= 0) {
+              // Split this segment into three parts: before, risk, after
+              if (segmentRiskIndex > 0) {
+                newSegments.push({ 
+                  text: segmentText.substring(0, segmentRiskIndex), 
+                  type: 'normal' 
+                });
+              }
+              
+              newSegments.push({ 
+                text: segmentText.substring(segmentRiskIndex, segmentRiskIndex + riskText.length), 
+                type: 'risk', 
+                score: risk.score 
+              });
+              
+              if (segmentRiskIndex + riskText.length < segmentText.length) {
+                newSegments.push({ 
+                  text: segmentText.substring(segmentRiskIndex + riskText.length), 
+                  type: 'normal' 
+                });
+              }
+            } else {
+              newSegments.push(segment);
+            }
+          }
+          
+          segments = newSegments;
+        }
+      }
     }
     
-    const results: number[] = [];
-    const lines = contractText.split('\n');
-    const searchLower = searchText.toLowerCase();
+    // Then, apply search highlighting
+    if (searchRegex) {
+      const newSegments: any[] = [];
+      
+      for (const segment of segments) {
+        if (segment.type !== 'normal') {
+          newSegments.push(segment);
+          continue;
+        }
+        
+        const parts = segment.text.split(searchRegex);
+        if (parts.length > 1) {
+          parts.forEach((part: string, i: number) => {
+            if (i % 2 === 0) {
+              if (part) newSegments.push({ text: part, type: 'normal' });
+            } else {
+              newSegments.push({ text: part, type: 'search' });
+            }
+          });
+        } else {
+          newSegments.push(segment);
+        }
+      }
+      
+      segments = newSegments;
+    }
     
-    lines.forEach((line, index) => {
-      if (line.toLowerCase().includes(searchLower)) {
-        results.push(index);
+    // Render the segments
+    return segments.map((segment, i) => {
+      if (segment.type === 'risk') {
+        return (
+          <span 
+            key={`${lineIndex}-risk-${i}`}
+            style={{ backgroundColor: getRiskScoreColor(segment.score) }}
+          >
+            {segment.text}
+          </span>
+        );
+      } else if (segment.type === 'search') {
+        return (
+          <span 
+            key={`${lineIndex}-search-${i}`}
+            className="bg-yellow-200"
+          >
+            {segment.text}
+          </span>
+        );
+      } else {
+        return (
+          <span key={`${lineIndex}-normal-${i}`}>
+            {segment.text}
+          </span>
+        );
       }
     });
-    
-    setSearchResults(results);
-    setCurrentSearchIndex(results.length > 0 ? 0 : -1);
-  }, [searchText, contractText]);
-  
-  // Scroll to search result
-  useEffect(() => {
-    if (currentSearchIndex >= 0 && searchResults.length > 0 && containerRef.current) {
-      const lineIndex = searchResults[currentSearchIndex];
-      const lineElements = containerRef.current.querySelectorAll('.contract-text-line');
-      if (lineElements[lineIndex]) {
-        lineElements[lineIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }
-  }, [currentSearchIndex, searchResults]);
-  
-  const handleSearchChange = (ev?: React.ChangeEvent<HTMLInputElement>, newValue?: string) => {
-    setSearchText(newValue || '');
   };
-  
-  const handleNextResult = () => {
-    if (searchResults.length === 0) return;
-    setCurrentSearchIndex((prevIndex) => (prevIndex + 1) % searchResults.length);
-  };
-  
-  const handlePrevResult = () => {
-    if (searchResults.length === 0) return;
-    setCurrentSearchIndex((prevIndex) => (prevIndex - 1 + searchResults.length) % searchResults.length);
-  };
-  
-  const handleToggleWordWrap = () => {
-    setWordWrap(!wordWrap);
-  };
-  
-  // Highlight search terms in text
-  const highlightSearchTerm = (text: string, lineIndex: number) => {
-    if (!searchText || searchResults.indexOf(lineIndex) === -1) {
-      return <span>{text}</span>;
-    }
-    
-    const parts = text.split(new RegExp(`(${searchText})`, 'gi'));
-    const isCurrentResult = searchResults[currentSearchIndex] === lineIndex;
-    
-    return (
-      <span>
-        {parts.map((part, i) => 
-          part.toLowerCase() === searchText.toLowerCase() ? (
-            <span key={i} style={{ 
-              backgroundColor: isCurrentResult ? '#FDBA74' : '#FEF3C7', 
-              fontWeight: isCurrentResult ? 'bold' : 'normal',
-              padding: '0 2px',
-              borderRadius: '2px'
-            }}>
-              {part}
-            </span>
-          ) : (
-            <span key={i}>{part}</span>
-          )
-        )}
-      </span>
-    );
-  };
-  
-  if (!contractText) {
-    return (
-      <Text style={{ fontStyle: 'italic', color: '#6b7280' }}>
-        No text content extracted yet.
-      </Text>
-    );
-  }
-  
-  const lines = contractText.split('\n');
-  
+
   return (
-    <Stack tokens={{ childrenGap: 10 }} style={{ height: '100%' }}>
-      {enableSearch && (
-        <Stack horizontal tokens={{ childrenGap: 8 }} verticalAlign="center">
-          <Stack.Item grow>
-            <SearchBox 
-              placeholder="Search contract text..." 
-              onChange={handleSearchChange}
-              value={searchText}
+    <Stack className="h-full flex flex-col">
+      <Stack horizontal horizontalAlign="space-between" verticalAlign="center" className="mb-2">
+        {enableSearch && (
+          <div className="flex-1 max-w-md">
+            <SearchBox
+              placeholder="Search in document..."
+              onChange={(_, newValue) => setSearchText(newValue || '')}
               styles={{ root: { width: '100%' } }}
             />
-          </Stack.Item>
-          <Text>
-            {searchResults.length > 0 ? 
-              `${currentSearchIndex + 1} of ${searchResults.length} results` : 
-              searchText ? 'No results' : ''}
-          </Text>
-          <TooltipHost content="Previous result">
-            <IconButton 
-              iconProps={{ iconName: 'ChevronUp' }} 
-              onClick={handlePrevResult}
-              disabled={searchResults.length === 0}
-              title="Previous result"
+          </div>
+        )}
+        
+        <div className="flex items-center">
+          {risks && risks.length > 0 && (
+            <Toggle
+              label="Show Risks"
+              checked={showRiskHighlights}
+              onChange={(_, checked) => setShowRiskHighlights(checked || false)}
+              styles={{ 
+                root: { marginRight: 16, marginBottom: 0 },
+                label: { marginBottom: 0 }
+              }}
             />
-          </TooltipHost>
-          <TooltipHost content="Next result">
-            <IconButton 
-              iconProps={{ iconName: 'ChevronDown' }} 
-              onClick={handleNextResult}
-              disabled={searchResults.length === 0}
-              title="Next result"
-            />
-          </TooltipHost>
-          <TooltipHost content={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}>
-            <DefaultButton 
-              iconProps={{ iconName: wordWrap ? 'WrapText' : 'UnwrapText' }}
-              onClick={handleToggleWordWrap}
-              title={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
-            />
-          </TooltipHost>
-        </Stack>
-      )}
-      
-      <div 
-        ref={containerRef}
-        style={{ 
-          height: 'calc(100% - 40px)',
-          overflow: 'auto',
-          border: '1px solid #e5e7eb',
-          borderRadius: '4px',
-          backgroundColor: '#ffffff',
-          padding: '12px',
-          flex: 1
-        }}
-      >
-        <div 
-          style={{ 
-            display: 'flex',
-            fontFamily: 'Consolas, Monaco, "Andale Mono", monospace',
-            fontSize: '14px',
-            lineHeight: '1.5',
-            color: '#374151',
-          }}
-        >
-          {lineNumbers && (
-            <div style={{
-              borderRight: '1px solid #e5e7eb',
-              paddingRight: '10px',
-              marginRight: '10px',
-              color: '#9CA3AF',
-              userSelect: 'none',
-              textAlign: 'right',
-              minWidth: '40px',
-              fontVariantNumeric: 'tabular-nums',
-            }}>
-              {lines.map((_, i) => (
-                <div key={i} style={{ height: '1.5em' }}>{i + 1}</div>
-              ))}
-            </div>
           )}
           
-          <div style={{ 
-            flex: 1,
-            whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
-            overflowX: wordWrap ? 'hidden' : 'auto',
-          }}>
-            {lines.map((line, i) => (
+          {enableWordWrap && (
+            <Toggle
+              label="Word Wrap"
+              checked={wordWrap}
+              onChange={(_, checked) => setWordWrap(checked || false)}
+              styles={{ 
+                root: { marginBottom: 0 },
+                label: { marginBottom: 0 }
+              }}
+            />
+          )}
+        </div>
+      </Stack>
+
+      <div className="flex-1 overflow-auto border border-gray-300 rounded bg-gray-50 font-mono text-sm">
+        {contractText ? (
+          <div className="p-4 min-h-full">
+            {contractText.split('\n').map((line, lineIndex) => (
               <div 
-                key={i} 
-                className="contract-text-line" 
-                style={{ 
-                  backgroundColor: searchResults[currentSearchIndex] === i ? '#F3F4F6' : 'transparent',
-                  paddingLeft: '4px',
-                  minHeight: '1.5em'
-                }}
+                key={`line-${lineIndex}`}
+                className="flex" 
               >
-                {highlightSearchTerm(line, i)}
+                {lineNumbers && (
+                  <div 
+                    className="select-none text-gray-400 text-right pr-2 border-r border-gray-300 flex-shrink-0" 
+                    style={{ minWidth: '3rem' }}
+                  >
+                    {lineIndex + 1}
+                  </div>
+                )}
+                <div 
+                  className="pl-2 flex-1"
+                  style={{ 
+                    whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
+                    overflowX: wordWrap ? 'visible' : 'auto'
+                  }}
+                >
+                  {highlightLine(line, lineIndex)}
+                </div>
               </div>
             ))}
           </div>
-        </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-gray-500">
+            No document text to display
+          </div>
+        )}
       </div>
+      
+      {risks && risks.length > 0 && showRiskHighlights && (
+        <div className="mt-2 p-2 bg-gray-100 rounded border border-gray-200">
+          <Text variant="small" className="font-medium mb-1">Risk Highlighting Legend:</Text>
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center">
+              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('critical') }}></div>
+              <Text variant="small">Critical</Text>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('high') }}></div>
+              <Text variant="small">High</Text>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('medium') }}></div>
+              <Text variant="small">Medium</Text>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('low') }}></div>
+              <Text variant="small">Low</Text>
+            </div>
+          </div>
+        </div>
+      )}
     </Stack>
   );
 };

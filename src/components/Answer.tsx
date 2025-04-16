@@ -49,10 +49,19 @@ export default function Answer({
 
     const content = getContent();
 
+    // Enhanced citation extraction to handle multiple formats
     const extractCitations = () => {
-        const citationRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
-        const matches = [...content.matchAll(citationRegex)];
-        return matches.map(match => match[1]);
+        // Handle bracketed citations like [filename.pdf]
+        const bracketRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
+        const bracketMatches = [...(content.matchAll(bracketRegex) || [])];
+        
+        // Also check for in-paragraph citations with the format "text" (filename.pdf)
+        const parenthesisRegex = /"[^"]+"\s+\(([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\)/gi;
+        const parenthesisMatches = [...(content.matchAll(parenthesisRegex) || [])];
+        
+        // Combine and deduplicate results
+        const allMatches = [...bracketMatches, ...parenthesisMatches].map(match => match[1]);
+        return [...new Set(allMatches)]; // Remove duplicates
     };
 
     const citations = extractCitations();
@@ -65,15 +74,43 @@ export default function Answer({
 
     const followupQuestions = extractFollowups();
 
-    // Helper function to determine if this answer relates to contract analysis
+    // Enhanced function to determine if this answer relates to contract analysis
     const isContractAnalysis = () => {
         if (typeof content === 'string') {
-            return content.includes('analyzed the contract') || 
-                   content.includes('contract analysis') ||
-                   content.includes('contract risk');
+            const analysisKeywords = [
+                'analyzed the contract', 
+                'contract analysis',
+                'contract risk',
+                'key risks identified',
+                'risks in the contract',
+                'contract terms',
+                'contract review',
+                'risk assessment'
+            ];
+            
+            return analysisKeywords.some(keyword => 
+                content.toLowerCase().includes(keyword.toLowerCase())
+            );
         }
         return false;
     };
+
+    // Process content to improve citation display
+    const processContent = () => {
+        let processedContent = content;
+        
+        // Replace bracketed citations with superscript numbers for cleaner display
+        if (citations.length > 0) {
+            citations.forEach((citation, index) => {
+                const regex = new RegExp(`\\[${citation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'g');
+                processedContent = processedContent.replace(regex, `<sup class="text-blue-600 font-bold">[${index + 1}]</sup>`);
+            });
+        }
+        
+        return processedContent;
+    };
+
+    const processedContent = processContent();
 
     // Handle the clipboard icon click - should open supporting content
     const handleClipboardIconClick = (e: React.MouseEvent) => {
@@ -102,7 +139,7 @@ export default function Answer({
                         </svg>
                     </div>
                     <div className="flex items-center gap-3">
-                        {/* IMPORTANT: This button now explicitly calls onSupportingContentClicked directly */}
+                        {/* Supporting content button */}
                         <button 
                             title="Show Supporting Content" 
                             onClick={handleClipboardIconClick} 
@@ -111,7 +148,7 @@ export default function Answer({
                             <ClipboardCopy size={20} />
                         </button>
 
-                        {/* Lightbulb button for thought process */}
+                        {/* Thought process button */}
                         <button 
                             title="Show Thought Process" 
                             onClick={onThoughtProcessClicked} 
@@ -120,7 +157,7 @@ export default function Answer({
                             <Lightbulb size={20} />
                         </button>
 
-                        {/* ClipboardList also opens supporting content for consistency */}
+                        {/* Alternative supporting content button */}
                         <button 
                             title="Show Supporting Content" 
                             onClick={onSupportingContentClicked} 
@@ -129,6 +166,7 @@ export default function Answer({
                             <ClipboardList size={20} />
                         </button>
 
+                        {/* Debug toggle button */}
                         <button 
                             title="Toggle Debug" 
                             onClick={() => setDebugMode(!debugMode)} 
@@ -136,6 +174,17 @@ export default function Answer({
                         >
                             <Bug size={20} />
                         </button>
+                        
+                        {/* Add analyze button if we detected this is contract analysis */}
+                        {isContractAnalysis() && onAnalyzeClick && (
+                            <button 
+                                title="Open Contract Analysis" 
+                                onClick={onAnalyzeClick} 
+                                className="hover:text-purple-500"
+                            >
+                                <FileSearch size={20} />
+                            </button>
+                        )}
                     </div>
                 </Stack>
             </Stack.Item>
@@ -151,7 +200,7 @@ export default function Answer({
                 <div className="text-base font-normal leading-snug py-4">
                     <div className="prose max-w-none">
                         <ReactMarkdown rehypePlugins={[rehypeRaw]} remarkPlugins={[remarkGfm]}>
-                            {content}
+                            {processedContent}
                         </ReactMarkdown>
                     </div>
                     {isStreaming && (
@@ -164,29 +213,32 @@ export default function Answer({
 
             {citations.length > 0 && (
                 <Stack.Item>
-                    <Stack horizontal wrap tokens={{ childrenGap: 5 }}>
-                        <span className="mr-1 font-semibold leading-6">Citations:</span>
+                    <div className="mt-2 mb-1">
+                        <span className="font-semibold leading-6">Citations:</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                         {citations.map((citation, i) => (
-                            <a
+                            <button
                                 key={i}
-                                className="font-medium leading-6 text-center rounded px-2 bg-blue-100 text-blue-800 no-underline cursor-pointer hover:underline"
-                                title={citation}
+                                className="font-medium text-sm leading-6 text-center rounded px-2 py-1 bg-blue-100 text-blue-800 hover:bg-blue-200 transition-colors"
+                                title={`View ${citation}`}
                                 onClick={() => onCitationClicked(citation)}
                             >
                                 {`${i + 1}. ${citation}`}
-                            </a>
+                            </button>
                         ))}
-                    </Stack>
+                    </div>
                 </Stack.Item>
             )}
 
-            {/* Add this explicit button for contract analysis responses */}
+            {/* Contract analysis results button */}
             {isContractAnalysis() && (
                 <Stack.Item className="mt-4">
                     <button
                         onClick={onSupportingContentClicked}
-                        className="w-full py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md font-medium transition-colors"
+                        className="w-full py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md font-medium transition-colors flex items-center justify-center gap-2"
                     >
+                        <FileSearch size={18} />
                         View Contract Analysis Results
                     </button>
                 </Stack.Item>
@@ -194,19 +246,21 @@ export default function Answer({
 
             {showFollowupQuestions && followupQuestions.length > 0 && onFollowupQuestionClicked && (
                 <Stack.Item>
-                    <Stack horizontal wrap className={`${citations.length > 0 ? "mt-2.5" : ""}`} tokens={{ childrenGap: 6 }}>
-                        <span className="mr-1 font-semibold leading-6">Follow-up questions:</span>
-                        {followupQuestions.map((question: string, i: number) => (
-                            <a
-                                key={i}
-                                className="font-semibold leading-6 text-center rounded px-2 bg-indigo-50 text-black italic no-underline cursor-pointer"
-                                title={question}
-                                onClick={() => onFollowupQuestionClicked?.(question)}
-                            >
-                                {question}
-                            </a>
-                        ))}
-                    </Stack>
+                    <div className="mt-3">
+                        <span className="font-semibold leading-6">Follow-up questions:</span>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                            {followupQuestions.map((question: string, i: number) => (
+                                <button
+                                    key={i}
+                                    className="font-medium text-sm leading-6 text-center rounded px-2 py-1 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 transition-colors"
+                                    title={question}
+                                    onClick={() => onFollowupQuestionClicked?.(question)}
+                                >
+                                    {question}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </Stack.Item>
             )}
         </Stack>
