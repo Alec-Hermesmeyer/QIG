@@ -142,7 +142,7 @@ const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({
             </TabList>
             
             {/* Export button - show when we have risks and contract text */}
-            {showExportButton && (
+            {/* {showExportButton && (
               <div className="px-4">
                 <ContractExporter 
                   contractText={contractText}
@@ -151,7 +151,7 @@ const ContractAnalysisDisplay: React.FC<ContractAnalysisDisplayProps> = ({
                   documentTitle={documentTitle}
                 />
               </div>
-            )}
+            )} */}
           </div>
 
           {/* Tab panels */}
