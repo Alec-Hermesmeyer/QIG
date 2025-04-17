@@ -68,57 +68,179 @@ export const ContractTextHighlighter: React.FC<Props> = ({
     setFilteredRisks(filtered);
   }, [risks, searchText, selectedSeverity]);
 
-  // Generate highlighted HTML
+  // Generate highlighted HTML with improved text search
   useEffect(() => {
     if (!contractText || filteredRisks.length === 0) {
       setHighlightedHtml(contractText || '');
       return;
     }
 
-    // Clone the contract text
-    let textWithHighlights = contractText;
-    
     // Create a structure to track all sections to highlight
     type HighlightSection = {
       text: string;
       score: string;
-      index: number;
+      startIndex: number;
+      endIndex: number;
       category: string;
       reason: string;
     };
     
     const sections: HighlightSection[] = [];
     
-    // Find all risk text occurrences in the full text
+    // Find all risk text occurrences in the full text with more robust search
     filteredRisks.forEach(risk => {
       // Skip if no text to highlight
       if (!risk.text) return;
       
-      const cleanRiskText = risk.text.replace(/["']/g, '').trim();
+      // Create a more gentle cleaning approach that preserves more context
+      const cleanRiskText = risk.text.trim();
       
-      // Skip empty or very short risk texts
-      if (cleanRiskText.length < 5) return;
+      // Don't skip short risks, they might be important
+      if (cleanRiskText.length === 0) return;
       
-      // Try to find the text in the contract
-      const index = textWithHighlights.indexOf(cleanRiskText);
+      // Use a more robust approach to find all occurrences
+      let startIndex = 0;
+      let foundIndex;
       
-      if (index >= 0) {
+      // Find all occurrences of this risk text
+      while ((foundIndex = contractText.indexOf(cleanRiskText, startIndex)) !== -1) {
         sections.push({
           text: cleanRiskText,
           score: risk.score,
-          index,
+          startIndex: foundIndex,
+          endIndex: foundIndex + cleanRiskText.length,
           category: risk.category || '',
           reason: risk.reason || '',
         });
+        
+        // Move to position after this match to find the next one
+        startIndex = foundIndex + 1;
+      }
+      
+      // If we didn't find an exact match, try with a fuzzy matching approach
+      // for risks with location information
+      if (sections.length === 0 && risk.location) {
+        try {
+          // If location contains line/paragraph info, use it
+          const locationMatch = /paragraph (\d+)|line (\d+)/i.exec(risk.location);
+          if (locationMatch) {
+            const paragraphs = contractText.split('\n\n');
+            const lines = contractText.split('\n');
+            
+            let targetText = '';
+            let targetIndex = -1;
+            
+            if (locationMatch[1]) { // Paragraph reference
+              const paragraphNum = parseInt(locationMatch[1], 10) - 1;
+              if (paragraphs[paragraphNum]) {
+                targetText = paragraphs[paragraphNum];
+                
+                // Find the index of this paragraph in the full text
+                let tempIndex = 0;
+                for (let i = 0; i < paragraphNum; i++) {
+                  tempIndex += paragraphs[i].length + 2; // +2 for '\n\n'
+                }
+                
+                targetIndex = tempIndex;
+              }
+            } else if (locationMatch[2]) { // Line reference
+              const lineNum = parseInt(locationMatch[2], 10) - 1;
+              if (lines[lineNum]) {
+                targetText = lines[lineNum];
+                
+                // Find the index of this line in the full text
+                let tempIndex = 0;
+                for (let i = 0; i < lineNum; i++) {
+                  tempIndex += lines[i].length + 1; // +1 for '\n'
+                }
+                
+                targetIndex = tempIndex;
+              }
+            }
+            
+            // If we found a target section, check if risk text is a substring
+            if (targetText && targetIndex >= 0) {
+              // Try to find a fuzzy match in this section
+              const words = cleanRiskText.split(' ');
+              if (words.length > 3) { // Only for risks with enough words to be distinctive
+                // Look for 3+ consecutive words as a match
+                for (let i = 0; i <= words.length - 3; i++) {
+                  const phrase = words.slice(i, i + 3).join(' ');
+                  const phraseIndex = targetText.indexOf(phrase);
+                  
+                  if (phraseIndex >= 0) {
+                    // Found a partial match in the correct location
+                    sections.push({
+                      text: targetText,
+                      score: risk.score,
+                      startIndex: targetIndex,
+                      endIndex: targetIndex + targetText.length,
+                      category: risk.category || '',
+                      reason: risk.reason || '',
+                    });
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error in fuzzy matching:", error);
+        }
       }
     });
     
-    // Sort sections by index (from end to start to avoid position changes)
-    sections.sort((a, b) => b.index - a.index);
+    // Sort sections by start index (ascending order)
+    sections.sort((a, b) => a.startIndex - b.startIndex);
     
-    // Apply highlights from end to start
+    // Handle overlapping sections by merging them
+    const mergedSections: HighlightSection[] = [];
+    
     for (const section of sections) {
-      const { text, score, index, category, reason } = section;
+      if (mergedSections.length === 0) {
+        mergedSections.push(section);
+        continue;
+      }
+      
+      const lastSection = mergedSections[mergedSections.length - 1];
+      
+      // Check if current section overlaps with the last merged section
+      if (section.startIndex <= lastSection.endIndex) {
+        // Sections overlap, merge them and take the higher severity
+        const severityOrder = { 'critical': 0, 'high': 1, 'medium': 2, 'low': 3 };
+        const highestSeverity = 
+          (severityOrder[section.score.toLowerCase() as keyof typeof severityOrder] || 4) < 
+          (severityOrder[lastSection.score.toLowerCase() as keyof typeof severityOrder] || 4) ? 
+          section.score : lastSection.score;
+        
+        // Update the last section with merged information
+        lastSection.endIndex = Math.max(lastSection.endIndex, section.endIndex);
+        lastSection.score = highestSeverity;
+        lastSection.text = contractText.substring(lastSection.startIndex, lastSection.endIndex);
+        
+        // Combine categories and reasons
+        lastSection.category = `${lastSection.category}, ${section.category}`.trim();
+        lastSection.reason = 
+          lastSection.reason && section.reason ? 
+          `${lastSection.reason}; ${section.reason}` : 
+          (lastSection.reason || section.reason || '');
+      } else {
+        // No overlap, add as a new section
+        mergedSections.push(section);
+      }
+    }
+    
+    // Apply highlights from end to start (to avoid position changes)
+    let textWithHighlights = contractText;
+    
+    // Sort merged sections by end index (descending)
+    mergedSections.sort((a, b) => b.endIndex - a.endIndex);
+    
+    for (const section of mergedSections) {
+      const { text, score, startIndex, endIndex, category, reason } = section;
+      
+      // Extract the actual text from the original contract text
+      const actualText = contractText.substring(startIndex, endIndex);
       
       // Create the highlighted version with tooltip attributes
       const highlighted = showHighlights 
@@ -127,14 +249,14 @@ export const ContractTextHighlighter: React.FC<Props> = ({
             data-risk-category="${category.replace(/"/g, '&quot;')}"
             data-risk-score="${score}"
             data-risk-reason="${reason.replace(/"/g, '&quot;')}"
-          >${text}</span>`
-        : text; // Don't highlight if highlights are turned off
+          >${actualText}</span>`
+        : actualText; // Don't highlight if highlights are turned off
       
       // Replace the text with highlighted version
       textWithHighlights = 
-        textWithHighlights.substring(0, index) + 
+        textWithHighlights.substring(0, startIndex) + 
         highlighted + 
-        textWithHighlights.substring(index + text.length);
+        textWithHighlights.substring(endIndex);
     }
     
     // Add paragraph formatting for readability

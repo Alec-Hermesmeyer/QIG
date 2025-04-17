@@ -36,6 +36,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   },
   ref
 ) {
+  // Original state
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [accumulatedContent, setAccumulatedContent] = useState('');
