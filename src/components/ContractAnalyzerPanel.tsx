@@ -282,34 +282,49 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   const extractJSONFromResponse = (text: string): ContractAnalysisResponse | null => {
     try {
-      // First try direct parsing in case the entire response is valid JSON
-      const directParse = JSON.parse(text);
-      if (isValidAnalysisResponse(directParse)) {
-        return directParse;
-      }
-    } catch (e) {
-      // Not valid JSON, continue with extraction
-    }
-  
-    // Try to find a JSON block in the text
-    try {
-      // Look for text that starts with { and ends with }
-      const jsonRegex = /\{[\s\S]*\}/;
-      const match = text.match(jsonRegex);
+      // Try to find JSON content using regex
+      const jsonRegex = /\{[\s\S]*?\}(?!\})/g;
+      const matches = text.match(jsonRegex);
       
-      if (match) {
-        const jsonStr = match[0];
-        const parsed = JSON.parse(jsonStr);
-        
-        if (isValidAnalysisResponse(parsed)) {
-          return parsed;
+      if (matches) {
+        // Try each potential JSON match
+        for (const match of matches) {
+          try {
+            const parsed = JSON.parse(match);
+            
+            // Validate structure of parsed JSON
+            if (parsed && 
+                typeof parsed === 'object' && 
+                Array.isArray(parsed.risks) && 
+                Array.isArray(parsed.mitigation)) {
+              return parsed as ContractAnalysisResponse;
+            }
+          } catch (e) {
+            // This match wasn't valid JSON, continue to next match
+            continue;
+          }
         }
       }
+      
+      // If no matches worked, try parsing the whole text directly
+      // This handles cases where the entire response is valid JSON with no extra text
+      try {
+        const directParse = JSON.parse(text);
+        if (directParse && 
+            typeof directParse === 'object' && 
+            Array.isArray(directParse.risks) && 
+            Array.isArray(directParse.mitigation)) {
+          return directParse as ContractAnalysisResponse;
+        }
+      } catch (e) {
+        // Direct parsing failed, that's fine
+      }
+      
+      return null;
     } catch (e) {
-      console.error('Failed to extract JSON from response:', e);
+      console.error('Error extracting JSON:', e);
+      return null;
     }
-    
-    return null;
   };
   const isValidAnalysisResponse = (obj: any): obj is ContractAnalysisResponse => {
     interface RiskItem {
@@ -577,30 +592,24 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   
   // Parse risks from raw analysis text
   const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
-    // First try to parse as JSON (from new improved prompt)
+    // First try to parse as JSON
+    const jsonData = extractJSONFromResponse(rawAnalysis);
     
-    try {
-      // Look for JSON structure in the text
-      const jsonData = extractJSONFromResponse(rawAnalysis);
-  
-      if (jsonData) {
-        return jsonData.risks.map(risk => ({
-          category: risk.category,
-          score: risk.score,
-          text: risk.text,
-          reason: risk.reason,
-          location: risk.location
-        }));
-      }
-    
-    } catch (e) {
-      console.log('JSON parsing failed, falling back to regex parsing', e);
-      // Continue with regex parsing as a fallback
+    if (jsonData && jsonData.risks && jsonData.risks.length > 0) {
+      console.log('Successfully parsed risks from JSON response');
+      return jsonData.risks.map(risk => ({
+        category: risk.category || 'Unknown Category',
+        score: risk.score || 'Unknown Score',
+        text: risk.text || 'Unknown Text',
+        reason: risk.reason || 'Unknown Reason',
+        location: risk.location || 'Unknown Location'
+      }));
     }
-  
-    // Fallback to regex parsing for non-JSON formatted responses
+    
+    // JSON parsing failed, fall back to regex parsing
+    console.log('JSON parsing failed, falling back to regex parsing for risks');
     const risks: Risk[] = [];
-  
+    
     // Try to find risks with the expected structure
     const riskSections = rawAnalysis.split(/\n\s*(?:Risk \d+:|Risk Category:)/i);
     
@@ -613,23 +622,31 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         const category = categoryMatch ? categoryMatch[1].trim() : 'Unknown Category';
         
         // Extract score
-        const scoreMatch = section.match(/Risk Score:\s*([^$\n]*?)(?=\s*Risky Contract Text:|$)/i);
+        const scoreMatch = section.match(/Risk Score:\s*([^$\n]*?)(?=\s*Risky Contract Text:|Contract Text:|$)/i);
         const score = scoreMatch ? scoreMatch[1].trim() : 'Unknown Score';
         
-        // Extract text
-        const textMatch = section.match(/(?:Risky Contract Text:|Contract Text:)\s*(?:"([^"]*?)"|([^"$\n]*?)(?=\s*Why This Is a Risk:|$))/i);
+        // Extract text - look for both "Risky Contract Text:" and just "Contract Text:"
+        const textMatch = section.match(/(?:Risky Contract Text:|Contract Text:)\s*(?:"([^"]*?)"|([^"\n]*?)(?=\s*Why This Is a Risk:|$))/i);
         const text = textMatch ? (textMatch[1] || textMatch[2] || '').trim() : 'Unknown Text';
         
         // Extract reason
-        const reasonMatch = section.match(/Why This Is a Risk:\s*([^$\n]*?)(?=\s*Contract Location:|$)/i);
+        const reasonMatch = section.match(/Why This Is a Risk:\s*([^$\n]*?)(?=\s*Contract Location:|Location:|$)/i);
         const reason = reasonMatch ? reasonMatch[1].trim() : 'Unknown Reason';
         
-        // Extract location
-        const locationMatch = section.match(/Contract Location:\s*([^$\n]*?)(?=\s*(?:Risk Category:|Risk \d+:|Mitigation Summary:|$))/i);
+        // Extract location - look for both "Contract Location:" and just "Location:"
+        const locationMatch = section.match(/(?:Contract Location:|Location:)\s*([^$\n]*?)(?=\s*(?:Risk Category:|Risk \d+:|Mitigation Summary:|$))/i);
         const location = locationMatch ? locationMatch[1].trim() : 'Unknown Location';
         
-        // Only add if we have at least category and score
-        if (category !== 'Unknown Category' || score !== 'Unknown Score') {
+        // Skip template/placeholder risks
+        if (category.includes('[Category]') || 
+            score.includes('[Score]') || 
+            text.includes('[Exact quote]') || 
+            reason.includes('[Explanation]')) {
+          continue;
+        }
+        
+        // Only add if we have real category and score (not just placeholders)
+        if (category !== 'Unknown Category' && score !== 'Unknown Score') {
           risks.push({
             category,
             score,
@@ -642,10 +659,9 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         console.error('Error parsing risk section:', e);
       }
     }
-  
+    
     return risks;
   };
- 
 // Then update the generateFixSuggestion function to use Groq instead of OpenAI:
 const generateFixSuggestion = async (risk: Risk) => {
   if (!risk) return;
@@ -954,31 +970,31 @@ Please provide:
 
   // Parse mitigation points from raw analysis text
   const parseMitigationFromAnalysis = (rawAnalysis: string): string[] => {
-    // First try to parse as JSON (from new improved prompt)
-    try {
-      // Look for JSON structure in the text
-      const jsonData = extractJSONFromResponse(rawAnalysis);
-  
-      if (jsonData) {
-        return jsonData.mitigation;
-      }
-      
-    } catch (e) {
-      console.log('JSON parsing failed, falling back to regex parsing', e);
-      // Continue with regex parsing as a fallback
+    // First try to parse as JSON
+    const jsonData = extractJSONFromResponse(rawAnalysis);
+    
+    if (jsonData && jsonData.mitigation && jsonData.mitigation.length > 0) {
+      console.log('Successfully parsed mitigation from JSON response');
+      // Filter out any empty items and limit to 10 items
+      return jsonData.mitigation
+        .filter(item => item && item.trim().length > 0)
+        .slice(0, 10);
     }
-  
-    // Fallback to traditional parsing methods
+    
+    // JSON parsing failed, fall back to regex parsing
+    console.log('JSON parsing failed, falling back to regex parsing for mitigation');
+    
+    // Patterns to match mitigation sections
     const mitigationPatterns = [
       /Mitigation Summary:([\s\S]*?)(?=$)/i,
       /Mitigation Recommendations:([\s\S]*?)(?=$)/i,
       /Recommended Mitigations:([\s\S]*?)(?=$)/i,
       /Mitigation Strategies:([\s\S]*?)(?=$)/i,
     ];
-  
+    
     for (let i = 0; i < mitigationPatterns.length; i++) {
       const mitigationMatch = rawAnalysis.match(mitigationPatterns[i]);
-      if (mitigationMatch) {
+      if (mitigationMatch && mitigationMatch[1]) {
         // Extract bullet points and number lists
         const points = mitigationMatch[1]
           .split(/\n/)
@@ -992,14 +1008,19 @@ Please provide:
           )
           .map(line => line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, ''));
         
-        // Deduplicate and limit to 10 points max
-        const uniquePoints = [...new Set(points)].slice(0, 10);
+        // Remove duplicates and limit to 10 points max
+        const uniquePoints = [...new Set(points)]
+          .filter(point => !point.includes('*') && !point.includes('**'))
+          .slice(0, 10);
+        
         return uniquePoints;
       }
     }
-  
+    
     return [];
   };
+  
+  
   const preprocessAnalysisResponse = (response: string): string => {
     // Remove any system notes or redundant parts
     let cleaned = response
@@ -1016,134 +1037,164 @@ Please provide:
   
   
   // Handle the analysis process
+  // Updated handleAnalyze function to request JSON responses
   const handleAnalyze = async () => {
-  if (!contractText) return;
-
-  try {
-    setLoading(true);
-    setError(null);
-    setAnalysis('');
-    setParsedRisks([]);
-    setMitigationPoints([]);
-    setProgress(0);
-    setActiveTab('analysis');
-    
-    const chunks = chunkText(contractText, settings.chunkSize);
-    setTotalChunks(chunks.length);
-    
-    let fullAnalysis = '';
-    
-    const promptIntro = getPrompt();
-    
-    for (let i = 0; i < chunks.length; i++) {
-      setCurrentChunk(i + 1);
+    if (!contractText) return;
+  
+    try {
+      setLoading(true);
+      setError(null);
+      setAnalysis('');
+      setParsedRisks([]);
+      setMitigationPoints([]);
+      setProgress(0);
+      setActiveTab('analysis');
       
-      try {
-        const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
+      const chunks = chunkText(contractText, settings.chunkSize);
+      setTotalChunks(chunks.length);
+      
+      let fullAnalysis = '';
+      
+      // Get the base prompt
+      const basePrompt = getPrompt();
+      
+      // Use a more clear format for Groq that doesn't rely on the response_format parameter
+      const promptIntro = `${basePrompt}
+  
+  Your task is to analyze the contract text and identify the key risks.
+  
+  For each risk, specify:
+  1. A risk category (Financial, Schedule, Liability, Scope, etc.)
+  2. A risk score (Critical, High, Medium, Low)
+  3. The specific contract text that creates the risk
+  4. An explanation of why this creates a risk
+  5. The location in the contract (if identifiable)
+  
+  Follow this format strictly:
+  
+  Risk Category: [Category]
+  Risk Score: [Score]
+  Risky Contract Text: "[Exact text]"
+  Why This Is a Risk: [Explanation]
+  Contract Location: [Section reference]
+  
+  After listing all risks (identify 5-7 most important risks), provide a "Mitigation Summary:" section with 5-7 bullet points of recommended actions.`;
+  
+      for (let i = 0; i < chunks.length; i++) {
+        setCurrentChunk(i + 1);
         
-        // Using Groq API call
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'llama3-8b-8192', // or your preferred Groq model
-            messages: [{ role: 'user', content: chunkPrompt }],
-            temperature: settings.temperature,
-            max_tokens: 4096, // Adjust based on expected response length
-          }),
-        });
-        
-        if (!res.ok) {
-          let errorMessage = `API error: ${res.status} ${res.statusText}`;
-          try {
-            const errorData = await res.json();
-            errorMessage = errorData.error?.message || errorMessage;
-          } catch (e) {
-            // If JSON parsing fails, use the status text
+        try {
+          const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
+          
+          // Using Groq API call with text-based format instead of JSON
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: settings.model || 'llama3-70b-8192', // Use 70B model for better results
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are a contract analysis expert. Analyze the contract carefully and identify all significant risks using the exact format specified in the prompt.'
+                },
+                { 
+                  role: 'user', 
+                  content: chunkPrompt 
+                }
+              ],
+              temperature: 0.2, // Lower temperature for more consistent outputs
+              max_tokens: 4096,
+              // Remove response_format: { type: "json_object" } since it's causing errors
+            }),
+          });
+          
+          if (!res.ok) {
+            let errorMessage = `API error: ${res.status} ${res.statusText}`;
+            try {
+              const errorData = await res.json();
+              errorMessage = errorData.error?.message || errorMessage;
+            } catch (e) {
+              // If JSON parsing fails, use the status text
+            }
+            throw new Error(errorMessage);
           }
-          throw new Error(errorMessage);
-        }
-        
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content;
-        
-        if (content) {
-          const partHeader = chunks.length > 1 
-            ? `Part ${i + 1} of ${chunks.length}\n`
-            : '';
+          
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content;
+          
+          if (content) {
+            const partHeader = chunks.length > 1 
+              ? `Part ${i + 1} of ${chunks.length}\n`
+              : '';
+              
+            fullAnalysis += (i > 0 ? '\n\n' : '') + partHeader + content;
+            setAnalysis(fullAnalysis);
             
-          fullAnalysis += (i > 0 ? '\n\n' : '') + partHeader + content;
+            // Parse risks and mitigation points
+            const currentRisks = parseRisksFromAnalysis(fullAnalysis);
+            const currentMitigation = parseMitigationFromAnalysis(fullAnalysis);
+            
+            setParsedRisks(currentRisks);
+            setMitigationPoints(currentMitigation);
+          }
           
-          // Preprocess the response before setting it
-          const cleanedAnalysis = preprocessAnalysisResponse(fullAnalysis);
-          setAnalysis(cleanedAnalysis);
+          // Update progress
+          setProgress(((i + 1) / chunks.length) * 100);
           
-          // Parse risks and mitigation points from cleaned analysis
-          const currentRisks = parseRisksFromAnalysis(cleanedAnalysis);
-          const currentMitigation = parseMitigationFromAnalysis(cleanedAnalysis);
-          
-          setParsedRisks(currentRisks);
-          setMitigationPoints(currentMitigation);
+        } catch (chunkError: any) {
+          console.error(`Error processing chunk ${i + 1}:`, chunkError);
+          fullAnalysis += `\n\n---\n\n## Error in Part ${i + 1}\n\nAn error occurred while analyzing this section: ${chunkError.message || 'Unknown error'}`;
+          setAnalysis(fullAnalysis);
         }
-        
-        // Update progress
-        setProgress(((i + 1) / chunks.length) * 100);
-        
-      } catch (chunkError: any) {
-        console.error(`Error processing chunk ${i + 1}:`, chunkError);
-        fullAnalysis += `\n\n---\n\n## Error in Part ${i + 1}\n\nAn error occurred while analyzing this section: ${chunkError.message || 'Unknown error'}`;
-        setAnalysis(fullAnalysis);
-      }
-    }
-    
-    // Analysis is complete - determine if we should show the highlighted view
-    const finalRisks = parseRisksFromAnalysis(fullAnalysis);
-    const finalMitigation = parseMitigationFromAnalysis(fullAnalysis);
-    
-    // Set final state
-    setParsedRisks(finalRisks);
-    setMitigationPoints(finalMitigation);
-    
-    // Call the onAnalysisComplete callback if provided
-    if (onAnalysisComplete) {
-      onAnalysisComplete(fullAnalysis, finalRisks, finalMitigation, contractText);
-    }
-    
-    // If we found risks, switch to the highlighted view to show them in context
-    if (finalRisks.length > 0) {
-      // If using the separate tab approach:
-      if (viewMode === 'card' || viewMode === 'table') {
-        // Wait a moment to let the UI update with analysis before switching tabs
-        setTimeout(() => {
-          // Option 1: Switch directly to preview tab with highlights
-          setActiveTab('preview');
-          
-          // Option 2: If you added a dedicated highlights tab
-          // setActiveTab('highlighted');
-        }, 500);
       }
       
-      // Scroll to top of analysis
-      if (analysisContainerRef.current) {
-        analysisContainerRef.current.scrollTop = 0;
+      // Analysis is complete - determine if we should show the highlighted view
+      const finalRisks = parseRisksFromAnalysis(fullAnalysis);
+      const finalMitigation = parseMitigationFromAnalysis(fullAnalysis);
+      
+      // Set final state
+      setParsedRisks(finalRisks);
+      setMitigationPoints(finalMitigation);
+      
+      // Call the onAnalysisComplete callback if provided
+      if (onAnalysisComplete) {
+        onAnalysisComplete(fullAnalysis, finalRisks, finalMitigation, contractText);
       }
+      
+      // If we found risks, switch to the highlighted view to show them in context
+      if (finalRisks.length > 0) {
+        // If using the separate tab approach:
+        if (viewMode === 'card' || viewMode === 'table') {
+          // Wait a moment to let the UI update with analysis before switching tabs
+          setTimeout(() => {
+            // Option 1: Switch directly to preview tab with highlights
+            setActiveTab('preview');
+            
+            // Option 2: If you added a dedicated highlights tab
+            // setActiveTab('highlighted');
+          }, 500);
+        }
+        
+        // Scroll to top of analysis
+        if (analysisContainerRef.current) {
+          analysisContainerRef.current.scrollTop = 0;
+        }
+      }
+      
+    } catch (analysisError: any) {
+      console.error('Analysis error:', analysisError);
+      setError({
+        message: 'Analysis failed',
+        details: analysisError.message || 'An error occurred during contract analysis. Please try again.'
+      });
+    } finally {
+      setLoading(false);
+      setProgress(100);
     }
-    
-  } catch (analysisError: any) {
-    console.error('Analysis error:', analysisError);
-    setError({
-      message: 'Analysis failed',
-      details: analysisError.message || 'An error occurred during contract analysis. Please try again.'
-    });
-  } finally {
-    setLoading(false);
-    setProgress(100);
-  }
-};
-
+  };
   // Handle copy to clipboard
   const handleCopyToClipboard = async () => {
     try {
