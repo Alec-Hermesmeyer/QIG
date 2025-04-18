@@ -590,78 +590,6 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     // Here we're just using the sample data set when the comparison button is clicked
   };
   
-  // Parse risks from raw analysis text
-  const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
-    // First try to parse as JSON
-    const jsonData = extractJSONFromResponse(rawAnalysis);
-    
-    if (jsonData && jsonData.risks && jsonData.risks.length > 0) {
-      console.log('Successfully parsed risks from JSON response');
-      return jsonData.risks.map(risk => ({
-        category: risk.category || 'Unknown Category',
-        score: risk.score || 'Unknown Score',
-        text: risk.text || 'Unknown Text',
-        reason: risk.reason || 'Unknown Reason',
-        location: risk.location || 'Unknown Location'
-      }));
-    }
-    
-    // JSON parsing failed, fall back to regex parsing
-    console.log('JSON parsing failed, falling back to regex parsing for risks');
-    const risks: Risk[] = [];
-    
-    // Try to find risks with the expected structure
-    const riskSections = rawAnalysis.split(/\n\s*(?:Risk \d+:|Risk Category:)/i);
-    
-    for (let i = 1; i < riskSections.length; i++) { // Start from 1 to skip the intro part
-      const section = "Risk Category:" + riskSections[i].trim();
-      
-      try {
-        // Extract category
-        const categoryMatch = section.match(/Risk Category:\s*([^$\n]*?)(?=\s*Risk Score:|$)/i);
-        const category = categoryMatch ? categoryMatch[1].trim() : 'Unknown Category';
-        
-        // Extract score
-        const scoreMatch = section.match(/Risk Score:\s*([^$\n]*?)(?=\s*Risky Contract Text:|Contract Text:|$)/i);
-        const score = scoreMatch ? scoreMatch[1].trim() : 'Unknown Score';
-        
-        // Extract text - look for both "Risky Contract Text:" and just "Contract Text:"
-        const textMatch = section.match(/(?:Risky Contract Text:|Contract Text:)\s*(?:"([^"]*?)"|([^"\n]*?)(?=\s*Why This Is a Risk:|$))/i);
-        const text = textMatch ? (textMatch[1] || textMatch[2] || '').trim() : 'Unknown Text';
-        
-        // Extract reason
-        const reasonMatch = section.match(/Why This Is a Risk:\s*([^$\n]*?)(?=\s*Contract Location:|Location:|$)/i);
-        const reason = reasonMatch ? reasonMatch[1].trim() : 'Unknown Reason';
-        
-        // Extract location - look for both "Contract Location:" and just "Location:"
-        const locationMatch = section.match(/(?:Contract Location:|Location:)\s*([^$\n]*?)(?=\s*(?:Risk Category:|Risk \d+:|Mitigation Summary:|$))/i);
-        const location = locationMatch ? locationMatch[1].trim() : 'Unknown Location';
-        
-        // Skip template/placeholder risks
-        if (category.includes('[Category]') || 
-            score.includes('[Score]') || 
-            text.includes('[Exact quote]') || 
-            reason.includes('[Explanation]')) {
-          continue;
-        }
-        
-        // Only add if we have real category and score (not just placeholders)
-        if (category !== 'Unknown Category' && score !== 'Unknown Score') {
-          risks.push({
-            category,
-            score,
-            text,
-            reason,
-            location
-          });
-        }
-      } catch (e) {
-        console.error('Error parsing risk section:', e);
-      }
-    }
-    
-    return risks;
-  };
 // Then update the generateFixSuggestion function to use Groq instead of OpenAI:
 const generateFixSuggestion = async (risk: Risk) => {
   if (!risk) return;
@@ -970,26 +898,12 @@ Please provide:
 
   // Parse mitigation points from raw analysis text
   const parseMitigationFromAnalysis = (rawAnalysis: string): string[] => {
-    // First try to parse as JSON
-    const jsonData = extractJSONFromResponse(rawAnalysis);
-    
-    if (jsonData && jsonData.mitigation && jsonData.mitigation.length > 0) {
-      console.log('Successfully parsed mitigation from JSON response');
-      // Filter out any empty items and limit to 10 items
-      return jsonData.mitigation
-        .filter(item => item && item.trim().length > 0)
-        .slice(0, 10);
-    }
-    
-    // JSON parsing failed, fall back to regex parsing
-    console.log('JSON parsing failed, falling back to regex parsing for mitigation');
-    
     // Patterns to match mitigation sections
     const mitigationPatterns = [
-      /Mitigation Summary:([\s\S]*?)(?=$)/i,
-      /Mitigation Recommendations:([\s\S]*?)(?=$)/i,
-      /Recommended Mitigations:([\s\S]*?)(?=$)/i,
-      /Mitigation Strategies:([\s\S]*?)(?=$)/i,
+      /Mitigation Summary:([\s\S]*?)(?=\n\nRisk Category:|\n\n\*\*|\n\nPart \d+|$)/i,
+      /Mitigation Recommendations:([\s\S]*?)(?=\n\nRisk Category:|\n\n\*\*|\n\nPart \d+|$)/i,
+      /Recommended Mitigations:([\s\S]*?)(?=\n\nRisk Category:|\n\n\*\*|\n\nPart \d+|$)/i,
+      /Mitigation Strategies:([\s\S]*?)(?=\n\nRisk Category:|\n\n\*\*|\n\nPart \d+|$)/i,
     ];
     
     for (let i = 0; i < mitigationPatterns.length; i++) {
@@ -1010,14 +924,34 @@ Please provide:
         
         // Remove duplicates and limit to 10 points max
         const uniquePoints = [...new Set(points)]
-          .filter(point => !point.includes('*') && !point.includes('**'))
+          .filter(point => !point.includes('[') && !point.includes('**'))
           .slice(0, 10);
         
-        return uniquePoints;
+        return uniquePoints.length > 0 ? uniquePoints : [];
       }
     }
     
-    return [];
+    // If no structured mitigation section was found, try to extract any bullet points
+    // from the end of the document
+    const endOfDoc = rawAnalysis.split(/Mitigation/i).pop() || '';
+    const bulletPoints = endOfDoc
+      .split(/\n/)
+      .map(line => line.trim())
+      .filter(line => 
+        (line.startsWith('-') || 
+         line.startsWith('•') || 
+         line.startsWith('*') || 
+         /^\d+\./.test(line)) && 
+        line.length > 10
+      )
+      .map(line => line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, ''));
+    
+    // Remove duplicates and limit to 10 points max
+    const uniquePoints = [...new Set(bulletPoints)]
+      .filter(point => !point.includes('[') && !point.includes('**'))
+      .slice(0, 10);
+    
+    return uniquePoints;
   };
   
   
@@ -1035,6 +969,138 @@ Please provide:
     return cleaned;
   };
   
+  const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
+    const risks: Risk[] = [];
+    
+    // Enhanced pattern that handles location extraction better
+    const riskPattern = /Risk Category:\s*([^\n]*)\s*\nRisk Score:\s*([^\n]*)\s*\nRisky Contract Text:\s*(?:"([^"]*)"|([\s\S]*?)(?=\nWhy This Is a Risk:))\s*\nWhy This Is a Risk:\s*([\s\S]*?)(?=\nContract Location:|\n\nRisk Category:|\n\nMitigation Summary:|\n\n\*\*|\n\n$|\n\nPart \d+|$)\s*(?:\nContract Location:\s*([^\n]*))?/gi;
+    
+    let match;
+    let riskCount = 0;
+    while ((match = riskPattern.exec(rawAnalysis)) !== null) {
+      const category = match[1]?.trim() || 'Unknown Category';
+      const score = match[2]?.trim() || 'Unknown Score';
+      const text = (match[3] || match[4] || '').trim();
+      const reason = match[5]?.trim() || 'Unknown Reason';
+      let location = match[6]?.trim() || '';
+      
+      // Improved location handling
+      if (!location || location.toLowerCase().includes('unknown')) {
+        // Try to infer location from context
+        const textLower = text.toLowerCase();
+        
+        // Look for section patterns in the risk text itself
+        if (textLower.includes('section') || textLower.includes('article')) {
+          const sectionMatch = text.match(/(?:Section|Article)\s+(\d+(?:\.\d+)*)/i);
+          if (sectionMatch) {
+            location = sectionMatch[0];
+          }
+        }
+        
+        // If still no location, use a more meaningful default
+        if (!location || location.toLowerCase().includes('unknown')) {
+          // Use the risk category to create a more meaningful location
+          location = `${category} clause (exact section not specified)`;
+        }
+      }
+      
+      // Skip placeholder risks
+      if (category.includes('[Category]') || 
+          score.includes('[Score]') || 
+          text.includes('[Exact text]') || 
+          reason.includes('[Explanation]')) {
+        continue;
+      }
+      
+      riskCount++;
+      risks.push({
+        category,
+        score,
+        text,
+        reason,
+        location
+      });
+    }
+    
+    // If the main regex pattern didn't match any risks, try a more flexible approach
+    if (risks.length === 0) {
+      // Try to find risks with the expected structure
+      const riskSections = rawAnalysis.split(/\n\s*(?:Risk \d+:|Risk Category:)/i);
+      
+      for (let i = 1; i < riskSections.length; i++) { // Start from 1 to skip the intro part
+        const section = "Risk Category:" + riskSections[i].trim();
+        
+        try {
+          // Extract category
+          const categoryMatch = section.match(/Risk Category:\s*([^$\n]*?)(?=\s*Risk Score:|$)/i);
+          const category = categoryMatch ? categoryMatch[1].trim() : 'Unknown Category';
+          
+          // Extract score
+          const scoreMatch = section.match(/Risk Score:\s*([^$\n]*?)(?=\s*Risky Contract Text:|Contract Text:|$)/i);
+          const score = scoreMatch ? scoreMatch[1].trim() : 'Unknown Score';
+          
+          // Extract text - look for both "Risky Contract Text:" and just "Contract Text:"
+          const textMatch = section.match(/(?:Risky Contract Text:|Contract Text:)\s*(?:"([^"]*?)"|([^"\n]*?)(?=\s*Why This Is a Risk:|$))/i);
+          const text = textMatch ? (textMatch[1] || textMatch[2] || '').trim() : 'Unknown Text';
+          
+          // Extract reason
+          const reasonMatch = section.match(/Why This Is a Risk:\s*([^$\n]*?)(?=\s*Contract Location:|Location:|$)/i);
+          const reason = reasonMatch ? reasonMatch[1].trim() : 'Unknown Reason';
+          
+          // Extract location with improved handling
+          const locationMatch = section.match(/(?:Contract Location:|Location:)\s*([^$\n]*?)(?=\s*(?:Risk Category:|Risk \d+:|Mitigation Summary:|$))/i);
+          let location = locationMatch ? locationMatch[1].trim() : '';
+          
+          // Improved location handling
+          if (!location || location.toLowerCase().includes('unknown')) {
+            // Try to infer location from context
+            const textLower = text.toLowerCase();
+            
+            // Look for section patterns in the risk text itself
+            if (textLower.includes('section') || textLower.includes('article')) {
+              const sectionMatch = text.match(/(?:Section|Article)\s+(\d+(?:\.\d+)*)/i);
+              if (sectionMatch) {
+                location = sectionMatch[0];
+              }
+            }
+            
+            // If still no location, use a more meaningful default
+            if (!location || location.toLowerCase().includes('unknown')) {
+              // Use the risk category to create a more meaningful location
+              location = `${category} clause (exact section not specified)`;
+            }
+          }
+          
+          // Skip template/placeholder risks
+          if (category.includes('[Category]') || 
+              score.includes('[Score]') || 
+              text.includes('[Exact text]') || 
+              reason.includes('[Explanation]')) {
+            continue;
+          }
+          
+          // Only add if we have real category and score (not just placeholders)
+          if (category !== 'Unknown Category' && score !== 'Unknown Score') {
+            riskCount++;
+            risks.push({
+              category,
+              score,
+              text,
+              reason,
+              location
+            });
+          }
+        } catch (e) {
+          console.error('Error parsing risk section:', e);
+        }
+      }
+    }
+    
+    // For testing - log the number of risks found and whether any have Unknown Location
+    console.log(`Found ${risks.length} risks, ${risks.filter(r => r.location.includes('Unknown')).length} with Unknown Location`);
+    
+    return risks;
+  };
   
   // Handle the analysis process
   // Updated handleAnalyze function to request JSON responses
@@ -1058,7 +1124,7 @@ Please provide:
       // Get the base prompt
       const basePrompt = getPrompt();
       
-      // Use a more clear format for Groq that doesn't rely on the response_format parameter
+      // Update the prompt to emphasize the importance of location information
       const promptIntro = `${basePrompt}
   
   Your task is to analyze the contract text and identify the key risks.
@@ -1066,9 +1132,15 @@ Please provide:
   For each risk, specify:
   1. A risk category (Financial, Schedule, Liability, Scope, etc.)
   2. A risk score (Critical, High, Medium, Low)
-  3. The specific contract text that creates the risk
+  3. The specific contract text that creates the risk (use exact quotes)
   4. An explanation of why this creates a risk
-  5. The location in the contract (if identifiable)
+  5. The precise location in the contract - VERY IMPORTANT!
+  
+  For the location, be as specific as possible:
+  - Include article numbers, section numbers, page numbers, or paragraph references
+  - For example: "Article 5, Section 5.3, Paragraph 2" or "Section 3.2.1"
+  - If no explicit numbering exists, describe it (e.g., "Payment Terms clause, third paragraph")
+  - NEVER use "Unknown Location" - provide your best estimate of location based on context
   
   Follow this format strictly:
   
@@ -1076,7 +1148,7 @@ Please provide:
   Risk Score: [Score]
   Risky Contract Text: "[Exact text]"
   Why This Is a Risk: [Explanation]
-  Contract Location: [Section reference]
+  Contract Location: [Specific section reference]
   
   After listing all risks (identify 5-7 most important risks), provide a "Mitigation Summary:" section with 5-7 bullet points of recommended actions.`;
   
@@ -1086,7 +1158,7 @@ Please provide:
         try {
           const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
           
-          // Using Groq API call with text-based format instead of JSON
+          // Using Groq API call with text-based format
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -1098,7 +1170,7 @@ Please provide:
               messages: [
                 {
                   role: 'system',
-                  content: 'You are a contract analysis expert. Analyze the contract carefully and identify all significant risks using the exact format specified in the prompt.'
+                  content: 'You are a contract analysis expert specialized in identifying contract risks and their precise locations. Be extremely specific about where each risk appears in the contract.'
                 },
                 { 
                   role: 'user', 
@@ -1107,7 +1179,6 @@ Please provide:
               ],
               temperature: 0.2, // Lower temperature for more consistent outputs
               max_tokens: 4096,
-              // Remove response_format: { type: "json_object" } since it's causing errors
             }),
           });
           
