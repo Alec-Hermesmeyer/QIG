@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { Clock, FileText, DollarSign, ClipboardList, AlertTriangle, Gavel, Search, Users, Scale } from 'lucide-react';
 import { Prompt } from "@/lib/prompt";
 
 // Define the Risk interface
@@ -63,21 +64,179 @@ export function parseRiskData(riskText: string): Risk[] {
   return risks;
 }
 
+// Analysis type configuration
+const analysisTypeConfig = {
+  timeline: {
+    id: 'timeline',
+    name: 'Timeline Analysis',
+    description: 'Extract time-related provisions, dependencies, and scheduling conflicts',
+    icon: <Clock className="h-6 w-6" />,
+    color: 'bg-blue-100 hover:bg-blue-200 border-blue-300',
+    textColor: 'text-blue-800',
+    iconColor: 'text-blue-500',
+    prompt: `You are an expert construction contract analyst specializing in timeline analysis. Your task is to extract and organize all time-related provisions, identify dependencies between timeline events, and flag potential scheduling conflicts.`
+  },
+  obligation: {
+    id: 'obligation',
+    name: 'Obligation Analysis',
+    description: 'Extract contractual obligations by category and responsible party',
+    icon: <ClipboardList className="h-6 w-6" />,
+    color: 'bg-purple-100 hover:bg-purple-200 border-purple-300',
+    textColor: 'text-purple-800',
+    iconColor: 'text-purple-500',
+    prompt: `You are an expert construction contract analyst specializing in obligation analysis. Your task is to extract all contractual obligations, classify them by category and responsible party, and link them to relevant review topics.`
+  },
+  financial: {
+    id: 'financial',
+    name: 'Financial Analysis',
+    description: 'Analyze financial terms, exposure, and risk allocation',
+    icon: <DollarSign className="h-6 w-6" />,
+    color: 'bg-green-100 hover:bg-green-200 border-green-300',
+    textColor: 'text-green-800',
+    iconColor: 'text-green-500',
+    prompt: `You are an expert construction contract analyst specializing in financial provision analysis. Your task is to analyze and extract all financial terms, calculate potential financial exposure, and identify risk allocation mechanisms.`
+  },
+  risk: {
+    id: 'risk',
+    name: 'Risk Assessment',
+    description: 'Identify risk factors, allocations, and mitigation strategies',
+    icon: <AlertTriangle className="h-6 w-6" />,
+    color: 'bg-red-100 hover:bg-red-200 border-red-300',
+    textColor: 'text-red-800',
+    iconColor: 'text-red-500',
+    prompt: `You are an expert construction contract analyst specializing in risk assessment. Your task is to identify all risk factors, analyze risk allocations, and suggest mitigation strategies.`
+  },
+  legal: {
+    id: 'legal',
+    name: 'Legal Compliance',
+    description: 'Evaluate regulatory compliance and legal requirements',
+    icon: <Gavel className="h-6 w-6" />,
+    color: 'bg-indigo-100 hover:bg-indigo-200 border-indigo-300',
+    textColor: 'text-indigo-800',
+    iconColor: 'text-indigo-500',
+    prompt: `You are an expert construction contract analyst specializing in legal compliance. Your task is to evaluate regulatory compliance and identify any legal requirements that need attention.`
+  },
+  definitions: {
+    id: 'definitions',
+    name: 'Definition Analysis',
+    description: 'Extract and analyze key defined terms and their implications',
+    icon: <Search className="h-6 w-6" />,
+    color: 'bg-yellow-100 hover:bg-yellow-200 border-yellow-300',
+    textColor: 'text-yellow-800',
+    iconColor: 'text-yellow-500',
+    prompt: `You are an expert construction contract analyst specializing in definition analysis. Your task is to extract all defined terms, analyze their implications, and identify potential inconsistencies or issues.`
+  },
+  comprehensive: {
+    id: 'comprehensive',
+    name: 'Comprehensive Analysis',
+    description: 'Complete contract review covering all analysis types',
+    icon: <FileText className="h-6 w-6" />,
+    color: 'bg-gray-100 hover:bg-gray-200 border-gray-300',
+    textColor: 'text-gray-800',
+    iconColor: 'text-gray-500',
+    prompt: `You are an expert construction contract analyst. Your task is to perform a comprehensive analysis of the contract, covering timeline, obligations, financial terms, risk factors, and all other key contract elements.`
+  }
+};
+
 // Main ContractAnalyzer component
-export function ContractAnalyzer({ contractText }: { contractText: string }) {
+export function EnhancedContractAnalyzer({ 
+  contractText,
+  contractType = 'general',
+  userContext = {}
+}: { 
+  contractText: string,
+  contractType?: string,
+  userContext?: any
+}) {
   const [analysis, setAnalysis] = useState("");
   const [loading, setLoading] = useState(false);
   const [parsedRisks, setParsedRisks] = useState<Risk[]>([]);
   const [showHighlighter, setShowHighlighter] = useState(false);
   const [error, setError] = useState("");
+  const [activeAnalysisType, setActiveAnalysisType] = useState<string | null>(null);
+  const [analysisHistory, setAnalysisHistory] = useState<{[key: string]: {
+    analysis: string;
+    risks: Risk[];
+  }}>({});
+    
   
-  const PROMPT_HEADER = Prompt;
+  // Determine which analysis types to show based on contract type and user context
+  const determineRelevantAnalysisTypes = () => {
+    // Default analysis types for all contracts
+    const defaultTypes = ['comprehensive', 'risk'];
+    
+    // Contract-type specific analysis types
+    const contractTypeMap: {[key: string]: string[]} = {
+      construction: ['timeline', 'obligation', 'financial', 'risk'],
+      service: ['obligation', 'financial', 'risk'],
+      purchase: ['financial', 'definitions', 'risk'],
+      employment: ['obligation', 'legal', 'risk'],
+      lease: ['timeline', 'financial', 'risk'],
+      loan: ['financial', 'legal', 'risk'],
+      license: ['obligation', 'legal', 'risk'],
+      consulting: ['obligation', 'timeline', 'risk'],
+      general: defaultTypes
+    };
+    
+    // Get contract-specific types or default if contract type not recognized
+    let relevantTypes = contractTypeMap[contractType] || defaultTypes;
+    
+    // Add user-role specific analysis types
+    if (userContext.role === 'lawyer') {
+      relevantTypes = [...new Set([...relevantTypes, 'legal', 'definitions'])];
+    } else if (userContext.role === 'project_manager') {
+      relevantTypes = [...new Set([...relevantTypes, 'timeline', 'obligation'])];
+    } else if (userContext.role === 'financial_analyst') {
+      relevantTypes = [...new Set([...relevantTypes, 'financial'])];
+    }
+    
+    // Add user's preferred analysis types if specified
+    if (userContext.preferredAnalysisTypes && Array.isArray(userContext.preferredAnalysisTypes)) {
+      relevantTypes = [...new Set([...relevantTypes, ...userContext.preferredAnalysisTypes])];
+    }
+    
+    // Comprehensive analysis is always available
+    if (!relevantTypes.includes('comprehensive')) {
+      relevantTypes.push('comprehensive');
+    }
+    
+    return relevantTypes;
+  };
   
-  const analyzeContract = async () => {
+  // Get relevant analysis types
+  const relevantAnalysisTypeIds = determineRelevantAnalysisTypes();
+  
+  // Get the full configuration for each relevant analysis type
+  const analysisTypes = relevantAnalysisTypeIds
+    .map(id => analysisTypeConfig[id as keyof typeof analysisTypeConfig])
+    .filter(Boolean);
+  
+  const analyzeContract = async (analysisTypeId: string) => {
+    // Check if we already have cached results for this analysis type
+    if (analysisHistory[analysisTypeId]) {
+      setAnalysis(analysisHistory[analysisTypeId].analysis);
+      setParsedRisks(analysisHistory[analysisTypeId].risks);
+      setShowHighlighter(analysisHistory[analysisTypeId].risks.length > 0);
+      setActiveAnalysisType(analysisTypeId);
+      return;
+    }
+    
     setLoading(true);
     setError("");
+    setActiveAnalysisType(analysisTypeId);
+    
     try {
-      const fullPrompt = `${PROMPT_HEADER}\n\n${contractText}`;
+      // Get the analysis config
+      const analysisConfig = analysisTypeConfig[analysisTypeId as keyof typeof analysisTypeConfig];
+      
+      if (!analysisConfig) {
+        throw new Error(`Unknown analysis type: ${analysisTypeId}`);
+      }
+      
+      // Use the specialized prompt for this analysis type
+      const promptHeader = analysisConfig.prompt || Prompt;
+      const fullPrompt = `${promptHeader}\n\n${contractText}`;
+      
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -108,6 +267,15 @@ export function ContractAnalyzer({ contractText }: { contractText: string }) {
         
         // Only show highlighter if we have risks and contract text
         setShowHighlighter(risks.length > 0 && contractText.length > 0);
+        
+        // Cache the results
+        setAnalysisHistory(prev => ({
+          ...prev,
+          [analysisTypeId]: {
+            analysis: analysisText,
+            risks: risks
+          }
+        }));
       } catch (parseError) {
         console.error("Error parsing risks:", parseError);
         setError("Failed to parse risk data from analysis.");
@@ -124,28 +292,49 @@ export function ContractAnalyzer({ contractText }: { contractText: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center space-x-4">
-        <button 
-          onClick={analyzeContract} 
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-          disabled={loading}
-        >
-          {loading ? "Analyzing..." : "Analyze Contract"}
-        </button>
-        
-        {parsedRisks.length > 0 && (
-          <div className="text-sm text-gray-600">
-            {parsedRisks.length} risks identified
-          </div>
-        )}
+      {/* Analysis Type Buttons */}
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold mb-3">Analysis Types</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {analysisTypes.map((type) => (
+            <button
+              key={type.id}
+              onClick={() => analyzeContract(type.id)}
+              className={`p-3 rounded-lg border transition-colors flex items-center ${type.color} ${
+                activeAnalysisType === type.id ? 'ring-2 ring-blue-500' : ''
+              }`}
+              disabled={loading}
+            >
+              <div className="mr-3">
+                {React.cloneElement(type.icon, { className: `h-5 w-5 ${type.iconColor}` })}
+              </div>
+              <div className="text-left">
+                <h4 className={`font-medium ${type.textColor}`}>{type.name}</h4>
+                <p className="text-xs text-gray-600">{type.description}</p>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
       
+      {/* Loading indicator */}
+      {loading && (
+        <div className="flex items-center justify-center p-6 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex items-center space-x-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
+            <span>Analyzing contract...</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Error message */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded">
           {error}
         </div>
       )}
       
+      {/* Analysis Results */}
       {showHighlighter ? (
         <ContractTextHighlighter 
           contractText={contractText} 
@@ -154,7 +343,10 @@ export function ContractAnalyzer({ contractText }: { contractText: string }) {
       ) : (
         analysis && (
           <div className="prose max-w-none mt-6">
-            <h2>Analysis Result</h2>
+            <h2>Analysis Results</h2>
+            <p className="text-sm text-gray-500 mb-2">
+              Analysis type: {activeAnalysisType && analysisTypeConfig[activeAnalysisType as keyof typeof analysisTypeConfig]?.name}
+            </p>
             <pre className="whitespace-pre-wrap bg-gray-50 p-4 rounded border">{analysis}</pre>
           </div>
         )

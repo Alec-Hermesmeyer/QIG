@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { SearchBox, Stack, Text, Toggle } from '@fluentui/react';
+import { SearchBox, Stack, Text, IconButton } from '@fluentui/react';
 
-// Define the Risk type to match your existing interface
+// Define the Risk type
 interface Risk {
   category: string;
   score: string;
@@ -15,7 +15,7 @@ interface ContractTextPreviewProps {
   lineNumbers?: boolean;
   enableSearch?: boolean;
   enableWordWrap?: boolean;
-  risks?: Risk[]; // Add the risks prop
+  risks?: Risk[];
 }
 
 // Helper function to get color based on risk score
@@ -39,6 +39,10 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
   const [searchText, setSearchText] = useState('');
   const [wordWrap, setWordWrap] = useState(enableWordWrap);
   const [showRiskHighlights, setShowRiskHighlights] = useState(true);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [activeRiskScore, setActiveRiskScore] = useState<string | null>(null);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(-1);
+  const [searchMatches, setSearchMatches] = useState<number[]>([]);
 
   // Clean up risk texts to improve matching
   const cleanedRisks = useMemo(() => {
@@ -66,6 +70,40 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   };
 
+  // Find all search matches
+  useEffect(() => {
+    if (!searchText || !searchRegex) {
+      setSearchMatches([]);
+      setCurrentSearchIndex(-1);
+      return;
+    }
+
+    const matches: number[] = [];
+    const lines = contractText.split('\n');
+    
+    lines.forEach((line, lineIndex) => {
+      if (line.match(searchRegex)) {
+        matches.push(lineIndex);
+      }
+    });
+    
+    setSearchMatches(matches);
+    setCurrentSearchIndex(matches.length > 0 ? 0 : -1);
+  }, [searchText, searchRegex, contractText]);
+
+  // Navigate to match
+  const navigateToMatch = (index: number) => {
+    if (searchMatches.length === 0) return;
+    
+    const validIndex = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
+    setCurrentSearchIndex(validIndex);
+    
+    const lineElement = document.getElementById(`line-${searchMatches[validIndex]}`);
+    if (lineElement) {
+      lineElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   // Highlight a single line of text
   const highlightLine = (line: string, lineIndex: number) => {
     let segments: any[] = [{ text: line, type: 'normal' }];
@@ -73,6 +111,11 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
     // First, apply risk highlighting
     if (showRiskHighlights && cleanedRisks.length > 0) {
       for (const risk of cleanedRisks) {
+        // Skip if we're filtering by risk score and this doesn't match
+        if (activeRiskScore && risk.score.toLowerCase() !== activeRiskScore.toLowerCase()) {
+          continue;
+        }
+        
         const riskText = risk.cleanText;
         if (!riskText || riskText.length < 5) continue; // Skip very short risk texts
         
@@ -103,7 +146,8 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
               newSegments.push({ 
                 text: segmentText.substring(segmentRiskIndex, segmentRiskIndex + riskText.length), 
                 type: 'risk', 
-                score: risk.score 
+                score: risk.score,
+                reason: risk.reason
               });
               
               if (segmentRiskIndex + riskText.length < segmentText.length) {
@@ -155,7 +199,12 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
         return (
           <span 
             key={`${lineIndex}-risk-${i}`}
-            style={{ backgroundColor: getRiskScoreColor(segment.score) }}
+            title={segment.reason || `${segment.score} Risk`}
+            style={{ 
+              backgroundColor: getRiskScoreColor(segment.score),
+              cursor: 'help',
+              padding: '1px 0'
+            }}
           >
             {segment.text}
           </span>
@@ -179,53 +228,175 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
     });
   };
 
+  // Handle fullscreen mode
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isFullScreen) {
+        setIsFullScreen(false);
+      }
+    };
+    
+    document.addEventListener('keydown', handleEsc);
+    
+    return () => {
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [isFullScreen]);
+
+  const filterRiskByScore = (score: string | null) => {
+    setActiveRiskScore(activeRiskScore === score ? null : score);
+  };
+
+  // Calculate risk counts
+  const riskCounts = useMemo(() => {
+    const counts = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0
+    };
+    
+    cleanedRisks.forEach(risk => {
+      const score = risk.score.toLowerCase();
+      if (counts.hasOwnProperty(score)) {
+        counts[score as keyof typeof counts]++;
+      }
+    });
+    
+    return counts;
+  }, [cleanedRisks]);
+
   return (
-    <Stack className="h-full flex flex-col">
+    <Stack 
+      className={`h-full flex flex-col ${isFullScreen ? 'fixed inset-0 z-50 bg-white p-4' : ''}`}
+    >
       <Stack horizontal horizontalAlign="space-between" verticalAlign="center" className="mb-2">
-        {enableSearch && (
-          <div className="flex-1 max-w-md">
-            <SearchBox
-              placeholder="Search in document..."
-              onChange={(_, newValue) => setSearchText(newValue || '')}
-              styles={{ root: { width: '100%' } }}
-            />
-          </div>
-        )}
+        <Stack horizontal tokens={{ childrenGap: 8 }}>
+          {enableSearch && (
+            <div className="flex-1 min-w-72">
+              <div className="relative">
+                <SearchBox
+                  placeholder="Search in document..."
+                  onChange={(_, newValue) => setSearchText(newValue || '')}
+                  styles={{ root: { width: '100%' } }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (e.shiftKey) {
+                        navigateToMatch(currentSearchIndex - 1);
+                      } else {
+                        navigateToMatch(currentSearchIndex + 1);
+                      }
+                    }
+                  }}
+                />
+                {searchMatches.length > 0 && (
+                  <div className="absolute right-10 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">
+                    {currentSearchIndex + 1}/{searchMatches.length}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {searchText && searchMatches.length > 0 && (
+            <Stack horizontal tokens={{ childrenGap: 4 }}>
+              <IconButton
+                iconProps={{ iconName: 'ChevronUp' }}
+                onClick={() => navigateToMatch(currentSearchIndex - 1)}
+                title="Previous match (Shift+Enter)"
+              />
+              <IconButton
+                iconProps={{ iconName: 'ChevronDown' }}
+                onClick={() => navigateToMatch(currentSearchIndex + 1)}
+                title="Next match (Enter)"
+              />
+            </Stack>
+          )}
+        </Stack>
         
-        <div className="flex items-center">
-          {risks && risks.length > 0 && (
-            <Toggle
-              label="Show Risks"
-              checked={showRiskHighlights}
-              onChange={(_, checked) => setShowRiskHighlights(checked || false)}
-              styles={{ 
-                root: { marginRight: 16, marginBottom: 0 },
-                label: { marginBottom: 0 }
-              }}
+        <Stack horizontal tokens={{ childrenGap: 8 }}>
+          {enableWordWrap && (
+            <IconButton
+              onClick={() => setWordWrap(!wordWrap)}
+              iconProps={{ iconName: wordWrap ? 'FullWidth' : 'Wrap' }}
+              title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              ariaLabel={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              checked={wordWrap}
+              styles={{ root: { marginBottom: 0 } }}
             />
           )}
           
-          {enableWordWrap && (
-            <Toggle
-              label="Word Wrap"
-              checked={wordWrap}
-              onChange={(_, checked) => setWordWrap(checked || false)}
-              styles={{ 
-                root: { marginBottom: 0 },
-                label: { marginBottom: 0 }
-              }}
+          {risks && risks.length > 0 && (
+            <IconButton
+              onClick={() => setShowRiskHighlights(!showRiskHighlights)}
+              iconProps={{ iconName: 'Warning' }}
+              title={showRiskHighlights ? "Hide risks" : "Show risks"}
+              ariaLabel={showRiskHighlights ? "Hide risks" : "Show risks"}
+              checked={showRiskHighlights}
+              styles={{ root: { marginBottom: 0 } }}
             />
           )}
-        </div>
+          
+          <IconButton
+            onClick={() => setIsFullScreen(!isFullScreen)}
+            iconProps={{ iconName: isFullScreen ? 'BackToWindow' : 'FullScreen' }}
+            title={isFullScreen ? "Exit full screen" : "Full screen"}
+            ariaLabel={isFullScreen ? "Exit full screen" : "Full screen"}
+            styles={{ root: { marginBottom: 0 } }}
+          />
+        </Stack>
       </Stack>
+
+      {risks && risks.length > 0 && showRiskHighlights && (
+        <div className="mb-2 p-2 bg-gray-100 rounded border border-gray-200">
+          <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
+            <Text variant="small" className="font-medium">Risk Highlighting:</Text>
+            <Stack horizontal tokens={{ childrenGap: 8 }}>
+              <div 
+                className={`flex items-center cursor-pointer p-1 rounded ${activeRiskScore === 'critical' ? 'ring-2 ring-gray-500' : ''}`}
+                onClick={() => filterRiskByScore('critical')}
+                title={`Filter by Critical risks (${riskCounts.critical})`}
+              >
+                <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('critical') }}></div>
+                <Text variant="small">Critical ({riskCounts.critical})</Text>
+              </div>
+              <div 
+                className={`flex items-center cursor-pointer p-1 rounded ${activeRiskScore === 'high' ? 'ring-2 ring-gray-500' : ''}`}
+                onClick={() => filterRiskByScore('high')}
+                title={`Filter by High risks (${riskCounts.high})`}
+              >
+                <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('high') }}></div>
+                <Text variant="small">High ({riskCounts.high})</Text>
+              </div>
+              <div 
+                className={`flex items-center cursor-pointer p-1 rounded ${activeRiskScore === 'medium' ? 'ring-2 ring-gray-500' : ''}`}
+                onClick={() => filterRiskByScore('medium')}
+                title={`Filter by Medium risks (${riskCounts.medium})`}
+              >
+                <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('medium') }}></div>
+                <Text variant="small">Medium ({riskCounts.medium})</Text>
+              </div>
+              <div 
+                className={`flex items-center cursor-pointer p-1 rounded ${activeRiskScore === 'low' ? 'ring-2 ring-gray-500' : ''}`}
+                onClick={() => filterRiskByScore('low')}
+                title={`Filter by Low risks (${riskCounts.low})`}
+              >
+                <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('low') }}></div>
+                <Text variant="small">Low ({riskCounts.low})</Text>
+              </div>
+            </Stack>
+          </Stack>
+        </div>
+      )}
 
       <div className="flex-1 overflow-auto border border-gray-300 rounded bg-gray-50 font-mono text-sm">
         {contractText ? (
           <div className="p-4 min-h-full">
             {contractText.split('\n').map((line, lineIndex) => (
               <div 
+                id={`line-${lineIndex}`}
                 key={`line-${lineIndex}`}
-                className="flex" 
+                className={`flex hover:bg-gray-100 ${searchMatches.includes(lineIndex) && currentSearchIndex !== -1 && searchMatches[currentSearchIndex] === lineIndex ? 'bg-blue-50' : ''}`}
               >
                 {lineNumbers && (
                   <div 
@@ -254,27 +425,11 @@ export const ContractTextPreview: React.FC<ContractTextPreviewProps> = ({
         )}
       </div>
       
-      {risks && risks.length > 0 && showRiskHighlights && (
-        <div className="mt-2 p-2 bg-gray-100 rounded border border-gray-200">
-          <Text variant="small" className="font-medium mb-1">Risk Highlighting Legend:</Text>
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center">
-              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('critical') }}></div>
-              <Text variant="small">Critical</Text>
-            </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('high') }}></div>
-              <Text variant="small">High</Text>
-            </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('medium') }}></div>
-              <Text variant="small">Medium</Text>
-            </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 mr-1" style={{ backgroundColor: getRiskScoreColor('low') }}></div>
-              <Text variant="small">Low</Text>
-            </div>
-          </div>
+      {isFullScreen && (
+        <div className="mt-2 text-center">
+          <Text variant="small" className="text-gray-500">
+            Press ESC to exit full screen mode
+          </Text>
         </div>
       )}
     </Stack>

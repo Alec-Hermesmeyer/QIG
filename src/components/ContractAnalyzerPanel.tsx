@@ -18,6 +18,7 @@ import {
   IDropdownOption,
   Toggle,
   Spinner,
+  SpinnerSize,
   IconButton,
   TooltipHost,
   Dialog,
@@ -29,6 +30,10 @@ import {
   SelectionMode,
   IColumn,
   Label,
+  Modal,
+  mergeStyleSets,
+  FontWeights,
+  getTheme,
 } from '@fluentui/react';
 import mammoth from 'mammoth';
 import ReactMarkdown from 'react-markdown';
@@ -48,6 +53,8 @@ import {
   TableIcon
 } from '@fluentui/react-icons-mdl2';
 import { Prompt } from '@/lib/prompt';
+// Import the DataDrivenAnalysisButtons component from the second file
+import { DataDrivenAnalysisButtons, analysisTypeConfig } from './DataDrivenAnalysisButtons';
 
 // Initialize the default icon set
 initializeIcons();
@@ -117,6 +124,23 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [parsedRisks, setParsedRisks] = useState<Risk[]>([]);
   const [mitigationPoints, setMitigationPoints] = useState<string[]>([]);
+  const [selectedRiskForFix, setSelectedRiskForFix] = useState<Risk | null>(null);
+  const [suggestedFix, setSuggestedFix] = useState<string>('');
+  const [isGeneratingFix, setIsGeneratingFix] = useState(false);
+  const [showFixModal, setShowFixModal] = useState(false);
+
+  // Add new state for selected analysis type
+  const [selectedAnalysisType, setSelectedAnalysisType] = useState<keyof typeof analysisTypeConfig>('comprehensive');
+  const [analysisPrompt, setAnalysisPrompt] = useState<string>('');
+  const [contractType, setContractType] = useState('construction');
+  const [isRedlineModalOpen, setIsRedlineModalOpen] = useState(false);
+  const [redlineText, setRedlineText] = useState<string>('');
+  const [showRedlines, setShowRedlines] = useState(true);
+  const [redlineChanges, setRedlineChanges] = useState<{
+    added: string[];
+    removed: string[];
+    modified: string[];
+  }>({ added: [], removed: [], modified: [] });
 
   // Settings
   const [settings, setSettings] = useState<AnalysisSettings>({
@@ -135,6 +159,33 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     { key: 'gpt-4-turbo', text: 'GPT-4 Turbo (Faster)' },
     { key: 'gpt-3.5-turbo', text: 'GPT-3.5 Turbo (Economical)' },
   ];
+
+  // Contract type options
+  const contractTypeOptions: IDropdownOption[] = [
+    { key: 'construction', text: 'Construction Contract' },
+    { key: 'service', text: 'Service Agreement' },
+    { key: 'purchase', text: 'Purchase Agreement' },
+    { key: 'employment', text: 'Employment Contract' },
+    { key: 'lease', text: 'Lease Agreement' },
+    { key: 'loan', text: 'Loan Agreement' },
+    { key: 'license', text: 'License Agreement' },
+    { key: 'consulting', text: 'Consulting Agreement' },
+    { key: 'distribution', text: 'Distribution Agreement' },
+    { key: 'general', text: 'General Contract' },
+  ];
+
+  // Handle analysis type selection
+  const handleAnalysisTypeSelect = (analysisType: string, prompt: string) => {
+    setSelectedAnalysisType(analysisType as keyof typeof analysisTypeConfig);
+    
+    // Only store the prompt text if specifically provided by the button
+    if (prompt && prompt.length > 0) {
+      setAnalysisPrompt(prompt);
+    } else {
+      // Otherwise clear it to use the prompt from the prompt system
+      setAnalysisPrompt('');
+    }
+  };
 
   // Table columns for risk table view
   const riskColumns: IColumn[] = [
@@ -210,6 +261,8 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     setActiveTab('analysis');
     setParsedRisks([]);
     setMitigationPoints([]);
+    setSelectedAnalysisType('comprehensive');
+    setAnalysisPrompt('');
   };
 
   // Handle file upload via drag and drop
@@ -413,10 +466,37 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     return chunks;
   };
 
-  // Construction contract analysis prompt - preserved from original code
+  // Construction contract analysis prompt - updated to work with the new prompt system
   const getPrompt = () => {
+    // If a specific analysis type is selected, use its prompt
+    if (analysisPrompt && analysisPrompt.length > 0) {
+      return analysisPrompt;
+    }
+    
+    // If using the new prompt system that accepts parameters
+    if (typeof Prompt === 'function') {
+      // Check if it's the new function that accepts parameters
+      if (Prompt.length >= 1) {
+        return Prompt(selectedAnalysisType, contractType);
+      }
+      // Otherwise use the old function
+      return Prompt();
+    }
+    
+    // Final fallback if Prompt is not a function
     return Prompt;
-  }
+  };
+  
+  // Function to generate document redlines
+  const generateRedlines = (originalText: string, revisedText: string) => {
+    // This would normally call a diff algorithm like diff-match-patch or similar
+    // For now, we're just using the sample redlines from the button click
+    console.log("Would generate redlines between original and revised texts");
+    
+    // In a real implementation, this would analyze the diff and extract the changes
+    // Here we're just using the sample data set when the comparison button is clicked
+  };
+  
   // Parse risks from raw analysis text
   const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
     const risks: Risk[] = [];
@@ -486,6 +566,307 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
     return risks;
   };
+  const generateFixSuggestion = async (risk: Risk) => {
+    setIsGeneratingFix(true);
+    setSelectedRiskForFix(risk);
+    setShowFixModal(true);
+    
+    try {
+      // Prepare the prompt for generating a fix
+      const fixPrompt = `
+  You are an expert contract attorney. Review the following contract clause that has been identified as risky and suggest specific language to fix the issue.
+  
+  RISK CATEGORY: ${risk.category}
+  RISK SEVERITY: ${risk.score}
+  PROBLEMATIC CONTRACT TEXT: "${risk.text}"
+  ISSUE DESCRIPTION: ${risk.reason}
+  LOCATION IN CONTRACT: ${risk.location}
+  
+  Please provide:
+  1. A specific rewritten version of this clause that would fix the issue
+  2. A brief explanation of how your rewrite addresses the risk
+  3. Any additional advice on implementing this change
+      `;
+      
+      // Call the API to generate a fix
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: settings.model,
+          messages: [{ role: 'user', content: fixPrompt }],
+          temperature: 0.7, // Slightly higher temperature for more creative solutions
+        }),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`API error: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      const fixContent = data.choices?.[0]?.message?.content;
+      
+      if (fixContent) {
+        setSuggestedFix(fixContent);
+      } else {
+        throw new Error('No content received from API');
+      }
+    } catch (error) {
+      console.error('Error generating fix:', error);
+      setSuggestedFix('Failed to generate a fix suggestion. Please try again.');
+    } finally {
+      setIsGeneratingFix(false);
+    }
+  };
+  
+  // Add a function for the highlight in document feature
+  const highlightInDocument = (risk: Risk, index: number) => {
+    setActiveTab('preview');
+    
+    // Wait for the tab change to take effect
+    setTimeout(() => {
+      // Find text occurrences in the document
+      const previewContainer = document.querySelector('.contract-text-preview-container');
+      if (!previewContainer) return;
+      
+      // Create a unique ID for this risk in the document
+      const riskId = `risk-highlight-${index}`;
+      
+      // Clean up any previous highlights
+      const existingHighlights = previewContainer.querySelectorAll('.risk-highlight');
+      existingHighlights.forEach(el => {
+        const text = el.textContent;
+        const parent = el.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(text || ''), el);
+        }
+      });
+      
+      // Find and highlight all occurrences of this text
+      if (risk.text && risk.text.length > 10) { // Only highlight if text is substantial
+        const textNodes = getTextNodes(previewContainer);
+        let foundHighlight = false;
+        
+        textNodes.forEach((node, i) => {
+          const nodeText = node.nodeValue || '';
+          const riskTextIndex = nodeText.indexOf(risk.text);
+          
+          if (riskTextIndex !== -1) {
+            foundHighlight = true;
+            
+            // Split the text node and create a highlight span
+            const before = nodeText.substring(0, riskTextIndex);
+            const after = nodeText.substring(riskTextIndex + risk.text.length);
+            
+            const span = document.createElement('span');
+            span.className = 'risk-highlight highlight-pulse';
+            span.id = riskId;
+            span.textContent = risk.text;
+            span.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+            span.style.borderBottom = `2px solid ${getRiskScoreColor(risk.score)}`;
+            span.style.padding = '1px 0';
+            
+            // Add tooltip with risk info
+            span.title = `${risk.category} (${risk.score}): ${risk.reason}`;
+            
+            const fragment = document.createDocumentFragment();
+            if (before) fragment.appendChild(document.createTextNode(before));
+            fragment.appendChild(span);
+            if (after) fragment.appendChild(document.createTextNode(after));
+            
+            const parent = node.parentNode;
+            if (parent) {
+              parent.replaceChild(fragment, node);
+            }
+          }
+        });
+        
+        // Scroll to the highlight if found
+        if (foundHighlight) {
+          const highlightElement = document.getElementById(riskId);
+          if (highlightElement) {
+            highlightElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            highlightElement.classList.add('highlight-pulse');
+            // Keep the pulse animation for visibility
+          }
+        } else {
+          // If text not found exactly, try finding the closest match
+          // This is helpful for long or truncated text
+          findClosestTextMatch(previewContainer, risk.text, riskId, risk);
+        }
+      }
+    }, 100);
+  };
+  
+  // Helper function to get all text nodes in a container
+  const getTextNodes = (element: Element): Text[] => {
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          return node.textContent?.trim() 
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
+        }
+      }
+    );
+    
+    let node;
+    while ((node = walker.nextNode())) {
+      textNodes.push(node as Text);
+    }
+    
+    return textNodes;
+  };
+  
+  // Helper function to find closest text match for hard-to-find text
+  const findClosestTextMatch = (container: Element, searchText: string, riskId: string, risk: Risk) => {
+    // Try with a substring if the text is long
+    if (searchText.length > 40) {
+      const shortSearchText = searchText.substring(0, 40);
+      const textNodes = getTextNodes(container);
+      
+      for (const node of textNodes) {
+        const nodeText = node.nodeValue || '';
+        if (nodeText.includes(shortSearchText)) {
+          // Found a partial match
+          const span = document.createElement('span');
+          span.className = 'risk-highlight highlight-pulse';
+          span.id = riskId;
+          span.textContent = nodeText;
+          span.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+          span.style.borderBottom = `2px solid ${getRiskScoreColor(risk.score)}`;
+          
+          const parent = node.parentNode;
+          if (parent) {
+            parent.replaceChild(span, node);
+            span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+          }
+        }
+      }
+    }
+    
+    // If still not found, try using location information
+    if (risk.location) {
+      const locationPattern = new RegExp(`(Section|Article)\\s+${risk.location.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
+      const textNodes = getTextNodes(container);
+      
+      for (const node of textNodes) {
+        const nodeText = node.nodeValue || '';
+        if (locationPattern.test(nodeText)) {
+          // Found the section heading
+          const span = document.createElement('span');
+          span.className = 'risk-highlight highlight-pulse';
+          span.id = riskId;
+          span.textContent = nodeText;
+          span.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+          span.style.borderBottom = `2px solid ${getRiskScoreColor(risk.score)}`;
+          
+          const parent = node.parentNode;
+          if (parent) {
+            parent.replaceChild(span, node);
+            span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+          }
+        }
+      }
+    }
+  };
+  
+  // Add a modal component for displaying the suggested fix
+  const renderFixSuggestionModal = () => (
+    <Modal
+      isOpen={showFixModal}
+      onDismiss={() => setShowFixModal(false)}
+      isBlocking={false}
+      containerClassName={modalStyles.container}
+    >
+      <div className={modalStyles.header}>
+        <span>Suggested Fix for {selectedRiskForFix?.category}</span>
+        <IconButton
+          iconProps={{ iconName: 'Cancel' }}
+          ariaLabel="Close suggestion"
+          onClick={() => setShowFixModal(false)}
+          styles={{
+            root: {
+              color: theme.palette.neutralPrimary,
+              marginLeft: 'auto',
+              marginTop: '4px',
+              marginRight: '2px',
+            },
+            rootHovered: {
+              color: theme.palette.neutralDark,
+            },
+          }}
+        />
+      </div>
+      <div className={modalStyles.body}>
+        {isGeneratingFix ? (
+          <div className="flex flex-col items-center justify-center h-64">
+            <Spinner size={SpinnerSize.large} label="Generating suggestion..." />
+            <Text className="mt-4 text-gray-500">
+              Using AI to craft an improved contract clause...
+            </Text>
+          </div>
+        ) : (
+          <div className="flex flex-col h-full">
+            <div className="mb-4">
+              <Text variant="large" className="font-semibold">
+                Original Text:
+              </Text>
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 mt-2 rounded">
+                <Text className="italic">"{selectedRiskForFix?.text}"</Text>
+                <Text className="mt-2 text-xs text-gray-500">
+                  {selectedRiskForFix?.location}
+                </Text>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-auto">
+              <Text variant="large" className="font-semibold">
+                Suggested Improvement:
+              </Text>
+              <div className="bg-green-50 border-l-4 border-green-500 p-4 mt-2 rounded">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
+                >
+                  {suggestedFix}
+                </ReactMarkdown>
+              </div>
+            </div>
+            
+            <div className="mt-6 flex justify-end gap-2">
+              <DefaultButton
+                text="Copy Suggestion"
+                iconProps={{ iconName: 'Copy' }}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(suggestedFix);
+                    alert('Suggestion copied to clipboard');
+                  } catch (err) {
+                    console.error('Failed to copy:', err);
+                  }
+                }}
+                className="bg-gray-50 hover:bg-gray-100 border-gray-300"
+              />
+              <PrimaryButton
+                text="Close"
+                onClick={() => setShowFixModal(false)}
+                className="bg-indigo-600 hover:bg-indigo-700"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 
   // Parse mitigation points from raw analysis text
   const parseMitigationFromAnalysis = (rawAnalysis: string): string[] => {
@@ -519,128 +900,128 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   // Handle the analysis process
   const handleAnalyze = async () => {
-    if (!contractText) return;
-  
-    try {
-      setLoading(true);
-      setError(null);
-      setAnalysis('');
-      setParsedRisks([]);
-      setMitigationPoints([]);
-      setProgress(0);
-      setActiveTab('analysis');
+  if (!contractText) return;
+
+  try {
+    setLoading(true);
+    setError(null);
+    setAnalysis('');
+    setParsedRisks([]);
+    setMitigationPoints([]);
+    setProgress(0);
+    setActiveTab('analysis');
+    
+    const chunks = chunkText(contractText, settings.chunkSize);
+    setTotalChunks(chunks.length);
+    
+    let fullAnalysis = '';
+    
+    const promptIntro = getPrompt();
+    
+    for (let i = 0; i < chunks.length; i++) {
+      setCurrentChunk(i + 1);
       
-      const chunks = chunkText(contractText, settings.chunkSize);
-      setTotalChunks(chunks.length);
-      
-      let fullAnalysis = '';
-      
-      const promptIntro = getPrompt();
-      
-      for (let i = 0; i < chunks.length; i++) {
-        setCurrentChunk(i + 1);
+      try {
+        const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
         
-        try {
-          const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
-          
-          // Using your original working API call
-          const res = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: settings.model,
-              messages: [{ role: 'user', content: chunkPrompt }],
-              temperature: settings.temperature,
-            }),
-          });
-          
-          if (!res.ok) {
-            let errorMessage = `API error: ${res.status} ${res.statusText}`;
-            try {
-              const errorData = await res.json();
-              errorMessage = errorData.error?.message || errorMessage;
-            } catch (e) {
-              // If JSON parsing fails, use the status text
-            }
-            throw new Error(errorMessage);
+        // Using your original working API call
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: settings.model,
+            messages: [{ role: 'user', content: chunkPrompt }],
+            temperature: settings.temperature,
+          }),
+        });
+        
+        if (!res.ok) {
+          let errorMessage = `API error: ${res.status} ${res.statusText}`;
+          try {
+            const errorData = await res.json();
+            errorMessage = errorData.error?.message || errorMessage;
+          } catch (e) {
+            // If JSON parsing fails, use the status text
           }
-          
-          const data = await res.json();
-          const content = data.choices?.[0]?.message?.content;
-          
-          if (content) {
-            const partHeader = chunks.length > 1 
-              ? `Part ${i + 1} of ${chunks.length}\n`
-              : '';
-              
-            fullAnalysis += (i > 0 ? '\n\n' : '') + partHeader + content;
-            setAnalysis(fullAnalysis);
+          throw new Error(errorMessage);
+        }
+        
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content;
+        
+        if (content) {
+          const partHeader = chunks.length > 1 
+            ? `Part ${i + 1} of ${chunks.length}\n`
+            : '';
             
-            // Parse risks and mitigation points as we go
-            const currentRisks = parseRisksFromAnalysis(fullAnalysis);
-            const currentMitigation = parseMitigationFromAnalysis(fullAnalysis);
-            
-            setParsedRisks(currentRisks);
-            setMitigationPoints(currentMitigation);
-          }
-          
-          // Update progress
-          setProgress(((i + 1) / chunks.length) * 100);
-          
-        } catch (chunkError: any) {
-          console.error(`Error processing chunk ${i + 1}:`, chunkError);
-          fullAnalysis += `\n\n---\n\n## Error in Part ${i + 1}\n\nAn error occurred while analyzing this section: ${chunkError.message || 'Unknown error'}`;
+          fullAnalysis += (i > 0 ? '\n\n' : '') + partHeader + content;
           setAnalysis(fullAnalysis);
-        }
-      }
-      
-      // Analysis is complete - determine if we should show the highlighted view
-      const finalRisks = parseRisksFromAnalysis(fullAnalysis);
-      const finalMitigation = parseMitigationFromAnalysis(fullAnalysis);
-      
-      // Set final state
-      setParsedRisks(finalRisks);
-      setMitigationPoints(finalMitigation);
-      
-      // Call the onAnalysisComplete callback if provided
-      if (onAnalysisComplete) {
-        onAnalysisComplete(fullAnalysis, finalRisks, finalMitigation, contractText);
-      }
-      
-      // If we found risks, switch to the highlighted view to show them in context
-      if (finalRisks.length > 0) {
-        // If using the separate tab approach:
-        if (viewMode === 'card' || viewMode === 'table') {
-          // Wait a moment to let the UI update with analysis before switching tabs
-          setTimeout(() => {
-            // Option 1: Switch directly to preview tab with highlights
-            setActiveTab('preview');
-            
-            // Option 2: If you added a dedicated highlights tab
-            // setActiveTab('highlighted');
-          }, 500);
+          
+          // Parse risks and mitigation points as we go
+          const currentRisks = parseRisksFromAnalysis(fullAnalysis);
+          const currentMitigation = parseMitigationFromAnalysis(fullAnalysis);
+          
+          setParsedRisks(currentRisks);
+          setMitigationPoints(currentMitigation);
         }
         
-        // Scroll to top of analysis
-        if (analysisContainerRef.current) {
-          analysisContainerRef.current.scrollTop = 0;
-        }
+        // Update progress
+        setProgress(((i + 1) / chunks.length) * 100);
+        
+      } catch (chunkError: any) {
+        console.error(`Error processing chunk ${i + 1}:`, chunkError);
+        fullAnalysis += `\n\n---\n\n## Error in Part ${i + 1}\n\nAn error occurred while analyzing this section: ${chunkError.message || 'Unknown error'}`;
+        setAnalysis(fullAnalysis);
+      }
+    }
+    
+    // Analysis is complete - determine if we should show the highlighted view
+    const finalRisks = parseRisksFromAnalysis(fullAnalysis);
+    const finalMitigation = parseMitigationFromAnalysis(fullAnalysis);
+    
+    // Set final state
+    setParsedRisks(finalRisks);
+    setMitigationPoints(finalMitigation);
+    
+    // Call the onAnalysisComplete callback if provided
+    if (onAnalysisComplete) {
+      onAnalysisComplete(fullAnalysis, finalRisks, finalMitigation, contractText);
+    }
+    
+    // If we found risks, switch to the highlighted view to show them in context
+    if (finalRisks.length > 0) {
+      // If using the separate tab approach:
+      if (viewMode === 'card' || viewMode === 'table') {
+        // Wait a moment to let the UI update with analysis before switching tabs
+        setTimeout(() => {
+          // Option 1: Switch directly to preview tab with highlights
+          setActiveTab('preview');
+          
+          // Option 2: If you added a dedicated highlights tab
+          // setActiveTab('highlighted');
+        }, 500);
       }
       
-    } catch (analysisError: any) {
-      console.error('Analysis error:', analysisError);
-      setError({
-        message: 'Analysis failed',
-        details: analysisError.message || 'An error occurred during contract analysis. Please try again.'
-      });
-    } finally {
-      setLoading(false);
-      setProgress(100);
+      // Scroll to top of analysis
+      if (analysisContainerRef.current) {
+        analysisContainerRef.current.scrollTop = 0;
+      }
     }
-  };
+    
+  } catch (analysisError: any) {
+    console.error('Analysis error:', analysisError);
+    setError({
+      message: 'Analysis failed',
+      details: analysisError.message || 'An error occurred during contract analysis. Please try again.'
+    });
+  } finally {
+    setLoading(false);
+    setProgress(100);
+  }
+};
 
   // Handle copy to clipboard
   const handleCopyToClipboard = async () => {
@@ -726,6 +1107,43 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     }
   }, [fileName]);
 
+  // Add CSS for redline styles
+  useEffect(() => {
+    // Add CSS for redline styling and highlight pulse animation
+    // These specific styles can't be handled by Tailwind alone
+    const style = document.createElement('style');
+    style.textContent = `
+      .redline-content ins {
+        background-color: #ddffdd;
+        text-decoration: none;
+      }
+      .redline-content del {
+        background-color: #ffdddd;
+        text-decoration: line-through;
+      }
+      .redline-content {
+        font-family: 'Segoe UI', 'San Francisco', sans-serif;
+        line-height: 1.6;
+        font-size: 14px;
+      }
+      
+      @keyframes highlight-pulse {
+        0% { background-color: rgba(249, 250, 251, 0); }
+        50% { background-color: rgba(239, 246, 255, 0.6); }
+        100% { background-color: rgba(249, 250, 251, 0); }
+      }
+      
+      .highlight-pulse {
+        animation: highlight-pulse 2s ease-in-out;
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
   // Render error message
   const renderError = () => {
     if (!error) return null;
@@ -757,18 +1175,33 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             {risk.score}
           </div>
         </div>
-
+  
         <Text variant="small" className="text-gray-500 mb-2">
           <b>Location:</b> {risk.location}
         </Text>
-
+  
         <div className="bg-gray-50 p-3 rounded mb-2 border-l-2 border-gray-300 italic">
           "{risk.text}"
         </div>
-
+  
         <Text>
           <b>Why This Is a Risk:</b> {risk.reason}
         </Text>
+        
+        <div className="mt-3 flex gap-2">
+          <DefaultButton
+            text="Highlight in Document"
+            iconProps={{ iconName: 'Search' }}
+            onClick={() => highlightInDocument(risk, index)}
+            className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-300 text-xs"
+          />
+          <DefaultButton
+            text="Suggest Fix"
+            iconProps={{ iconName: 'Edit' }}
+            onClick={() => generateFixSuggestion(risk)}
+            className="bg-green-50 hover:bg-green-100 text-green-700 border-green-300 text-xs"
+          />
+        </div>
       </div>
     );
   };
@@ -949,6 +1382,33 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         </div>
 
         <div className="mb-4">
+          <Dropdown
+            label="Contract Type"
+            selectedKey={contractType}
+            options={contractTypeOptions}
+            onChange={(_, option) => option && setContractType(option.key as string)}
+            styles={{
+              dropdown: {
+                border: '1px solid #d1d5db',
+                selectors: {
+                  ':hover': { borderColor: '#9ca3af' },
+                  ':focus': { borderColor: '#4f46e5' },
+                }
+              },
+              title: {
+                backgroundColor: '#f9fafb',
+                border: '1px solid #d1d5db',
+              },
+              caretDownWrapper: { color: '#4b5563' },
+              label: { fontWeight: 600, color: '#111827' }
+            }}
+          />
+          <Text className="text-xs text-gray-500 mt-1">
+            Selecting the correct contract type improves analysis accuracy
+          </Text>
+        </div>
+
+        <div className="mb-4">
           <Label className="font-semibold text-gray-900 mb-2">Results View</Label>
           <Stack horizontal tokens={{ childrenGap: 10 }}>
             <DefaultButton
@@ -1029,6 +1489,117 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
         />
       </DialogFooter>
     </Dialog>
+  );
+
+  // Modal styles for redline view
+  const theme = getTheme();
+  const modalStyles = mergeStyleSets({
+    container: {
+      display: 'flex',
+      flexFlow: 'column nowrap',
+      alignItems: 'stretch',
+      width: '80vw',
+      maxWidth: '80vw',
+      height: '80vh',
+    },
+    header: [
+      theme.fonts.xLargePlus,
+      {
+        flex: '1 1 auto',
+        borderTop: `4px solid ${theme.palette.themePrimary}`,
+        display: 'flex',
+        alignItems: 'center',
+        fontWeight: FontWeights.semibold,
+        padding: '12px 12px 14px 24px',
+      },
+    ],
+    body: {
+      flex: '4 4 auto',
+      padding: '0 24px 24px 24px',
+      overflowY: 'hidden',
+      selectors: {
+        p: { margin: '14px 0' },
+        'p:first-child': { marginTop: 0 },
+        'p:last-child': { marginBottom: 0 },
+      },
+    },
+    redlineContainer: {
+      height: 'calc(100% - 20px)',
+      overflowY: 'auto',
+      border: '1px solid #e5e7eb',
+      borderRadius: '4px',
+      padding: '16px',
+      backgroundColor: '#fff',
+    },
+  });
+
+  // Render redline modal
+  const renderRedlineModal = () => (
+    <Modal
+      isOpen={isRedlineModalOpen}
+      onDismiss={() => setIsRedlineModalOpen(false)}
+      isBlocking={false}
+      containerClassName={modalStyles.container}
+    >
+      <div className={modalStyles.header}>
+        <span>Contract Redline Comparison</span>
+        <IconButton
+          iconProps={{ iconName: 'Cancel' }}
+          ariaLabel="Close redline view"
+          onClick={() => setIsRedlineModalOpen(false)}
+          styles={{
+            root: {
+              color: theme.palette.neutralPrimary,
+              marginLeft: 'auto',
+              marginTop: '4px',
+              marginRight: '2px',
+            },
+            rootHovered: {
+              color: theme.palette.neutralDark,
+            },
+          }}
+        />
+      </div>
+      <div className={modalStyles.body}>
+        <div className="mb-4 flex items-center justify-between">
+          <Text variant="large" className="font-semibold">
+            Changes Detected
+          </Text>
+          <Toggle
+            label="Show Redlines"
+            checked={showRedlines}
+            onChange={(_, checked) => setShowRedlines(!!checked)}
+            styles={{ root: { margin: 0 } }}
+          />
+        </div>
+        
+        <div className="flex mb-4">
+          <div className="mr-8">
+            <Text className="font-semibold text-green-600">
+              {redlineChanges.added.length} Additions
+            </Text>
+          </div>
+          <div className="mr-8">
+            <Text className="font-semibold text-red-600">
+              {redlineChanges.removed.length} Removals
+            </Text>
+          </div>
+          <div>
+            <Text className="font-semibold text-blue-600">
+              {redlineChanges.modified.length} Modifications
+            </Text>
+          </div>
+        </div>
+        
+        <div className={modalStyles.redlineContainer}>
+          <div className="redline-content" 
+            dangerouslySetInnerHTML={{ 
+              __html: showRedlines ? redlineText : redlineText.replace(/<ins[^>]*>|<\/ins>|<del[^>]*>|<\/del>/g, '') 
+            }} 
+          />
+        </div>
+      </div>
+    </Modal>
   );
 
   return (
@@ -1182,7 +1753,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                 headerText="Text Preview"
                 itemKey="preview"
                 headerButtonProps={{
-                  className: activeTab === 'preview' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600 overflow-scroll' : 'text-gray-600'
+                  className: activeTab === 'preview' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
                 }}
               />
               {/* Add this new tab for highlighted view if you want */}
@@ -1197,42 +1768,137 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
               )}
             </Pivot>
 
-            <div className="mt-4 h-[calc(100vh-180px)] flex flex-col overflow-scroll">
+            <div className="mt-4 h-[calc(100vh-180px)] flex flex-col overflow-hidden">
               {activeTab === 'preview' && (
-                <div className="h-full flex flex-col">
-                  <ContractTextPreview
-                    contractText={contractText}
-                    lineNumbers={true}
-                    enableSearch={true}
-                    enableWordWrap={true}
-                    risks={parsedRisks} // Add this line to pass the risks
-                  />
+                <div className="h-full flex flex-col overflow-hidden">
+                  <div className="h-full w-full overflow-auto border border-gray-200 rounded-md bg-white">
+                    <ContractTextPreview
+                      contractText={contractText}
+                      lineNumbers={true}
+                      enableSearch={true}
+                      enableWordWrap={true}
+                      risks={parsedRisks} // Add this line to pass the risks
+                    />
+                  </div>
                 </div>
               )}
               {activeTab === 'highlighted' && (
-                <div className="h-full flex flex-col">
-                  <ContractTextPreview
-                    contractText={contractText}
-                    lineNumbers={true}
-                    enableSearch={true}
-                    enableWordWrap={true}
-                    risks={parsedRisks}
-                  />
+                <div className="h-full flex flex-col overflow-hidden">
+                  <div className="h-full w-full overflow-auto border border-gray-200 rounded-md bg-white">
+                    <ContractTextPreview
+                      contractText={contractText}
+                      lineNumbers={true}
+                      enableSearch={true}
+                      enableWordWrap={true}
+                      risks={parsedRisks}
+                    />
+                  </div>
                 </div>
               )}
 
               {activeTab === 'analysis' && (
                 <>
                   {!analysis && !loading && (
-                    <div className="flex flex-col items-center justify-center mt-10 text-center">
-                      <PrimaryButton
-                        text="Analyze Contract"
-                        onClick={handleAnalyze}
-                        disabled={!contractText || loading}
-                        className="mb-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded disabled:bg-gray-200 disabled:text-gray-400"
-                      />
+                    <div className="flex flex-col mt-10">
+                      {/* Add the contract type selection */}
+                      <div className="mb-6 max-w-md mx-auto">
+                        <Dropdown
+                          label="Contract Type"
+                          selectedKey={contractType}
+                          options={contractTypeOptions}
+                          onChange={(_, option) => option && setContractType(option.key as string)}
+                          styles={{
+                            dropdown: { borderRadius: '4px' },
+                            title: { borderRadius: '4px' },
+                            label: { fontWeight: 600, marginBottom: '8px' }
+                          }}
+                        />
+                      </div>
+                      
+                      {/* Analysis type selection */}
+                      <div className="mb-6">
+                        <Text className="font-semibold text-lg text-gray-800 mb-3 text-center">
+                          Select Analysis Type
+                        </Text>
+                        {/* Integrate the DataDrivenAnalysisButtons component */}
+                        <DataDrivenAnalysisButtons
+                          onAnalysisSelect={handleAnalysisTypeSelect}
+                          contractType={contractType}
+                          layout="grid"
+                          showIcons={true}
+                        />
+                      </div>
+                      
+                      {/* Contract comparison button */}
+                      <div className="mt-4 mb-6 text-center">
+                        <Text className="font-semibold text-gray-700 mb-2">
+                          Additional Tools
+                        </Text>
+                        <div className="flex justify-center gap-4">
+                          <DefaultButton
+                            iconProps={{ iconName: 'Compare' }}
+                            text="Compare Documents"
+                            onClick={() => {
+                              // Generate sample redlines for demonstration
+                              const sampleRedlineHtml = `
+                                <p>This Agreement is made on <del style="background-color: #ffdddd; text-decoration: line-through;">January 1, 2023</del><ins style="background-color: #ddffdd; text-decoration: none;"> April 15, 2023</ins>, between the following parties:</p>
+                                <p><del style="background-color: #ffdddd; text-decoration: line-through;">ABC Construction LLC</del><ins style="background-color: #ddffdd; text-decoration: none;"> XYZ Development Corporation</ins> ("Contractor") and Johnson Properties Inc. ("Owner").</p>
+                                <p><ins style="background-color: #ddffdd; text-decoration: none;">WHEREAS, the Owner desires to engage the Contractor for construction services; and</ins></p>
+                                <p>WHEREAS, the Contractor is willing to perform such services;</p>
+                                <p>The parties agree as follows:</p>
+                              `;
+                              setRedlineText(sampleRedlineHtml);
+                              setRedlineChanges({
+                                added: ['April 15, 2023', 'XYZ Development Corporation', 'WHEREAS, the Owner desires to engage the Contractor for construction services; and'],
+                                removed: ['January 1, 2023', 'ABC Construction LLC'],
+                                modified: ['Party identification paragraph']
+                              });
+                              setIsRedlineModalOpen(true);
+                            }}
+                            className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-300"
+                          />
+                          <DefaultButton
+                            iconProps={{ iconName: 'DocumentSearch' }}
+                            text="Extract Key Terms"
+                            onClick={() => {
+                              // This would be implemented to extract defined terms, etc.
+                              alert('This feature would extract key defined terms from the contract.');
+                            }}
+                            className="bg-teal-50 hover:bg-teal-100 text-teal-700 border-teal-300"
+                          />
+                        </div>
+                      </div>
+                      
+                      {/* Analyze button */}
+                      <div className="flex justify-center items-center gap-4 mt-6">
+                        <PrimaryButton
+                          text={`Analyze Contract (${analysisTypeConfig[selectedAnalysisType]?.name || 'Custom Analysis'})`}
+                          onClick={handleAnalyze}
+                          disabled={!contractText || loading}
+                          className="mb-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded disabled:bg-gray-200 disabled:text-gray-400"
+                        />
+                        <TooltipHost
+                          content="Use GPT-4 to suggest contract improvements"
+                          id="contractSuggestionsTooltip"
+                        >
+                          <DefaultButton
+                            text="Generate Suggestions"
+                            iconProps={{ iconName: 'Edit' }}
+                            onClick={() => {
+                              // This would trigger a different analysis focused on improvements
+                              setSelectedAnalysisType('risk');
+                              setAnalysisPrompt(
+                                `You are an expert contract editor. Review the following contract text and suggest specific improvements to strengthen the client's position, close loopholes, and clarify ambiguous language. Format your response with clear section references and explanations of why each change would be beneficial.`
+                              );
+                              handleAnalyze();
+                            }}
+                            disabled={!contractText || loading}
+                            className="mb-4 bg-green-50 hover:bg-green-100 text-green-700 border-green-300 px-4 py-2 rounded disabled:opacity-50"
+                          />
+                        </TooltipHost>
+                      </div>
 
-                      <Text className="text-gray-500 max-w-lg">
+                      <Text className="text-gray-500 max-w-lg text-center mx-auto">
                         Click to analyze your contract for legal risks, obligations, and key terms. Analysis will be performed in {chunkText(contractText, settings.chunkSize).length} parts.
                       </Text>
                     </div>
@@ -1262,7 +1928,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                       <div className="flex justify-between items-center py-2 border-b border-gray-200 mb-3">
                         <div className="flex items-center gap-3">
                           <Text className="font-semibold text-lg text-gray-800">
-                            Contract Analysis Results
+                            {selectedAnalysisType ? analysisTypeConfig[selectedAnalysisType]?.name || 'Analysis Results' : 'Contract Analysis Results'}
                           </Text>
 
                           <div className="flex bg-gray-100 p-0.5 rounded border border-gray-300">
@@ -1305,6 +1971,21 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
                         </div>
 
                         <div className="flex gap-2">
+                          {/* Add a run another analysis button */}
+                          <DefaultButton
+                            iconProps={{ iconName: 'Refresh' }}
+                            text="New Analysis"
+                            onClick={() => {
+                              // Reset analysis but keep the contract text
+                              setAnalysis('');
+                              setParsedRisks([]);
+                              setMitigationPoints([]);
+                              setSelectedAnalysisType('comprehensive');
+                              setAnalysisPrompt('');
+                            }}
+                            className="bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100 mr-2"
+                          />
+                        
                           <TooltipHost content={copySuccess ? "Copied!" : "Copy to clipboard"}>
                             <button
                               onClick={handleCopyToClipboard}
@@ -1342,6 +2023,8 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
       {renderSettingsPanel()}
       {renderResetConfirmation()}
+      {renderRedlineModal()}
+      {renderFixSuggestionModal()}
     </Panel>
   );
 };

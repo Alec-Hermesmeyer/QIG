@@ -1,0 +1,123 @@
+{
+  "functionId": "obligation-extraction",
+  "name": "Obligation Analysis",
+  "description": "Extract and classify all contractual obligations by category and responsible party",
+  "icon": "clipboard-list",
+  "category": "contract-analysis",
+  "promptTemplate": {
+    "system": "You are an expert construction contract analyst specializing in obligation analysis. Your task is to extract all contractual obligations, classify them by category and responsible party, and link them to relevant review topics.",
+    "instructions": [
+      "Identify all 'shall' statements and other obligatory language",
+      "Extract each obligation along with its context",
+      "Categorize obligations by responsible party and subject matter",
+      "Link obligations to relevant standard contract review topics"
+    ],
+    "obligationIndicators": [
+      "'Shall' statements",
+      "'Must' requirements",
+      "'Will' commitments",
+      "'Agrees to' phrases",
+      "Responsibilities described in present tense",
+      "Requirements using 'responsible for' language"
+    ],
+    "topicCategories": [
+      {
+        "name": "Hazardous Material",
+        "elements": ["Identification", "Handling", "Remediation"]
+      },
+      {
+        "name": "Change Relief",
+        "elements": ["Notice", "Documentation", "Continuation of work"]
+      },
+      {
+        "name": "Schedule Obligations",
+        "elements": ["Progress", "Reporting", "Recovery"]
+      },
+      {
+        "name": "Performance Guarantees",
+        "elements": ["Testing", "Demonstration", "Compliance"]
+      },
+      {
+        "name": "Warranty",
+        "elements": ["Correction", "Repair", "Replacement"]
+      },
+      {
+        "name": "Payment Terms",
+        "elements": ["Application", "Documentation", "Certification"]
+      },
+      {
+        "name": "Subcontractors",
+        "elements": ["Flow-down", "Management", "Payment"]
+      },
+      {
+        "name": "Equipment and Processes",
+        "elements": ["Procurement", "Installation", "Commissioning"]
+      },
+      {
+        "name": "Key Personnel",
+        "elements": ["Staffing", "Replacement", "Qualification"]
+      },
+      {
+        "name": "Owner Provided Equipment",
+        "elements": ["Receipt", "Inspection", "Installation"]
+      },
+      {
+        "name": "Confidentiality",
+        "elements": ["Protection of sensitive information"]
+      },
+      {
+        "name": "Audit Rights",
+        "elements": ["Record keeping", "Access to records"]
+      },
+      {
+        "name": "Owner Provided Information",
+        "elements": ["Use of", "Reliance on owner-furnished information"]
+      },
+      {
+        "name": "Separate Contractors",
+        "elements": ["Coordination", "Cooperation"]
+      }
+    ],
+    "outputFormat": {
+      "sections": [
+        {
+          "name": "Owner Obligations",
+          "structure": {
+            "obligation": "Description of requirement",
+            "location": "Section number",
+            "category": "Topic classification",
+            "timing": "When obligation must be performed",
+            "consequence": "Result of non-performance"
+          }
+        },
+        {
+          "name": "Contractor Obligations",
+          "structure": {
+            "obligation": "Description of requirement",
+            "location": "Section number",
+            "category": "Topic classification",
+            "timing": "When obligation must be performed",
+            "consequence": "Result of non-performance"
+          }
+        },
+        {
+          "name": "Architect/Engineer Obligations",
+          "structure": {
+            "obligation": "Description of requirement",
+            "location": "Section number",
+            "category": "Topic classification",
+            "timing": "When obligation must be performed",
+            "consequence": "Result of non-performance"
+          }
+        }
+      ],
+      "conclusion": "Summary of the most critical obligations by party and recommendations for obligation management systems"
+    }
+  },
+  "parameters": {
+    "documentId": "",
+    "includeImpliedObligations": true,
+    "highlightCriticalObligations": true,
+    "outputFormat": "structured"
+  }
+}
