@@ -499,129 +499,135 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   
   // Parse risks from raw analysis text
   const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
-    const risks: Risk[] = [];
-
-    // Approach 1: Use alternative to 's' flag with character class instead of dot
-    // Replace '.' with '[\\s\\S]' to match any character including newlines
-    const riskRegex = /Risk Category: ([\\s\\S]*?) Risk Score: ([\\s\\S]*?) Risky Contract Text: "([\\s\\S]*?)" Why This Is a Risk: ([\\s\\S]*?) Contract Location: ([\\s\\S]*?)(?=\n\nRisk Category:|$|\n\nMitigation Summary:)/g;
-
-    let match;
-    while ((match = riskRegex.exec(rawAnalysis)) !== null) {
-      risks.push({
-        category: match[1].trim(),
-        score: match[2].trim(),
-        text: match[3].trim(),
-        reason: match[4].trim(),
-        location: match[5].trim(),
-      });
-    }
-
-    // If no risks were found with the main regex, try an alternative approach
-    if (risks.length === 0) {
-      // Split by risk sections
-      const sections = rawAnalysis.split(/\n\n(?=Risk Category)/);
-
-      for (let i = 0; i < sections.length; i++) {
-        const section = sections[i];
-        if (!section.toLowerCase().includes('risk category')) continue;
-
-        try {
-          const categoryMatch = section.match(/Risk Category:?\s*([\s\S]*?)(?=\s*Risk Score:|$)/);
-          const scoreMatch = section.match(/Risk Score:?\s*([\s\S]*?)(?=\s*Risky Contract Text:|$)/);
-          const textMatch = section.match(/Risky Contract Text:?\s*(?:"([\s\S]*?)"|([^"]+?))(?=\s*Why This Is a Risk:|$)/);
-          const reasonMatch = section.match(/Why This Is a Risk:?\s*([\s\S]*?)(?=\s*Contract Location:|$)/);
-          const locationMatch = section.match(/Contract Location:?\s*([\s\S]*?)(?=$)/);
-
-          if (categoryMatch && scoreMatch) {
-            const risk: Risk = {
-              category: categoryMatch[1] ? categoryMatch[1].trim() : 'Unknown Category',
-              score: scoreMatch[1] ? scoreMatch[1].trim() : 'Unknown Score',
-              text: '',
-              reason: 'Unknown Reason',
-              location: 'Unknown Location',
-            };
-
-            // Handle text match
-            if (textMatch) {
-              risk.text = (textMatch[1] || textMatch[2] || '').trim();
-            }
-
-            // Handle reason match
-            if (reasonMatch && reasonMatch[1]) {
-              risk.reason = reasonMatch[1].trim();
-            }
-
-            // Handle location match
-            if (locationMatch && locationMatch[1]) {
-              risk.location = locationMatch[1].trim();
-            }
-
-            risks.push(risk);
-          }
-        } catch (e) {
-          console.error('Section parsing error:', e);
+    // First try to parse as JSON (from new improved prompt)
+    try {
+      // Look for JSON structure in the text
+      const jsonMatch = rawAnalysis.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        const jsonData = JSON.parse(jsonMatch[0]);
+        if (jsonData.risks && Array.isArray(jsonData.risks)) {
+            return jsonData.risks.map((risk: { category: string; score: string; text: string; reason: string; location: string }): Risk => ({
+            category: risk.category,
+            score: risk.score,
+            text: risk.text,
+            reason: risk.reason,
+            location: risk.location
+            }));
         }
       }
+    } catch (e) {
+      console.log('JSON parsing failed, falling back to regex parsing', e);
+      // Continue with regex parsing as a fallback
     }
-
+  
+    // Fallback to regex parsing for non-JSON formatted responses
+    const risks: Risk[] = [];
+  
+    // Try to find risks with the expected structure
+    const riskSections = rawAnalysis.split(/\n\s*(?:Risk \d+:|Risk Category:)/i);
+    
+    for (let i = 1; i < riskSections.length; i++) { // Start from 1 to skip the intro part
+      const section = "Risk Category:" + riskSections[i].trim();
+      
+      try {
+        // Extract category
+        const categoryMatch = section.match(/Risk Category:\s*([^$\n]*?)(?=\s*Risk Score:|$)/i);
+        const category = categoryMatch ? categoryMatch[1].trim() : 'Unknown Category';
+        
+        // Extract score
+        const scoreMatch = section.match(/Risk Score:\s*([^$\n]*?)(?=\s*Risky Contract Text:|$)/i);
+        const score = scoreMatch ? scoreMatch[1].trim() : 'Unknown Score';
+        
+        // Extract text
+        const textMatch = section.match(/(?:Risky Contract Text:|Contract Text:)\s*(?:"([^"]*?)"|([^"$\n]*?)(?=\s*Why This Is a Risk:|$))/i);
+        const text = textMatch ? (textMatch[1] || textMatch[2] || '').trim() : 'Unknown Text';
+        
+        // Extract reason
+        const reasonMatch = section.match(/Why This Is a Risk:\s*([^$\n]*?)(?=\s*Contract Location:|$)/i);
+        const reason = reasonMatch ? reasonMatch[1].trim() : 'Unknown Reason';
+        
+        // Extract location
+        const locationMatch = section.match(/Contract Location:\s*([^$\n]*?)(?=\s*(?:Risk Category:|Risk \d+:|Mitigation Summary:|$))/i);
+        const location = locationMatch ? locationMatch[1].trim() : 'Unknown Location';
+        
+        // Only add if we have at least category and score
+        if (category !== 'Unknown Category' || score !== 'Unknown Score') {
+          risks.push({
+            category,
+            score,
+            text,
+            reason,
+            location
+          });
+        }
+      } catch (e) {
+        console.error('Error parsing risk section:', e);
+      }
+    }
+  
     return risks;
   };
-  const generateFixSuggestion = async (risk: Risk) => {
-    setIsGeneratingFix(true);
-    setSelectedRiskForFix(risk);
-    setShowFixModal(true);
+ 
+// Then update the generateFixSuggestion function to use Groq instead of OpenAI:
+const generateFixSuggestion = async (risk: Risk) => {
+  if (!risk) return;
+  
+  setIsGeneratingFix(true);
+  setSelectedRiskForFix(risk);
+  setSuggestedFix(''); // Clear previous suggestion
+  setShowFixModal(true); // Make sure the modal is shown right away
+  
+  try {
+    // Prepare the prompt for generating a fix
+    const fixPrompt = `
+You are an expert contract attorney. Review the following contract clause that has been identified as risky and suggest specific language to fix the issue.
+
+RISK CATEGORY: ${risk.category}
+RISK SEVERITY: ${risk.score}
+PROBLEMATIC CONTRACT TEXT: "${risk.text}"
+ISSUE DESCRIPTION: ${risk.reason}
+LOCATION IN CONTRACT: ${risk.location}
+
+Please provide:
+1. A specific rewritten version of this clause that would fix the issue
+2. A brief explanation of how your rewrite addresses the risk
+3. Any additional advice on implementing this change
+    `;
     
-    try {
-      // Prepare the prompt for generating a fix
-      const fixPrompt = `
-  You are an expert contract attorney. Review the following contract clause that has been identified as risky and suggest specific language to fix the issue.
-  
-  RISK CATEGORY: ${risk.category}
-  RISK SEVERITY: ${risk.score}
-  PROBLEMATIC CONTRACT TEXT: "${risk.text}"
-  ISSUE DESCRIPTION: ${risk.reason}
-  LOCATION IN CONTRACT: ${risk.location}
-  
-  Please provide:
-  1. A specific rewritten version of this clause that would fix the issue
-  2. A brief explanation of how your rewrite addresses the risk
-  3. Any additional advice on implementing this change
-      `;
-      
-      // Call the API to generate a fix
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: settings.model,
-          messages: [{ role: 'user', content: fixPrompt }],
-          temperature: 0.7, // Slightly higher temperature for more creative solutions
-        }),
-      });
-      
-      if (!res.ok) {
-        throw new Error(`API error: ${res.status} ${res.statusText}`);
-      }
-      
-      const data = await res.json();
-      const fixContent = data.choices?.[0]?.message?.content;
-      
-      if (fixContent) {
-        setSuggestedFix(fixContent);
-      } else {
-        throw new Error('No content received from API');
-      }
-    } catch (error) {
-      console.error('Error generating fix:', error);
-      setSuggestedFix('Failed to generate a fix suggestion. Please try again.');
-    } finally {
-      setIsGeneratingFix(false);
+    // Call the Groq API to generate a fix
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama3-8b-8192', // Groq's models like 'llama3-8b-8192' or 'mixtral-8x7b-32768'
+        messages: [{ role: 'user', content: fixPrompt }],
+        temperature: 0.7, // Slightly higher temperature for more creative solutions
+        max_tokens: 2048, // Adjust based on expected response length
+      }),
+    });
+    
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status} ${res.statusText}`);
     }
-  };
-  
+    
+    const data = await res.json();
+    const fixContent = data.choices?.[0]?.message?.content;
+    
+    if (fixContent) {
+      setSuggestedFix(fixContent);
+    } else {
+      throw new Error('No content received from API');
+    }
+  } catch (error) {
+    console.error('Error generating fix:', error);
+    setSuggestedFix('Failed to generate a fix suggestion. Please try again.');
+  } finally {
+    setIsGeneratingFix(false);
+  }
+};
   // Add a function for the highlight in document feature
   const highlightInDocument = (risk: Risk, index: number) => {
     setActiveTab('preview');
@@ -870,34 +876,68 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   // Parse mitigation points from raw analysis text
   const parseMitigationFromAnalysis = (rawAnalysis: string): string[] => {
+    // First try to parse as JSON (from new improved prompt)
+    try {
+      // Look for JSON structure in the text
+      const jsonMatch = rawAnalysis.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        const jsonData = JSON.parse(jsonMatch[0]);
+        if (jsonData.mitigation && Array.isArray(jsonData.mitigation)) {
+          return jsonData.mitigation;
+        }
+      }
+    } catch (e) {
+      console.log('JSON parsing failed, falling back to regex parsing', e);
+      // Continue with regex parsing as a fallback
+    }
+  
+    // Fallback to traditional parsing methods
     const mitigationPatterns = [
-      /Mitigation Summary:([\s\S]*?)(?=$)/,
-      /Mitigation Recommendations:([\s\S]*?)(?=$)/,
-      /Recommended Mitigations:([\s\S]*?)(?=$)/,
-      /Mitigation Strategies:([\s\S]*?)(?=$)/,
+      /Mitigation Summary:([\s\S]*?)(?=$)/i,
+      /Mitigation Recommendations:([\s\S]*?)(?=$)/i,
+      /Recommended Mitigations:([\s\S]*?)(?=$)/i,
+      /Mitigation Strategies:([\s\S]*?)(?=$)/i,
     ];
-
+  
     for (let i = 0; i < mitigationPatterns.length; i++) {
       const mitigationMatch = rawAnalysis.match(mitigationPatterns[i]);
       if (mitigationMatch) {
-        return mitigationMatch[1]
-          .split('\n')
+        // Extract bullet points and number lists
+        const points = mitigationMatch[1]
+          .split(/\n/)
           .map(line => line.trim())
-          .filter(line => {
-            // Keep lines that start with a bullet point, number, or have substantial content
-            return (
-              line.startsWith('-') ||
-              line.startsWith('•') ||
-              /^\d+\./.test(line) ||
-              line.length > 15
-            );
-          });
+          .filter(line => 
+            (line.startsWith('-') || 
+             line.startsWith('•') || 
+             line.startsWith('*') || 
+             /^\d+\./.test(line)) && 
+            line.length > 10
+          )
+          .map(line => line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, ''));
+        
+        // Deduplicate and limit to 10 points max
+        const uniquePoints = [...new Set(points)].slice(0, 10);
+        return uniquePoints;
       }
     }
-
+  
     return [];
   };
-
+  const preprocessAnalysisResponse = (response: string): string => {
+    // Remove any system notes or redundant parts
+    let cleaned = response
+      .replace(/Part \d+ of \d+/g, '')
+      .replace(/^(As a|I am a|Acting as a).*?analyst.*?\n/im, '')
+      .replace(/\*\*CONSTRUCTION CONTRACT RISK ANALYSIS\*\*/g, '')
+      .replace(/\*\*ROLE AND OBJECTIVE\*\*[\s\S]*?\*\*ANALYSIS FRAMEWORK\*\*/g, '')
+      .replace(/\*\*ANALYTICAL APPROACH\*\*[\s\S]*?\*\*IMPORTANT NOTES\*\*/g, '')
+      .replace(/\*\*OUTPUT FORMAT\*\*[\s\S]*?ensure proper parsing/g, '')
+      .replace(/\*\*PRIORITY RISK AREAS\*\*[\s\S]*?\*\*MITIGATION SUMMARY\*\*/g, '');
+    
+    return cleaned;
+  };
+  
+  
   // Handle the analysis process
   const handleAnalyze = async () => {
   if (!contractText) return;
@@ -924,17 +964,18 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
       try {
         const chunkPrompt = `${promptIntro}\n\n--- Contract Excerpt (Part ${i + 1} of ${chunks.length}) ---\n${chunks[i]}`;
         
-        // Using your original working API call
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        // Using Groq API call
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_KEY}`,
+            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: settings.model,
+            model: 'llama3-8b-8192', // or your preferred Groq model
             messages: [{ role: 'user', content: chunkPrompt }],
             temperature: settings.temperature,
+            max_tokens: 4096, // Adjust based on expected response length
           }),
         });
         
@@ -958,11 +999,14 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
             : '';
             
           fullAnalysis += (i > 0 ? '\n\n' : '') + partHeader + content;
-          setAnalysis(fullAnalysis);
           
-          // Parse risks and mitigation points as we go
-          const currentRisks = parseRisksFromAnalysis(fullAnalysis);
-          const currentMitigation = parseMitigationFromAnalysis(fullAnalysis);
+          // Preprocess the response before setting it
+          const cleanedAnalysis = preprocessAnalysisResponse(fullAnalysis);
+          setAnalysis(cleanedAnalysis);
+          
+          // Parse risks and mitigation points from cleaned analysis
+          const currentRisks = parseRisksFromAnalysis(cleanedAnalysis);
+          const currentMitigation = parseMitigationFromAnalysis(cleanedAnalysis);
           
           setParsedRisks(currentRisks);
           setMitigationPoints(currentMitigation);
