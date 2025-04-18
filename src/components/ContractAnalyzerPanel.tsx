@@ -144,8 +144,8 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   // Settings
   const [settings, setSettings] = useState<AnalysisSettings>({
-    model: 'gpt-4',
-    temperature: 0.4,
+    model: 'llama3-8b-8192',
+    temperature: 0.1,
     chunkSize: 1500,
   });
 
@@ -155,10 +155,14 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   // Model options
   const modelOptions: IDropdownOption[] = [
-    { key: 'gpt-4', text: 'GPT-4 (Most Accurate)' },
-    { key: 'gpt-4-turbo', text: 'GPT-4 Turbo (Faster)' },
-    { key: 'gpt-3.5-turbo', text: 'GPT-3.5 Turbo (Economical)' },
+    { key: 'llama3-8b-8192', text: 'Llama 3 8B (Balanced)' },
+    { key: 'llama3-70b-8192', text: 'Llama 3 70B (Most Accurate)' },
+    { key: 'mixtral-8x7b-32768', text: 'Mixtral 8x7B (Fast)' },
+    { key: 'gemma-7b-it', text: 'Gemma 7B (Economical)' },
   ];
+  
+  // Then update your settings state to use a Groq model as default
+  
 
   // Contract type options
   const contractTypeOptions: IDropdownOption[] = [
@@ -264,7 +268,81 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
     setSelectedAnalysisType('comprehensive');
     setAnalysisPrompt('');
   };
+  interface ContractAnalysisResponse {
+    risks: Array<{
+      id: number;
+      category: string;
+      score: string;
+      text: string;
+      reason: string;
+      location: string;
+    }>;
+    mitigation: string[];
+  }
 
+  const extractJSONFromResponse = (text: string): ContractAnalysisResponse | null => {
+    try {
+      // First try direct parsing in case the entire response is valid JSON
+      const directParse = JSON.parse(text);
+      if (isValidAnalysisResponse(directParse)) {
+        return directParse;
+      }
+    } catch (e) {
+      // Not valid JSON, continue with extraction
+    }
+  
+    // Try to find a JSON block in the text
+    try {
+      // Look for text that starts with { and ends with }
+      const jsonRegex = /\{[\s\S]*\}/;
+      const match = text.match(jsonRegex);
+      
+      if (match) {
+        const jsonStr = match[0];
+        const parsed = JSON.parse(jsonStr);
+        
+        if (isValidAnalysisResponse(parsed)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to extract JSON from response:', e);
+    }
+    
+    return null;
+  };
+  const isValidAnalysisResponse = (obj: any): obj is ContractAnalysisResponse => {
+    interface RiskItem {
+      id: number;
+      category: string;
+      score: string;
+      text: string;
+      reason: string;
+      location: string;
+    }
+
+    interface ContractAnalysisResponse {
+      risks: RiskItem[];
+      mitigation: string[];
+    }
+
+    return (
+      typeof obj === 'object' &&
+      obj !== null &&
+      Array.isArray(obj.risks) &&
+      obj.risks.length > 0 &&
+      obj.risks.every((risk: RiskItem) => 
+        typeof risk.id === 'number' &&
+        typeof risk.category === 'string' &&
+        typeof risk.score === 'string' &&
+        typeof risk.text === 'string' &&
+        typeof risk.reason === 'string' &&
+        typeof risk.location === 'string'
+      ) &&
+      Array.isArray(obj.mitigation) &&
+      obj.mitigation.every((item: string) => typeof item === 'string')
+    );
+  };
   // Handle file upload via drag and drop
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -500,21 +578,21 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   // Parse risks from raw analysis text
   const parseRisksFromAnalysis = (rawAnalysis: string): Risk[] => {
     // First try to parse as JSON (from new improved prompt)
+    
     try {
       // Look for JSON structure in the text
-      const jsonMatch = rawAnalysis.match(/\{[\s\S]*?\}/);
-      if (jsonMatch) {
-        const jsonData = JSON.parse(jsonMatch[0]);
-        if (jsonData.risks && Array.isArray(jsonData.risks)) {
-            return jsonData.risks.map((risk: { category: string; score: string; text: string; reason: string; location: string }): Risk => ({
-            category: risk.category,
-            score: risk.score,
-            text: risk.text,
-            reason: risk.reason,
-            location: risk.location
-            }));
-        }
+      const jsonData = extractJSONFromResponse(rawAnalysis);
+  
+      if (jsonData) {
+        return jsonData.risks.map(risk => ({
+          category: risk.category,
+          score: risk.score,
+          text: risk.text,
+          reason: risk.reason,
+          location: risk.location
+        }));
       }
+    
     } catch (e) {
       console.log('JSON parsing failed, falling back to regex parsing', e);
       // Continue with regex parsing as a fallback
@@ -879,13 +957,12 @@ Please provide:
     // First try to parse as JSON (from new improved prompt)
     try {
       // Look for JSON structure in the text
-      const jsonMatch = rawAnalysis.match(/\{[\s\S]*?\}/);
-      if (jsonMatch) {
-        const jsonData = JSON.parse(jsonMatch[0]);
-        if (jsonData.mitigation && Array.isArray(jsonData.mitigation)) {
-          return jsonData.mitigation;
-        }
+      const jsonData = extractJSONFromResponse(rawAnalysis);
+  
+      if (jsonData) {
+        return jsonData.mitigation;
       }
+      
     } catch (e) {
       console.log('JSON parsing failed, falling back to regex parsing', e);
       // Continue with regex parsing as a fallback
