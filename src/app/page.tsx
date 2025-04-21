@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { History, Trash2, Settings, File } from "lucide-react";
+import { History, Trash2, Settings, File, Info } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { SettingsSidebar } from "@/components/settings-sidebar";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { ImprovedChatHandle, ImprovedChat } from "@/components/chat";
 import Answer from "@/components/Answer";
 import { ContractAnalyzerPanel } from "@/components/ContractAnalyzerPanel";
@@ -17,6 +23,382 @@ import { AnalysisPanelTabs } from "@/components/AnalysisPanelTabs";
 import { FileCabinetPanel } from "@/components/FileCabinetPanel";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+
+// Define interface for settings state
+interface SettingsState {
+  promptTemplate: string;
+  temperature: number;
+  seed: string;
+  minSearchScore: number;
+  minRerankerScore: number;
+  includeCategory: string;
+  excludeCategory: string | null;
+  useSemanticRanker: boolean;
+  useSemanticCaptions: boolean;
+  streamResponse: boolean;
+  suggestFollowUp: boolean;
+  retrievalMode: string;
+}
+
+// Define interface for chat configuration
+interface ChatConfig {
+  promptTemplate?: string;
+  temperature: number;
+  seed?: string;
+  streamResponse: boolean;
+  suggestFollowUp: boolean;
+  searchConfig?: {
+    minSearchScore: number;
+    minRerankerScore: number;
+    includeCategory: string;
+    excludeCategory: string | null;
+    useSemanticRanker: boolean;
+    useSemanticCaptions: boolean;
+    retrievalMode: string;
+  };
+}
+
+// Settings Sidebar Component
+interface SettingsSidebarProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialSettings?: Partial<SettingsState>;
+  onSettingsChange?: (settings: Partial<SettingsState>) => void;
+}
+
+function SettingsSidebar({ 
+  open, 
+  onOpenChange, 
+  initialSettings = {}, 
+  onSettingsChange
+}: SettingsSidebarProps) {
+  // Default settings
+  const defaultSettings: SettingsState = {
+    promptTemplate: '',
+    temperature: 0.3,
+    seed: '',
+    minSearchScore: 0,
+    minRerankerScore: 0,
+    includeCategory: 'all',
+    excludeCategory: null,
+    useSemanticRanker: true,
+    useSemanticCaptions: false,
+    streamResponse: true,
+    suggestFollowUp: false,
+    retrievalMode: 'hybrid'
+  };
+
+  // Initialize settings with defaults and any provided initial settings
+  const [settings, setSettings] = useState<SettingsState>({
+    ...defaultSettings,
+    ...initialSettings
+  });
+
+  // Update settings when initialSettings prop changes
+  useEffect(() => {
+    if (initialSettings && Object.keys(initialSettings).length > 0) {
+      setSettings(prev => ({
+        ...prev,
+        ...initialSettings
+      }));
+    }
+  }, [initialSettings]);
+
+  // Handler for input changes
+  const handleInputChange = (field: keyof SettingsState, value: any) => {
+    setSettings(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Apply settings and close sidebar
+  const handleApplySettings = () => {
+    if (onSettingsChange) {
+      onSettingsChange(settings);
+    }
+    onOpenChange(false);
+  };
+
+  // Reset to initial settings
+  const handleCancel = () => {
+    setSettings({
+      ...defaultSettings,
+      ...initialSettings
+    });
+    onOpenChange(false);
+  };
+
+  return (
+    <TooltipProvider>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader className="mb-6">
+            <SheetTitle>Configure answer generation</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-6">
+            {/* Prompt Template */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <label htmlFor="prompt" className="text-sm font-medium">
+                  Override prompt template
+                </label>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Custom prompt template for the AI</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <Textarea 
+                id="prompt" 
+                className="min-h-[100px]" 
+                value={settings.promptTemplate}
+                onChange={(e) => handleInputChange('promptTemplate', e.target.value)}
+                placeholder="You are an AI assistant that helps users analyze construction contracts. When analyzing a contract, focus on the financial provisions, risk allocation, and key compliance requirements."
+              />
+            </div>
+
+            {/* Temperature */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <label htmlFor="temperature" className="text-sm font-medium">
+                  Temperature
+                </label>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Controls randomness in the output</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="flex gap-4">
+                <Slider 
+                  id="temperature" 
+                  min={0} 
+                  max={1} 
+                  step={0.1} 
+                  value={[settings.temperature]} 
+                  className="flex-1"
+                  onValueChange={(value) => handleInputChange('temperature', value[0])}
+                />
+                <Input 
+                  type="number" 
+                  className="w-20" 
+                  value={settings.temperature} 
+                  onChange={(e) => handleInputChange('temperature', parseFloat(e.target.value) || 0)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                />
+              </div>
+            </div>
+
+            {/* Seed */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <label htmlFor="seed" className="text-sm font-medium">
+                  Seed
+                </label>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Random seed for reproducibility</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <Input 
+                id="seed" 
+                type="text" 
+                value={settings.seed}
+                onChange={(e) => handleInputChange('seed', e.target.value)}
+                placeholder="Leave blank for random results"
+              />
+            </div>
+
+            {/* Search and Reranker Scores */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="search-score" className="text-sm font-medium">
+                    Minimum search score
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Minimum relevance score for search results</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input 
+                  id="search-score" 
+                  type="number" 
+                  min="0" 
+                  max="5" 
+                  step="0.1"
+                  value={settings.minSearchScore}
+                  onChange={(e) => handleInputChange('minSearchScore', parseFloat(e.target.value) || 0)}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="reranker-score" className="text-sm font-medium">
+                    Minimum reranker score
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Minimum score for reranking results</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input 
+                  id="reranker-score" 
+                  type="number" 
+                  min="0" 
+                  max="5" 
+                  step="0.1"
+                  value={settings.minRerankerScore}
+                  onChange={(e) => handleInputChange('minRerankerScore', parseFloat(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+
+            {/* Categories */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Include category</label>
+                <Select 
+                  value={settings.includeCategory}
+                  onValueChange={(value) => handleInputChange('includeCategory', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="policies">Policies</SelectItem>
+                    <SelectItem value="coverage">Coverage</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Exclude category</label>
+                <Select
+                  value={settings.excludeCategory || 'none'}
+                  onValueChange={(value) => handleInputChange('excludeCategory', value === 'none' ? null : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="policies">Policies</SelectItem>
+                    <SelectItem value="coverage">Coverage</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Checkboxes */}
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="semantic-ranker" 
+                  checked={settings.useSemanticRanker}
+                  onCheckedChange={(checked) => handleInputChange('useSemanticRanker', checked === true)}
+                />
+                <label
+                  htmlFor="semantic-ranker"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Use semantic ranker for retrieval
+                </label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="semantic-captions" 
+                  checked={settings.useSemanticCaptions}
+                  onCheckedChange={(checked) => handleInputChange('useSemanticCaptions', checked === true)}
+                />
+                <label
+                  htmlFor="semantic-captions"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Use semantic captions
+                </label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="stream-response" 
+                  checked={settings.streamResponse}
+                  onCheckedChange={(checked) => handleInputChange('streamResponse', checked === true)}
+                />
+                <label
+                  htmlFor="stream-response"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Stream chat completion responses
+                </label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="follow-up" 
+                  checked={settings.suggestFollowUp}
+                  onCheckedChange={(checked) => handleInputChange('suggestFollowUp', checked === true)}
+                />
+                <label
+                  htmlFor="follow-up"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Suggest follow-up questions
+                </label>
+              </div>
+            </div>
+
+            {/* Retrieval Mode */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Retrieval mode</label>
+              <Select 
+                value={settings.retrievalMode}
+                onValueChange={(value) => handleInputChange('retrievalMode', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hybrid">Vectors + Text (Hybrid)</SelectItem>
+                  <SelectItem value="vectors">Vectors only</SelectItem>
+                  <SelectItem value="text">Text only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-4">
+              <Button variant="outline" className="w-1/2" onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button className="w-1/2" onClick={handleApplySettings}>
+                Apply Settings
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </TooltipProvider>
+  );
+}
 
 // Create the StyledFallbackAnalysis component directly in this file
 // until we can move it to its own file
@@ -249,6 +631,99 @@ export default function Page() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
 
+  // Load settings from localStorage on init
+  const loadSavedSettings = (): Partial<SettingsState> => {
+    if (typeof window === 'undefined') return {};
+    
+    try {
+      const savedSettings = localStorage.getItem('contract-analysis-settings');
+      return savedSettings ? JSON.parse(savedSettings) : {};
+    } catch (e) {
+      console.error('Failed to load settings from localStorage:', e);
+      return {};
+    }
+  };
+
+  // Settings state
+  const [settings, setSettings] = useState<SettingsState>(() => {
+    // Load any saved settings from localStorage
+    const savedSettings = loadSavedSettings();
+    
+    return {
+      promptTemplate: '',
+      temperature: 0.3,
+      seed: '',
+      minSearchScore: 0,
+      minRerankerScore: 0,
+      includeCategory: 'all',
+      excludeCategory: null,
+      useSemanticRanker: true,
+      useSemanticCaptions: false,
+      streamResponse: true,
+      suggestFollowUp: false,
+      retrievalMode: 'hybrid',
+      ...savedSettings // Override defaults with any saved settings
+    };
+  });
+
+  // Current chat config derived from settings
+  const [chatConfig, setChatConfig] = useState<ChatConfig>({
+    temperature: settings.temperature,
+    seed: settings.seed || undefined,
+    streamResponse: settings.streamResponse,
+    suggestFollowUp: settings.suggestFollowUp,
+    promptTemplate: settings.promptTemplate || undefined,
+    searchConfig: {
+      minSearchScore: settings.minSearchScore,
+      minRerankerScore: settings.minRerankerScore,
+      includeCategory: settings.includeCategory,
+      excludeCategory: settings.excludeCategory,
+      useSemanticRanker: settings.useSemanticRanker,
+      useSemanticCaptions: settings.useSemanticCaptions,
+      retrievalMode: settings.retrievalMode
+    }
+  });
+
+  // Save settings to localStorage when they change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('contract-analysis-settings', JSON.stringify(settings));
+    }
+  }, [settings]);
+
+  // Settings change handler
+  const handleSettingsChange = (updatedSettings: Partial<SettingsState>) => {
+    setSettings(prev => {
+      const newSettings = {
+        ...prev,
+        ...updatedSettings
+      };
+      
+      // Update chat config immediately with new settings
+      setChatConfig({
+        temperature: newSettings.temperature,
+        seed: newSettings.seed || undefined,
+        streamResponse: newSettings.streamResponse,
+        suggestFollowUp: newSettings.suggestFollowUp,
+        promptTemplate: newSettings.promptTemplate || undefined,
+        searchConfig: {
+          minSearchScore: newSettings.minSearchScore,
+          minRerankerScore: newSettings.minRerankerScore,
+          includeCategory: newSettings.includeCategory,
+          excludeCategory: newSettings.excludeCategory,
+          useSemanticRanker: newSettings.useSemanticRanker,
+          useSemanticCaptions: newSettings.useSemanticCaptions,
+          retrievalMode: newSettings.retrievalMode
+        }
+      });
+      
+      return newSettings;
+    });
+
+    // Apply settings to any API that needs to be updated
+    console.log("Applied settings:", updatedSettings);
+  };
+
   // Contract Analyzer state
   const [showContractAnalyzer, setShowContractAnalyzer] = useState(false);
   const [contractAnalysisResults, setContractAnalysisResults] = useState<{
@@ -274,6 +749,16 @@ export default function Page() {
   useEffect(() => {
     chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, isStreaming]);
+
+  // Effect to update chat configuration when chat reference is available
+  useEffect(() => {
+    if (chatRef.current) {
+      // Update the chat configuration
+      chatRef.current.updateConfig?.(chatConfig);
+      
+      console.log("Updated chat configuration:", chatConfig);
+    }
+  }, [chatConfig, chatRef.current]);
 
   // Clear chat functionality
   const clearChat = () => {
@@ -327,17 +812,8 @@ export default function Page() {
   };
 
   const handleFollowupQuestionClicked = (question: string) => {
-    // Set the input field with the question
-    const input = document.querySelector('input[type="text"]');
-    if (input instanceof HTMLInputElement) {
-      input.value = question;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-
-      // Optionally auto-submit
-      const form = input.closest('form');
-      if (form) {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      }
+    if (chatRef.current) {
+      chatRef.current.submitMessage(question);
     }
   };
 
@@ -418,19 +894,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
   // Handle example questions
   const handleExampleQuestion = (question: string) => {
-    // Set the input field with the question
-    const input = document.querySelector('input[type="text"]');
-    if (input instanceof HTMLInputElement) {
-      input.value = question;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-
-      // Auto-submit
-      const form = input.closest('form');
-      if (form) {
-        setTimeout(() => {
-          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-        }, 100);
-      }
+    if (chatRef.current) {
+      chatRef.current.submitMessage(question);
     }
   };
 
@@ -558,12 +1023,6 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </button>
                 ))}
               </div>
-
-              {/* Contract Analysis Button */}
-              <div className="w-full max-w-4xl mb-12 flex justify-evenly">
-                
-                
-              </div>
             </>
           )}
 
@@ -601,7 +1060,12 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                           handleSupportingContentClicked(index);
                         }}
                         onFollowupQuestionClicked={handleFollowupQuestionClicked}
-                        showFollowupQuestions={true}
+                        showFollowupQuestions={settings.suggestFollowUp}
+                        onAnalyzeClick={() => {
+                          if (contractAnalysisResults) {
+                            setShowContractPanel(true);
+                          }
+                        }}
                       />
                     )}
                   </div>
@@ -617,6 +1081,13 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   onAssistantMessage={handleAssistantMessage}
                   onConversationStart={() => setConversationStarted(true)}
                   onStreamingChange={setIsStreaming}
+                  // Pass chat configuration
+                  temperature={chatConfig.temperature}
+                  seed={chatConfig.seed}
+                  streamResponses={chatConfig.streamResponse}
+                  suggestFollowUpQuestions={chatConfig.suggestFollowUp}
+                  promptTemplate={chatConfig.promptTemplate}
+                  searchConfig={chatConfig.searchConfig}
                 />
               </div>
 
@@ -698,7 +1169,12 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         />
 
         {/* Settings Sidebar */}
-        <SettingsSidebar open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <SettingsSidebar
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          initialSettings={settings}
+          onSettingsChange={handleSettingsChange}
+        />
       </div>
     </ProtectedRoute>
   );

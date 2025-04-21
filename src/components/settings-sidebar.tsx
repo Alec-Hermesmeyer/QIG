@@ -1,29 +1,113 @@
-import { Info } from "lucide-react"
+import { Info } from "lucide-react";
+import { useState, useEffect } from "react";
 
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Slider } from "@/components/ui/slider"
-import { Textarea } from "@/components/ui/textarea"
-import { Input } from "@/components/ui/input"
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 
-interface SettingsSidebarProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+// Define interface for settings state
+export interface SettingsState {
+  promptTemplate: string;
+  temperature: number;
+  seed: string | null;
+  minSearchScore: number;
+  minRerankerScore: number;
+  includeCategory: string;
+  excludeCategory: string | null;
+  useSemanticRanker: boolean;
+  useSemanticCaptions: boolean;
+  streamResponse: boolean;
+  suggestFollowUp: boolean;
+  retrievalMode: string;
+  contractAnalysis: boolean;
 }
 
-export function SettingsSidebar({ open, onOpenChange }: SettingsSidebarProps) {
+// Define props for the settings sidebar component
+interface SettingsSidebarProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialSettings?: Partial<SettingsState>;
+  onSettingsChange?: (settings: Partial<SettingsState>) => void;
+}
+
+export function SettingsSidebar({ 
+  open, 
+  onOpenChange, 
+  initialSettings = {}, 
+  onSettingsChange
+}: SettingsSidebarProps) {
+  // Default settings
+  const defaultSettings: SettingsState = {
+    promptTemplate: '',
+    temperature: 0.3,
+    seed: null,
+    minSearchScore: 0,
+    minRerankerScore: 0,
+    includeCategory: 'all',
+    excludeCategory: null,
+    useSemanticRanker: true,
+    useSemanticCaptions: false,
+    streamResponse: true,
+    suggestFollowUp: false,
+    retrievalMode: 'hybrid',
+    contractAnalysis: true
+  };
+
+  // Initialize settings with defaults and any provided initial settings
+  const [settings, setSettings] = useState<SettingsState>({
+    ...defaultSettings,
+    ...initialSettings
+  });
+
+  // Update settings when initialSettings prop changes
+  useEffect(() => {
+    if (initialSettings && Object.keys(initialSettings).length > 0) {
+      setSettings(prev => ({
+        ...prev,
+        ...initialSettings
+      }));
+    }
+  }, [initialSettings]);
+
+  // Handler for input changes
+  const handleInputChange = (field: keyof SettingsState, value: any) => {
+    setSettings(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Apply settings and close sidebar
+  const handleApplySettings = () => {
+    if (onSettingsChange) {
+      onSettingsChange(settings);
+    }
+    onOpenChange(false);
+  };
+
+  // Reset to initial settings
+  const handleCancel = () => {
+    setSettings({
+      ...defaultSettings,
+      ...initialSettings
+    });
+    onOpenChange(false);
+  };
+
   return (
     <TooltipProvider>
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
           <SheetHeader className="mb-6">
-            <SheetTitle>Configure answer generation</SheetTitle>
+            <SheetTitle>Configure Contract Analysis Settings</SheetTitle>
           </SheetHeader>
           <div className="space-y-6">
-            {/* Prompt Template */}
+            {/* Prompt Template - Most important for your needs */}
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <label htmlFor="prompt" className="text-sm font-medium">
@@ -38,7 +122,13 @@ export function SettingsSidebar({ open, onOpenChange }: SettingsSidebarProps) {
                   </TooltipContent>
                 </Tooltip>
               </div>
-              <Textarea id="prompt" className="min-h-[100px]" />
+              <Textarea 
+                id="prompt" 
+                className="min-h-[100px]" 
+                value={settings.promptTemplate || ''}
+                onChange={(e) => handleInputChange('promptTemplate', e.target.value)}
+                placeholder="You are an AI assistant that helps users analyze construction contracts. When analyzing a contract, focus on the financial provisions, risk allocation, and key compliance requirements."
+              />
             </div>
 
             {/* Temperature */}
@@ -52,13 +142,29 @@ export function SettingsSidebar({ open, onOpenChange }: SettingsSidebarProps) {
                     <Info className="h-4 w-4 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Controls randomness in the output</p>
+                    <p>Controls randomness in the output (lower = more deterministic)</p>
                   </TooltipContent>
                 </Tooltip>
               </div>
               <div className="flex gap-4">
-                <Slider id="temperature" min={0} max={5} step={0.1} defaultValue={[0.3]} className="flex-1" />
-                <Input type="number" className="w-20" value="0.3" />
+                <Slider 
+                  id="temperature" 
+                  min={0} 
+                  max={1} 
+                  step={0.1} 
+                  value={[settings.temperature]} 
+                  className="flex-1"
+                  onValueChange={(value) => handleInputChange('temperature', value[0])}
+                />
+                <Input 
+                  type="number" 
+                  className="w-20" 
+                  value={settings.temperature} 
+                  onChange={(e) => handleInputChange('temperature', parseFloat(e.target.value) || 0)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                />
               </div>
             </div>
 
@@ -73,141 +179,31 @@ export function SettingsSidebar({ open, onOpenChange }: SettingsSidebarProps) {
                     <Info className="h-4 w-4 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Random seed for reproducibility</p>
+                    <p>Random seed for reproducible outputs (optional)</p>
                   </TooltipContent>
                 </Tooltip>
               </div>
-              <Input id="seed" type="text" />
+              <Input 
+                id="seed" 
+                type="text" 
+                value={settings.seed || ''}
+                onChange={(e) => handleInputChange('seed', e.target.value || null)}
+                placeholder="Leave blank for random results"
+              />
             </div>
 
-            {/* Search and Reranker Scores */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="search-score" className="text-sm font-medium">
-                    Minimum search score
-                  </label>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Minimum relevance score for search results</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Input id="search-score" type="number" min="0" max="5" defaultValue="0" />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="reranker-score" className="text-sm font-medium">
-                    Minimum reranker score
-                  </label>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Minimum score for reranking results</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Input id="reranker-score" type="number" min="0" max="5" defaultValue="0" />
-              </div>
+            {/* Action Buttons */}
+            <div className="flex gap-4">
+              <Button variant="outline" className="w-1/2" onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button className="w-1/2" onClick={handleApplySettings}>
+                Apply Settings
+              </Button>
             </div>
-
-            {/* Categories */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Include category</label>
-                <Select defaultValue="all">
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="policies">Policies</SelectItem>
-                    <SelectItem value="coverage">Coverage</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Exclude category</label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    <SelectItem value="policies">Policies</SelectItem>
-                    <SelectItem value="coverage">Coverage</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Checkboxes */}
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Checkbox id="semantic-ranker" defaultChecked />
-                <label
-                  htmlFor="semantic-ranker"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Use semantic ranker for retrieval
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="semantic-captions" />
-                <label
-                  htmlFor="semantic-captions"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Use semantic captions
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="stream-response" defaultChecked />
-                <label
-                  htmlFor="stream-response"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Stream chat completion responses
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="follow-up" />
-                <label
-                  htmlFor="follow-up"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Suggest follow-up questions
-                </label>
-              </div>
-            </div>
-
-            {/* Retrieval Mode */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Retrieval mode</label>
-              <Select defaultValue="hybrid">
-                <SelectTrigger>
-                  <SelectValue placeholder="Select mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="hybrid">Vectors + Text (Hybrid)</SelectItem>
-                  <SelectItem value="vectors">Vectors only</SelectItem>
-                  <SelectItem value="text">Text only</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
-              Close
-            </Button>
           </div>
         </SheetContent>
       </Sheet>
     </TooltipProvider>
-  )
+  );
 }
-
