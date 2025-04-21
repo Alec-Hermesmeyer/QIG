@@ -1,45 +1,81 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
-export async function GET(request: NextRequest) {
+// Backend URL from environment
+const BACKEND_URL = process.env.BACKEND_URL || 'https://capps-backend-dka66scue7f4y.kindhill-16008ecf.eastus.azurecontainerapps.io';
+
+/**
+ * Lists uploaded files from the backend
+ */
+export async function GET(req: NextRequest) {
   try {
-    // Get authentication token from request headers
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader) {
+    // Get the access token from cookies
+    const cookieStore = await cookies();
+    const accessToken = cookieStore.get('access_token')?.value;
+    
+    if (!accessToken) {
       return NextResponse.json(
-        { error: 'Authorization header is required' },
+        { 
+          error: 'Authentication required',
+          message: 'Authentication required. Please log in to access your files.' 
+        },
         { status: 401 }
       );
     }
-
-    // Call the backend API
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${backendUrl}/list_uploaded`, {
+    
+    // Call the backend API to get the files
+    const response = await fetch(`${BACKEND_URL}/files/list`, {
       method: 'GET',
       headers: {
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
-        'Authorization': authHeader,
       },
-      // Forward cookies if needed
-      credentials: 'include',
     });
-
-    // Check if request was successful
+    
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Backend API error: ${response.status} - ${errorText}`);
-      return NextResponse.json(
-        { error: `Backend API error: ${response.status}`, details: errorText },
-        { status: response.status }
-      );
+      // Handle specific error cases
+      if (response.status === 401 || response.status === 403) {
+        return NextResponse.json(
+          { 
+            error: 'Authentication error',
+            message: 'Your session has expired. Please log in again.'
+          },
+          { status: response.status }
+        );
+      }
+      
+      // Try to get the error message from response
+      try {
+        const errorData = await response.json();
+        return NextResponse.json(
+          { 
+            error: 'Backend API error',
+            message: errorData.message || `Error ${response.status}: ${response.statusText}`
+          },
+          { status: response.status }
+        );
+      } catch (jsonError) {
+        // If we can't parse the JSON, just use the status
+        return NextResponse.json(
+          { 
+            error: 'Backend API error',
+            message: `Error ${response.status}: ${response.statusText}`
+          },
+          { status: response.status }
+        );
+      }
     }
-
-    // Parse and return the response
+    
+    // Process the response
     const data = await response.json();
+    
+    // Return the file list
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Error in list_uploaded API route:', error);
+    console.error('List files error:', error);
+    
     return NextResponse.json(
-      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
+      { message: 'Failed to fetch file list' },
       { status: 500 }
     );
   }

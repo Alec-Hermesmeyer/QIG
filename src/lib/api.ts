@@ -220,7 +220,8 @@ export function getCitationFilePath(citation: string): string {
   
   export async function listUploadedFilesApi(): Promise<string[]> {
     const response = await fetch(`/list_uploaded`, {
-      method: "GET"
+      method: "GET",
+      credentials: "include",
     });
   
     if (!response.ok) {

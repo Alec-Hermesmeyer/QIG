@@ -2271,3 +2271,383 @@ Please provide:
     </Panel>
   );
 };
+// src/components/ContractAnalyzer/index.tsx
+// 'use client';
+
+// import { useState, useRef } from 'react';
+// import { Panel, PanelType, Pivot, PivotItem, Text } from '@fluentui/react';
+// import { useContractAnalysis } from '@/hooks/useContractAnalysis';
+// import { useFileProcessor } from '@/hooks/useFileProcessor';
+// import UploadZone from './UploadZone';
+// import AnalysisSettings from './AnalysisSettings';
+// import { AnalysisResults } from './AnalysisResults';
+// import FixSuggestionModal from './FixSuggestionModal';
+// import RedlineModal from './RedlineModal';
+// import ConfirmationDialog from './ConfirmationDialog';
+// import { ContractTextPreview } from './ContractTextPreview'; // Keep your existing preview component
+// import ProgressWithDetails from '../UI/ProgressWithDetails';
+// import { Risk } from '@/types';
+
+// interface Props {
+//   isOpen: boolean;
+//   onDismiss: () => void;
+//   onAnalysisComplete?: (
+//     analysisText: string,
+//     risks: Risk[],
+//     mitigationPoints: string[],
+//     contractText: string
+//   ) => void;
+// }
+
+// export const ContractAnalyzerPanel: React.FC<Props> = ({ 
+//   isOpen, 
+//   onDismiss, 
+//   onAnalysisComplete 
+// }) => {
+//   // State for UI components
+//   const [showSettings, setShowSettings] = useState(false);
+//   const [confirmReset, setConfirmReset] = useState(false);
+//   const [activeTab, setActiveTab] = useState('analysis');
+//   const [viewMode, setViewMode] = useState<'card' | 'table' | 'markdown'>('card');
+  
+//   // Refs
+//   const analysisContainerRef = useRef<HTMLDivElement>(null);
+
+//   // Use custom hooks for core functionality
+//   const {
+//     contractText,
+//     fileName,
+//     fileSize,
+//     loading,
+//     progress,
+//     error,
+//     analysis,
+//     parsedRisks,
+//     mitigationPoints,
+//     currentChunk,
+//     totalChunks,
+//     settings,
+//     updateSettings,
+//     contractType,
+//     setContractType,
+//     selectedAnalysisType,
+//     setSelectedAnalysisType,
+//     analysisPrompt,
+//     setAnalysisPrompt,
+//     resetState,
+//     handleAnalyze,
+//     handleAnalysisTypeSelect,
+//     handleCopyToClipboard,
+//     handleExportMarkdown,
+//     copySuccess,
+//     isExporting
+//   } = useContractAnalysis(onAnalysisComplete);
+
+//   const {
+//     isDragging,
+//     processFile,
+//     handleDragOver,
+//     handleDragLeave,
+//     handleDrop,
+//     handleFileUploadClick,
+//     handleFileInputChange,
+//     fileInputRef
+//   } = useFileProcessor(setContractText => {
+//     // This connects the file processor to the contract analysis hook
+//     // by setting the contract text when a file is processed
+//   });
+
+//   // State for modals
+//   const [showFixModal, setShowFixModal] = useState(false);
+//   const [selectedRiskForFix, setSelectedRiskForFix] = useState<Risk | null>(null);
+//   const [suggestedFix, setSuggestedFix] = useState<string>('');
+//   const [isGeneratingFix, setIsGeneratingFix] = useState(false);
+//   const [isRedlineModalOpen, setIsRedlineModalOpen] = useState(false);
+//   const [redlineText, setRedlineText] = useState<string>('');
+//   const [showRedlines, setShowRedlines] = useState(true);
+//   const [redlineChanges, setRedlineChanges] = useState({
+//     added: [] as string[],
+//     removed: [] as string[],
+//     modified: [] as string[]
+//   });
+
+//   // Generate fix suggestion for a risk
+//   const generateFixSuggestion = async (risk: Risk) => {
+//     // Implementation from your existing component
+//     // but moved to this higher-level component
+//   };
+
+//   // Highlight risk in the document
+//   const highlightInDocument = (risk: Risk, index: number) => {
+//     // Implementation from your existing component
+//   };
+
+//   // Render different components based on state
+//   const renderContent = () => {
+//     if (!fileName) {
+//       // Show upload zone when no file is selected
+//       return (
+//         <UploadZone
+//           isDragging={isDragging}
+//           onDragOver={handleDragOver}
+//           onDragLeave={handleDragLeave}
+//           onDrop={handleDrop}
+//           onClick={handleFileUploadClick}
+//           fileInputRef={fileInputRef}
+//           handleFileInputChange={handleFileInputChange}
+//         />
+//       );
+//     }
+
+//     return (
+//       <>
+//         {/* File info header */}
+//         <div className="flex items-center justify-between">
+//           <div className="flex items-center gap-2 font-medium">
+//             <Text>{fileName}</Text>
+//             {fileSize && (
+//               <Text variant="small" className="text-gray-500 ml-2">
+//                 ({formatFileSize(fileSize)})
+//               </Text>
+//             )}
+//           </div>
+
+//           {/* Reset button */}
+//           <TooltipHost content="Upload a different file">
+//             <IconButton
+//               iconProps={refreshIcon}
+//               onClick={() => setConfirmReset(true)}
+//               disabled={loading}
+//               ariaLabel="Change file"
+//               className="bg-gray-50 border border-gray-300 text-gray-600 p-1 rounded hover:bg-gray-100 disabled:opacity-50"
+//             />
+//           </TooltipHost>
+//         </div>
+
+//         {/* Tabs */}
+//         <Pivot
+//           selectedKey={activeTab}
+//           onLinkClick={(item) => item && setActiveTab(item.props.itemKey || 'analysis')}
+//           styles={{
+//             root: { display: fileName ? 'block' : 'none' },
+//           }}
+//           className="border-b border-gray-200"
+//         >
+//           <PivotItem
+//             headerText="Analysis"
+//             itemKey="analysis"
+//             headerButtonProps={{
+//               className: activeTab === 'analysis' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
+//             }}
+//           />
+//           <PivotItem
+//             headerText="Text Preview"
+//             itemKey="preview"
+//             headerButtonProps={{
+//               className: activeTab === 'preview' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
+//             }}
+//           />
+//           {parsedRisks.length > 0 && (
+//             <PivotItem
+//               headerText="Highlighted Text"
+//               itemKey="highlighted"
+//               headerButtonProps={{
+//                 className: activeTab === 'highlighted' ? 'text-indigo-600 font-semibold border-b-2 border-indigo-600' : 'text-gray-600'
+//               }}
+//             />
+//           )}
+//         </Pivot>
+
+//         {/* Tab content container */}
+//         <div className="mt-4 h-[calc(100vh-180px)] flex flex-col overflow-hidden">
+//           {/* Preview tab content */}
+//           {(activeTab === 'preview' || activeTab === 'highlighted') && (
+//             <div className="h-full flex flex-col overflow-hidden">
+//               <div className="h-full w-full overflow-auto border border-gray-200 rounded-md bg-white">
+//                 <ContractTextPreview
+//                   contractText={contractText}
+//                   lineNumbers={true}
+//                   enableSearch={true}
+//                   enableWordWrap={true}
+//                   risks={parsedRisks}
+//                 />
+//               </div>
+//             </div>
+//           )}
+
+//           {/* Analysis tab content */}
+//           {activeTab === 'analysis' && (
+//             <>
+//               {!analysis && !loading ? (
+//                 <AnalysisOptions
+//                   contractType={contractType}
+//                   setContractType={setContractType}
+//                   contractTypeOptions={contractTypeOptions}
+//                   handleAnalysisTypeSelect={handleAnalysisTypeSelect}
+//                   selectedAnalysisType={selectedAnalysisType}
+//                   setSelectedAnalysisType={setSelectedAnalysisType}
+//                   setAnalysisPrompt={setAnalysisPrompt}
+//                   handleAnalyze={handleAnalyze}
+//                   contractText={contractText}
+//                   loading={loading}
+//                   chunkText={chunkText}
+//                   settings={settings}
+//                   setIsRedlineModalOpen={setIsRedlineModalOpen}
+//                   setRedlineText={setRedlineText}
+//                   setRedlineChanges={setRedlineChanges}
+//                 />
+//               ) : loading ? (
+//                 <ProgressWithDetails
+//                   progress={progress}
+//                   currentChunk={currentChunk}
+//                   totalChunks={totalChunks}
+//                 />
+//               ) : (
+//                 <AnalysisResults
+//                   analysis={analysis}
+//                   parsedRisks={parsedRisks}
+//                   mitigationPoints={mitigationPoints}
+//                   viewMode={viewMode}
+//                   setViewMode={setViewMode}
+//                   selectedAnalysisType={selectedAnalysisType}
+//                   analysisTypeConfig={analysisTypeConfig}
+//                   handleCopyToClipboard={handleCopyToClipboard}
+//                   handleExportMarkdown={handleExportMarkdown}
+//                   copySuccess={copySuccess}
+//                   isExporting={isExporting}
+//                   highlightInDocument={highlightInDocument}
+//                   generateFixSuggestion={generateFixSuggestion}
+//                   analysisContainerRef={analysisContainerRef}
+//                   resetAnalysis={() => {
+//                     setAnalysis('');
+//                     setParsedRisks([]);
+//                     setMitigationPoints([]);
+//                     setSelectedAnalysisType('comprehensive');
+//                     setAnalysisPrompt('');
+//                   }}
+//                 />
+//               )}
+//             </>
+//           )}
+//         </div>
+//       </>
+//     );
+//   };
+
+//   // Helper function to format file size for display
+//   const formatFileSize = (bytes: number | null): string => {
+//     if (bytes === null) return '';
+//     if (bytes === 0) return '0 Bytes';
+
+//     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+//     const i = Math.floor(Math.log(bytes) / Math.log(1024));
+//     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
+//   };
+
+//   return (
+//     <Panel
+//       isOpen={isOpen}
+//       onDismiss={onDismiss}
+//       type={PanelType.large}
+//       headerText="Contract Risk Analyzer"
+//       closeButtonAriaLabel="Close"
+//       isFooterAtBottom={true}
+//       styles={{
+//         main: {
+//           marginTop: 0,
+//           minHeight: '80vh',
+//           padding: '10px 16px',
+//           width: '80%',
+//         },
+//         // ... other styles remain the same
+//       }}
+//       onRenderFooter={() => (
+//         <div className="flex justify-between items-center w-full max-w-7xl">
+//           <Text variant="small" className={fileName ? '' : 'invisible'}>
+//             {fileName && `Analyzing: ${fileName}`}
+//           </Text>
+//           <div className="flex gap-2">
+//             <DefaultButton
+//               iconProps={{ iconName: 'Clear' }}
+//               onClick={() => setConfirmReset(true)}
+//               disabled={loading || !fileName}
+//               text="Reset"
+//               className="bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100 disabled:opacity-50"
+//             />
+//             <TooltipHost content="Configure analysis settings">
+//               <DefaultButton
+//                 iconProps={settingsIcon}
+//                 onClick={() => setShowSettings(true)}
+//                 text="Settings"
+//                 ariaLabel="Settings"
+//                 className="bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
+//               />
+//             </TooltipHost>
+//           </div>
+//         </div>
+//       )}
+//     >
+//       <div className="flex flex-col space-y-4 h-full">
+//         {error && (
+//           <MessageBar
+//             messageBarType={MessageBarType.error}
+//             isMultiline={true}
+//             dismissButtonAriaLabel="Close"
+//             onDismiss={() => setError(null)}
+//           >
+//             <strong>{error.message}</strong>
+//             {error.details && <div className="mt-2">{error.details}</div>}
+//           </MessageBar>
+//         )}
+
+//         {renderContent()}
+//       </div>
+
+//       {/* Modals and dialogs */}
+//       <AnalysisSettings
+//         isOpen={showSettings}
+//         onDismiss={() => setShowSettings(false)}
+//         settings={settings}
+//         updateSettings={updateSettings}
+//         modelOptions={modelOptions}
+//         contractType={contractType}
+//         setContractType={setContractType}
+//         contractTypeOptions={contractTypeOptions}
+//         viewMode={viewMode}
+//         setViewMode={setViewMode}
+//       />
+      
+//       <ConfirmationDialog
+//         isOpen={confirmReset}
+//         onDismiss={() => setConfirmReset(false)}
+//         title="Reset Analysis"
+//         subText="This will clear the current document and analysis. Are you sure you want to continue?"
+//         onConfirm={() => {
+//           resetState();
+//           setConfirmReset(false);
+//         }}
+//         confirmButtonText="Yes, Reset"
+//         confirmButtonStyle="danger"
+//       />
+      
+//       <FixSuggestionModal
+//         isOpen={showFixModal}
+//         onDismiss={() => setShowFixModal(false)}
+//         selectedRisk={selectedRiskForFix}
+//         suggestedFix={suggestedFix}
+//         isGeneratingFix={isGeneratingFix}
+//       />
+      
+//       <RedlineModal
+//         isOpen={isRedlineModalOpen}
+//         onDismiss={() => setIsRedlineModalOpen(false)}
+//         redlineText={redlineText}
+//         showRedlines={showRedlines}
+//         setShowRedlines={setShowRedlines}
+//         redlineChanges={redlineChanges}
+//       />
+//     </Panel>
+//   );
+// };
+
+// export default ContractAnalyzerPanel;

@@ -1,213 +1,230 @@
-import { Info } from "lucide-react"
+// components/settings-sidebar.tsx
+"use client";
 
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Slider } from "@/components/ui/slider"
-import { Textarea } from "@/components/ui/textarea"
-import { Input } from "@/components/ui/input"
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
+import React, { useState } from "react";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 interface SettingsSidebarProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 export function SettingsSidebar({ open, onOpenChange }: SettingsSidebarProps) {
+  const [apiKey, setApiKey] = useState("");
+  const [temperature, setTemperature] = useState(0.7);
+  const [systemPrompt, setSystemPrompt] = useState(
+    "You are an AI assistant that specializes in legal contract analysis."
+  );
+  const [debugMode, setDebugMode] = useState(false);
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [model, setModel] = useState("gpt-4");
+  const [maxTokens, setMaxTokens] = useState(4000);
+
+  // Save settings
+  const handleSave = () => {
+    const settings = {
+      apiKey,
+      temperature,
+      systemPrompt,
+      debugMode,
+      developerMode,
+      model,
+      maxTokens
+    };
+    localStorage.setItem("developerSettings", JSON.stringify(settings));
+    alert("Settings saved successfully!");
+  };
+
+  // Load settings from localStorage when component mounts
+  React.useEffect(() => {
+    const savedSettings = localStorage.getItem("developerSettings");
+    if (savedSettings) {
+      try {
+        const parsedSettings = JSON.parse(savedSettings);
+        setApiKey(parsedSettings.apiKey || "");
+        setTemperature(parsedSettings.temperature || 0.7);
+        setSystemPrompt(parsedSettings.systemPrompt || "");
+        setDebugMode(parsedSettings.debugMode || false);
+        setDeveloperMode(parsedSettings.developerMode || false);
+        setModel(parsedSettings.model || "gpt-4");
+        setMaxTokens(parsedSettings.maxTokens || 4000);
+      } catch (error) {
+        console.error("Error parsing saved settings", error);
+      }
+    }
+  }, []);
+
+  if (!open) return null;
+
   return (
-    <TooltipProvider>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
-          <SheetHeader className="mb-6">
-            <SheetTitle>Configure answer generation</SheetTitle>
-          </SheetHeader>
-          <div className="space-y-6">
-            {/* Prompt Template */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <label htmlFor="prompt" className="text-sm font-medium">
-                  Override prompt template
-                </label>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Custom prompt template for the AI</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Textarea id="prompt" className="min-h-[100px]" />
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
+      <div 
+        className="fixed inset-0 bg-black/30" 
+        onClick={() => onOpenChange(false)}
+      />
+      
+      {/* Sidebar */}
+      <div className="fixed right-0 h-full w-80 md:w-96 bg-white shadow-xl overflow-y-auto p-6 z-10">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-semibold">Developer Settings</h2>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => onOpenChange(false)}
+            className="h-8 w-8 p-0"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <Tabs defaultValue="general">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="general">General</TabsTrigger>
+            <TabsTrigger value="model">Model</TabsTrigger>
+            <TabsTrigger value="advanced">Advanced</TabsTrigger>
+          </TabsList>
+
+          {/* General Tab */}
+          <TabsContent value="general" className="space-y-4 py-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">API Key</label>
+              <Input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Enter your API key"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Your API key is stored locally and never sent to our servers.
+              </p>
             </div>
 
-            {/* Temperature */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <label htmlFor="temperature" className="text-sm font-medium">
-                  Temperature
-                </label>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Controls randomness in the output</p>
-                  </TooltipContent>
-                </Tooltip>
+            <div>
+              <div className="flex justify-between mb-1">
+                <label className="block text-sm font-medium">Debug Mode</label>
+                <Switch 
+                  checked={debugMode}
+                  onCheckedChange={setDebugMode}
+                />
               </div>
-              <div className="flex gap-4">
-                <Slider id="temperature" min={0} max={5} step={0.1} defaultValue={[0.3]} className="flex-1" />
-                <Input type="number" className="w-20" value="0.3" />
-              </div>
+              <p className="text-xs text-gray-500">
+                Enable advanced logging and debugging features
+              </p>
             </div>
 
-            {/* Seed */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <label htmlFor="seed" className="text-sm font-medium">
-                  Seed
-                </label>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Random seed for reproducibility</p>
-                  </TooltipContent>
-                </Tooltip>
+            <div>
+              <div className="flex justify-between mb-1">
+                <label className="block text-sm font-medium">Developer Mode</label>
+                <Switch 
+                  checked={developerMode}
+                  onCheckedChange={setDeveloperMode}
+                />
               </div>
-              <Input id="seed" type="text" />
+              <p className="text-xs text-gray-500">
+                Enable experimental features and customizations
+              </p>
+            </div>
+          </TabsContent>
+
+          {/* Model Tab */}
+          <TabsContent value="model" className="space-y-4 py-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Model</label>
+              <select
+                className="w-full p-2 border rounded-md"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+              >
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                <option value="gpt-4">GPT-4</option>
+                <option value="claude-3-opus">Claude 3 Opus</option>
+                <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+              </select>
             </div>
 
-            {/* Search and Reranker Scores */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="search-score" className="text-sm font-medium">
-                    Minimum search score
-                  </label>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Minimum relevance score for search results</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Input id="search-score" type="number" min="0" max="5" defaultValue="0" />
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm font-medium">Temperature: {temperature.toFixed(1)}</label>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="reranker-score" className="text-sm font-medium">
-                    Minimum reranker score
-                  </label>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Minimum score for reranking results</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Input id="reranker-score" type="number" min="0" max="5" defaultValue="0" />
-              </div>
-            </div>
-
-            {/* Categories */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Include category</label>
-                <Select defaultValue="all">
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="policies">Policies</SelectItem>
-                    <SelectItem value="coverage">Coverage</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Exclude category</label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    <SelectItem value="policies">Policies</SelectItem>
-                    <SelectItem value="coverage">Coverage</SelectItem>
-                  </SelectContent>
-                </Select>
+              <Slider
+                value={[temperature]}
+                min={0}
+                max={1}
+                step={0.1}
+                onValueChange={(value) => setTemperature(value[0])}
+              />
+              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <span>More precise</span>
+                <span>More creative</span>
               </div>
             </div>
 
-            {/* Checkboxes */}
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Checkbox id="semantic-ranker" defaultChecked />
-                <label
-                  htmlFor="semantic-ranker"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Use semantic ranker for retrieval
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="semantic-captions" />
-                <label
-                  htmlFor="semantic-captions"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Use semantic captions
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="stream-response" defaultChecked />
-                <label
-                  htmlFor="stream-response"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Stream chat completion responses
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="follow-up" />
-                <label
-                  htmlFor="follow-up"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Suggest follow-up questions
-                </label>
-              </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Tokens</label>
+              <Input
+                type="number"
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(Number(e.target.value))}
+                min={100}
+                max={8000}
+              />
+            </div>
+          </TabsContent>
+
+          {/* Advanced Tab */}
+          <TabsContent value="advanced" className="space-y-4 py-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">System Prompt</label>
+              <Textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Enter system prompt"
+                rows={6}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Customize the instruction provided to the AI model
+              </p>
             </div>
 
-            {/* Retrieval Mode */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Retrieval mode</label>
-              <Select defaultValue="hybrid">
-                <SelectTrigger>
-                  <SelectValue placeholder="Select mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="hybrid">Vectors + Text (Hybrid)</SelectItem>
-                  <SelectItem value="vectors">Vectors only</SelectItem>
-                  <SelectItem value="text">Text only</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="pt-4">
+              <Button 
+                variant="outline" 
+                className="w-full" 
+                onClick={() => {
+                  if (confirm("Reset all settings to default values?")) {
+                    localStorage.removeItem("developerSettings");
+                    setApiKey("");
+                    setTemperature(0.7);
+                    setSystemPrompt("You are an AI assistant that specializes in legal contract analysis.");
+                    setDebugMode(false);
+                    setDeveloperMode(false);
+                    setModel("gpt-4");
+                    setMaxTokens(4000);
+                  }
+                }}
+              >
+                Reset to Defaults
+              </Button>
             </div>
+          </TabsContent>
+        </Tabs>
 
-            <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
-              Close
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
-    </TooltipProvider>
-  )
+        <div className="mt-6 pt-6 border-t">
+          <Button 
+            className="w-full" 
+            onClick={handleSave}
+          >
+            Save Settings
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
-
