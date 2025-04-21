@@ -19,6 +19,11 @@ interface ChatProps {
   onStreamingChange?: (isStreaming: boolean) => void;
   isDisabled?: boolean;
   availableContracts?: string[];
+  devSettings?: {
+    enableDebugMode?: boolean;
+    logLevel?: 'info' | 'warn' | 'error' | 'debug';
+  }; 
+  createCustomPromptMessage?: (userMessage: string) => { role: string; content: string }[];
 }
 
 export interface ImprovedChatHandle {
@@ -32,7 +37,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     onConversationStart,
     onStreamingChange,
     isDisabled = false,
-    availableContracts = []
+    availableContracts = [],
+    devSettings,
+    createCustomPromptMessage
   },
   ref
 ) {
@@ -45,6 +52,14 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContract, setSelectedContract] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Debug logging
+  const logDebug = (message: string, data?: any) => {
+    if (devSettings?.enableDebugMode) {
+      const logLevel = devSettings.logLevel || 'debug';
+      console.log(`[${logLevel}] ${message}`, data || '');
+    }
+  };
 
   // Imperative handle for parent-triggered submission
   useImperativeHandle(ref, () => ({
@@ -107,17 +122,43 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         userMessage.toLowerCase().includes('analyze this contract') ||
         userMessage.toLowerCase().includes('analyze the contract');
 
-      const requestBody =
-        isContractAnalysis && selectedContract
-          ? {
-              messages: [{ role: 'user', content: userMessage }],
-              contractAnalysis: true,
-              contractName: selectedContract,
-              analysisPrompt: getContractAnalysisPrompt()
-            }
-          : {
-              messages: [{ role: 'user', content: userMessage }]
-            };
+      // Determine if we should use custom prompt
+      let customMessages;
+      if (createCustomPromptMessage) {
+        customMessages = createCustomPromptMessage(userMessage);
+        if (customMessages && customMessages.length > 0) {
+          logDebug('Using custom prompt messages:', customMessages);
+        }
+      }
+
+      // Build the request body
+      let requestBody: any;
+      
+      if (isContractAnalysis && selectedContract) {
+        // Contract analysis has priority
+        requestBody = {
+          messages: [{ role: 'user', content: userMessage }],
+          contractAnalysis: true,
+          contractName: selectedContract,
+          analysisPrompt: getContractAnalysisPrompt()
+        };
+        logDebug('Using contract analysis prompt for', selectedContract);
+      } else if (customMessages && customMessages.length > 0) {
+        // Use custom prompt if available
+        requestBody = {
+          messages: customMessages,
+          useCustomPrompt: true
+        };
+        logDebug('Using custom prompt messages in request');
+      } else {
+        // Default case
+        requestBody = {
+          messages: [{ role: 'user', content: userMessage }]
+        };
+        logDebug('Using default message format');
+      }
+
+      logDebug('Sending request to API:', requestBody);
 
       const response = await fetch('/api/chat', {
         method: 'POST',

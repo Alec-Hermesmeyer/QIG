@@ -1,45 +1,52 @@
+// app/api/proxy/list_uploaded/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { BACKEND_URL } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authentication token from request headers
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader) {
-      return NextResponse.json(
-        { error: 'Authorization header is required' },
-        { status: 401 }
-      );
-    }
-
-    // Call the backend API
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${backendUrl}/list_uploaded`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': authHeader,
-      },
-      // Forward cookies if needed
-      credentials: 'include',
+    // Build the target URL
+    const targetUrl = `${BACKEND_URL}/list_uploaded`;
+    
+    // Forward all headers except host
+    const headers = new Headers();
+    request.headers.forEach((value, key) => {
+      if (key.toLowerCase() !== 'host') {
+        headers.append(key, value);
+      }
     });
-
-    // Check if request was successful
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Backend API error: ${response.status} - ${errorText}`);
+    
+    // Forward cookies for authentication
+    const cookies = request.cookies.getAll();
+    if (cookies.length > 0) {
+      const cookieHeader = cookies
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      headers.set('cookie', cookieHeader);
+    }
+    
+    // Forward the request to the backend
+    const backendRes = await fetch(targetUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'follow',
+    });
+    
+    if (!backendRes.ok) {
       return NextResponse.json(
-        { error: `Backend API error: ${response.status}`, details: errorText },
-        { status: response.status }
+        { error: `Backend returned error: ${backendRes.status}` },
+        { status: backendRes.status }
       );
     }
-
-    // Parse and return the response
-    const data = await response.json();
+    
+    // Parse the JSON response
+    const data = await backendRes.json();
+    
+    // Return the files list
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Error in list_uploaded API route:', error);
+    console.error('List uploaded files error:', error);
     return NextResponse.json(
-      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

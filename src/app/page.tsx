@@ -241,6 +241,102 @@ interface ChatMessage {
   timestamp: string;
 }
 
+// Define enhanced developer settings interface
+interface DeveloperSettings {
+  apiEndpoint: string;
+  modelVersion: string;
+  temperature: number;
+  debugMode: boolean;
+  maxTokens: number;
+  overridePrompt: string;
+  useContractAnalysisPrompts: boolean;
+  selectedContractPrompt: string;
+  promptFormat: "text" | "json";
+}
+
+// Define chat settings interface to match ImprovedChat component's expected props
+interface ChatSettings {
+  enableDebugMode?: boolean;
+  logLevel?: "info" | "warn" | "error" | "debug";
+}
+
+// Predefined contract analysis prompts
+const CONTRACT_ANALYSIS_PROMPTS = {
+  "main_clause_extraction": `You are an expert contract analyzer specializing in construction agreements. Your task is to extract every clause from the contract and create a structured table. Analyze the complete contract, breaking it down into individual clauses, regardless of how the contract is organized.
+
+Extract all clauses from this construction contract and organize them into a structured table with the following columns:
+
+1. Clause_ID (format: CL-[section number]-[sequential number])
+2. Section_Number (the hierarchical section number as appears in contract, e.g., '3.2.1')
+3. Section_Title (the heading or title of the section)
+4. Clause_Text (the complete text of the clause)
+5. Clause_Type (categorize: Payment, Schedule, Termination, Liability, Design, Force Majeure, etc.)
+6. Is_Standard (Yes/No - determine if this appears to be standard/boilerplate language)
+7. Has_Variables (Yes/No - indicates if the clause contains project-specific variables)
+8. Variables_List (list any project-specific elements like amounts, dates, names)`,
+
+  "clause_relationship_extraction": `You are an expert legal analyst specializing in contract structure and relationships. Your task is to identify relationships between clauses in this construction contract. Look for references, dependencies, modifications, exceptions, and hierarchical relationships.
+
+Using the previously extracted clauses, identify all relationships between clauses in this contract. Create a structured table with the following columns:
+
+1. Relationship_ID (format: REL-[sequential number])
+2. Source_Clause_ID (the clause that references or relates to another)
+3. Target_Clause_ID (the clause being referenced or related to)
+4. Relationship_Type (choose one: References, Modifies, Exceptions, Depends_On, Parent_Of, Contradicts)
+5. Relationship_Text (exact text that establishes the relationship)
+6. Notes (any additional observations)`,
+
+  "metadata_extraction": `You are an expert in construction contract analysis. Your task is to extract key metadata about this contract and create a structured record.
+
+Extract the following metadata from this construction contract and organize it into a structured table:
+
+1. Contract_ID (generate a unique ID)
+2. Contract_Title (full title of the agreement)
+3. Contract_Date (effective or execution date)
+4. Contract_Type (e.g., Fixed Price, Cost-Plus, Design-Build, etc.)
+5. Owner_Name (client/owner entity)
+6. Contractor_Name (primary contractor)
+7. Project_Name (name of the construction project)
+8. Project_Location (site address or description)
+9. Contract_Value (total contract amount)
+10. Contract_Duration (time period or days for completion)
+11. Payment_Terms (brief summary of payment structure)
+12. Governing_Law (jurisdiction)
+13. Dispute_Resolution (method specified)
+14. Special_Provisions (list any unusual or special provisions)`,
+
+  "risk_assessment": `You are an expert construction contract risk analyst. Your task is to identify and assess risks in this contract from the contractor's perspective.
+
+Analyze this construction contract and create a comprehensive risk assessment table with the following columns:
+
+1. Risk_ID (format: RISK-[sequential number])
+2. Related_Clause_ID (the clause ID that contains this risk)
+3. Risk_Category (e.g., Payment, Schedule, Liability, Design, Force Majeure)
+4. Risk_Description (detailed description of the risk)
+5. Risk_Severity (Critical, High, Medium, Low)
+6. Risk_Probability (High, Medium, Low)
+7. Potential_Impact (financial, schedule, or other impacts)
+8. Risk_Owner (which party bears this risk)
+9. Mitigation_Strategy (suggested approach to mitigate)
+
+Identify risks in areas including but not limited to: payment terms, schedule requirements, liquidated damages, indemnification, warranties, design responsibility, force majeure, and termination provisions.`,
+
+  "financial_terms_extraction": `You are an expert in construction contract financial analysis. Your task is to extract all payment and financial terms from this contract.
+
+Extract all payment and financial terms from this construction contract and organize them into a structured table:
+
+1. Financial_Item_ID (format: FIN-[sequential number])
+2. Related_Clause_ID (the clause ID that contains this financial item)
+3. Item_Type (Contract Sum, Unit Price, Allowance, Retainage, Change Order, Fee, etc.)
+4. Item_Description (description of the financial term)
+5. Amount (dollar value if specified)
+6. Percentage (if specified as a percentage)
+7. Payment_Timing (when payment is due)
+8. Prerequisites (conditions that must be met before payment)
+9. Retainage (any withholding percentage)
+10. Special_Conditions (any special conditions related to this financial item)`
+};
+
 export default function Page() {
   const { user, signOut } = useAuth();
   const router = useRouter();
@@ -248,6 +344,25 @@ export default function Page() {
   const [conversationStarted, setConversationStarted] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // Enhanced Developer settings state
+  const [developerSettings, setDeveloperSettings] = useState<DeveloperSettings>({
+    apiEndpoint: "https://api.openai.com/v1/chat/completions",
+    modelVersion: "gpt-4",
+    temperature: 0.7,
+    debugMode: false,
+    maxTokens: 2048,
+    overridePrompt: "",
+    useContractAnalysisPrompts: false,
+    selectedContractPrompt: "main_clause_extraction",
+    promptFormat: "text"
+  });
+
+  // Derived chat settings that match the expected format for ImprovedChat
+  const chatSettings: ChatSettings = {
+    enableDebugMode: developerSettings.debugMode,
+    logLevel: developerSettings.debugMode ? "debug" : "info"
+  };
 
   // Contract Analyzer state
   const [showContractAnalyzer, setShowContractAnalyzer] = useState(false);
@@ -274,6 +389,33 @@ export default function Page() {
   useEffect(() => {
     chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, isStreaming]);
+
+  // Update chat component with dev settings when they change
+  useEffect(() => {
+    // This would be implemented in a real app to pass settings to the chat component
+    console.log("Developer settings updated:", developerSettings);
+    // You would apply these settings to your actual API calls
+  }, [developerSettings]);
+
+  // Handler for dev settings update
+  const handleDeveloperSettingsUpdate = (newSettings: DeveloperSettings) => {
+    setDeveloperSettings(newSettings);
+    // You could store these in localStorage for persistence
+    localStorage.setItem('developerSettings', JSON.stringify(newSettings));
+  };
+
+  // Load saved settings on component mount
+  useEffect(() => {
+    const savedSettings = localStorage.getItem('developerSettings');
+    if (savedSettings) {
+      try {
+        const parsedSettings = JSON.parse(savedSettings);
+        setDeveloperSettings({...developerSettings, ...parsedSettings});
+      } catch (e) {
+        console.error("Failed to parse saved developer settings", e);
+      }
+    }
+  }, []);
 
   // Clear chat functionality
   const clearChat = () => {
@@ -341,7 +483,30 @@ export default function Page() {
     }
   };
 
-  // Handle new message
+  // Create a custom prompt message for the API based on settings
+  const createCustomPromptMessage = (userMessage: string) => {
+    if (developerSettings.useContractAnalysisPrompts && developerSettings.selectedContractPrompt) {
+      const promptTemplate = CONTRACT_ANALYSIS_PROMPTS[developerSettings.selectedContractPrompt as keyof typeof CONTRACT_ANALYSIS_PROMPTS];
+      if (promptTemplate) {
+        return [
+          { role: "system", content: promptTemplate },
+          { role: "user", content: userMessage }
+        ];
+      }
+    } else if (developerSettings.overridePrompt) {
+      return [
+        { role: "system", content: developerSettings.overridePrompt },
+        { role: "user", content: userMessage }
+      ];
+    }
+    
+    // Default message format if no overrides
+    return [
+      { role: "user", content: userMessage }
+    ];
+  };
+
+  // Handle new message with prompt overrides
   const handleUserMessage = (content: string) => {
     const newMessage: ChatMessage = {
       role: 'user',
@@ -356,15 +521,27 @@ export default function Page() {
       setConversationStarted(true);
     }
 
-    // Check if the user is asking to analyze a contract
+    // Check if user is asking about a specific contract
     if (
       content.toLowerCase().includes('contract') &&
       (content.toLowerCase().includes('analyze') ||
         content.toLowerCase().includes('analysis') ||
         content.toLowerCase().includes('risk'))
     ) {
-      // Open contract analyzer panel
-      setShowContractAnalyzer(true);
+      // Check if we should use contract analysis prompts
+      if (developerSettings.useContractAnalysisPrompts) {
+        // Here, we would apply the selected contract analysis prompt
+        // This would be handled by your chat API integration
+        console.log("Using contract analysis prompt:", 
+          developerSettings.selectedContractPrompt, 
+          "for message:", content);
+        
+        // Open contract analyzer panel
+        setShowContractAnalyzer(true);
+      } else {
+        // Use normal behavior
+        setShowContractAnalyzer(true);
+      }
     }
   };
 
@@ -617,6 +794,10 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   onAssistantMessage={handleAssistantMessage}
                   onConversationStart={() => setConversationStarted(true)}
                   onStreamingChange={setIsStreaming}
+                  // Pass modified dev settings to the chat component
+                  devSettings={chatSettings}
+                  // Pass createCustomPromptMessage to the ImprovedChat component
+                  createCustomPromptMessage={createCustomPromptMessage}
                 />
               </div>
 
@@ -677,6 +858,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           isOpen={showContractAnalyzer}
           onDismiss={() => setShowContractAnalyzer(false)}
           onAnalysisComplete={handleAnalysisComplete}
+          // We don't pass devSettings directly, instead any necessary options would be passed here
         />
 
         {/* Standard Analysis Panel */}
@@ -688,7 +870,9 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           activeCitation={activeCitation}
           response={currentMessageForAnalysis}
           mostRecentUserMessage={mostRecentUserMessage}
+          // We don't pass devSettings directly
         />
+        
         <FileCabinetPanel
           isOpen={showFileCabinetPanel}
           onDismiss={() => setShowFileCabinetPanel(false)}
@@ -697,8 +881,13 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           }}
         />
 
-        {/* Settings Sidebar */}
-        <SettingsSidebar open={settingsOpen} onOpenChange={setSettingsOpen} />
+        {/* Enhanced Settings Sidebar with support for prompt library */}
+        <SettingsSidebar 
+          open={settingsOpen} 
+          onOpenChange={setSettingsOpen}
+          settings={developerSettings}
+          onSettingsChange={handleDeveloperSettingsUpdate}
+        />
       </div>
     </ProtectedRoute>
   );

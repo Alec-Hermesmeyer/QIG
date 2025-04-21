@@ -24,3 +24,65 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Add this to your global CSS file */
+
+/* Force high-contrast on dropdown menus */
+[role="listbox"] {
+  background-color: white !important;
+  color: black !important;
+  border: 1px solid #ccc !important;
+}
+
+[role="option"] {
+  color: black !important;
+  background-color: white !important;
+}
+
+[role="option"]:hover,
+[role="option"][data-highlighted],
+[role="option"][aria-selected="true"] {
+  background-color: #e5e7eb !important;
+  color: black !important;
+}
+
+/* Target specifically the settings panel in case the above is too general */
+.settings-sidebar [role="listbox"],
+.settings-sidebar [role="combobox"] ~ div {
+  background-color: white !important;
+  color: black !important;
+  border: 1px solid #ccc !important;
+  border-radius: 4px !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+.settings-sidebar [role="option"] {
+  color: black !important;
+  background-color: white !important;
+  padding: 8px 12px !important;
+}
+
+.settings-sidebar [role="option"]:hover,
+.settings-sidebar [role="option"][data-highlighted],
+.settings-sidebar [role="option"][aria-selected="true"] {
+  background-color: #e5e7eb !important;
+  color: black !important;
+}
+
+/* Fallback for all select lists - extremely aggressive approach */
+select,
+option,
+.popover,
+.select,
+.dropdown,
+.dropdown-menu,
+.dropdown-item,
+[id*="menu-"],
+[id*="list-"],
+[id*="select-"],
+[id*="dropdown-"],
+[id*="listbox-"],
+[id*="popup-"] {
+  color: black !important;
+  background-color: white !important;
+}
