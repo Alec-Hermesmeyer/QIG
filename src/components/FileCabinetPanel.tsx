@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import {
@@ -19,16 +19,17 @@ import {
   Modal
 } from '@fluentui/react';
 import { getCitationFilePath } from '@/lib/api';
+import { FileUploadComponent } from './FileUploadComponent'; // Import the new component
 
 const viewIcon: IIconProps = { iconName: 'View' };
 const analyzeIcon: IIconProps = { iconName: 'Insights' };
 const refreshIcon: IIconProps = { iconName: 'Refresh' };
+const uploadIcon: IIconProps = { iconName: 'Upload' }; // New upload icon
 
 interface FileCabinetPanelProps {
   isOpen: boolean;
   onDismiss: () => void;
   onRunAnalysis: (fileName: string, analysisResult: any, citationUrl: string) => void;
-  
 }
 
 export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({ 
@@ -46,6 +47,9 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const [iframeLoading, setIframeLoading] = useState<boolean>(false);
   const [iframeError, setIframeError] = useState<boolean>(false);
+  
+  // New state for file upload component
+  const [isUploadPanelOpen, setIsUploadPanelOpen] = useState<boolean>(false);
 
   const fetchFiles = async () => {
     setLoading(true);
@@ -110,10 +114,10 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
     setError(null);
   };
 
-  // New simplified function for document analysis via chat
+  // Handle document analysis via chat
   const handleAnalyzeDocument = (fileName: string) => {
     // Create a prompt for contract analysis
-    const contractAnalysisPrompt = `Please analyze this document ${fileName} and provide:
+    const contractAnalysisPrompt = `Please analyze this document "${fileName}" and provide:
 1. A summary of the key points
 2. The main parties involved
 3. Important dates mentioned
@@ -136,6 +140,13 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
     
     // Close the panel after sending
     onDismiss();
+  };
+
+  // Handle upload complete
+  const handleUploadComplete = (fileName: string) => {
+    console.log(`Upload complete: ${fileName}`);
+    // Refresh the file list after upload completes
+    fetchFiles();
   };
 
   useEffect(() => {
@@ -189,168 +200,195 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
   const fileItems = filteredFiles.map(name => ({ name }));
 
   return (
-    <Panel
-      isOpen={isOpen}
-      onDismiss={onDismiss}
-      type={PanelType.large}
-      headerText="Contract File Cabinet"
-      closeButtonAriaLabel="Close"
-    >
-      <Stack tokens={{ childrenGap: 12 }}>
-        <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
-          <Text variant="large">{files.length > 0 ? `${files.length} files found` : "File Cabinet"}</Text>
-          <DefaultButton
-            text="Refresh"
-            iconProps={refreshIcon}
-            onClick={fetchFiles}
-            disabled={loading}
-          />
-        </Stack>
-
-        <SearchBox
-          placeholder="Search files..."
-          onChange={(_, newValue) => setSearchText(newValue || "")}
-          disabled={loading || files.length === 0}
-        />
-
-        {loading && <ProgressIndicator label="Fetching files..." />}
-
-        {error && (
-          <MessageBar messageBarType={MessageBarType.error} onDismiss={clearError} isMultiline>
-            {error}
-          </MessageBar>
-        )}
-
-        <DetailsList
-          items={fileItems}
-          columns={columns}
-          selectionMode={SelectionMode.none}
-        />
-
-        {searchText && files.length > 0 && (
-          <Text>
-            Showing {filteredFiles.length} of {files.length} files
-          </Text>
-        )}
-      </Stack>
-
-      {/* Document Viewer Modal */}
-      <Modal
-        isOpen={isViewerOpen && !!viewingFile}
-        onDismiss={closeViewer}
-        isBlocking={false}
-        styles={{
-          main: { 
-            width: '95%',
-            height: '95%',
-            maxWidth: '1600px',
-            maxHeight: '95vh',
-            padding: 0,
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
-          },
-          scrollableContent: {
-            height: '100%',
-            padding: 0
-          }
-        }}
+    <>
+      <Panel
+        isOpen={isOpen}
+        onDismiss={onDismiss}
+        type={PanelType.large}
+        headerText="Contract File Cabinet"
+        closeButtonAriaLabel="Close"
       >
-        <Stack styles={{ root: { height: '100%' } }}>
-          {/* Modal header */}
-          <Stack 
-            horizontal 
-            horizontalAlign="space-between" 
-            verticalAlign="center"
-            styles={{ 
-              root: { 
-                padding: '8px 16px',
-                borderBottom: '1px solid #e5e7eb',
-                backgroundColor: '#f9fafb',
-                minHeight: '44px',
-                height: '44px'
-              } 
-            }}
-          >
-            <Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>
-              {viewingFile}
-            </Text>
-            <DefaultButton 
-              onClick={closeViewer}
-              styles={{ root: { minWidth: '60px', height: '32px' } }}
-            >
-              Close
-            </DefaultButton>
+        <Stack tokens={{ childrenGap: 12 }}>
+          <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
+            <Text variant="large">{files.length > 0 ? `${files.length} files found` : "File Cabinet"}</Text>
+            <Stack horizontal tokens={{ childrenGap: 8 }}>
+              {/* Add Upload button */}
+              <DefaultButton
+                text="Upload"
+                iconProps={uploadIcon}
+                onClick={() => setIsUploadPanelOpen(true)}
+                styles={{ 
+                  root: { 
+                    backgroundColor: '#f5f3ff',
+                    borderColor: '#c7d2fe',
+                  },
+                  rootHovered: {
+                    backgroundColor: '#ede9fe',
+                    borderColor: '#a5b4fc',
+                  }
+                }}
+              />
+              <DefaultButton
+                text="Refresh"
+                iconProps={refreshIcon}
+                onClick={fetchFiles}
+                disabled={loading}
+              />
+            </Stack>
           </Stack>
-          
-          {/* Modal content */}
-          <Stack.Item grow styles={{ root: { position: 'relative', height: 'calc(100% - 44px)' } }}>
-            {/* Loading spinner */}
-            {iframeLoading && (
-              <Stack 
-                horizontalAlign="center" 
-                verticalAlign="center"
-                styles={{
-                  root: {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(255,255,255,0.8)',
-                    zIndex: 10
-                  }
-                }}
-              >
-                <Spinner label="Loading document..." />
-              </Stack>
-            )}
-            
-            {/* Error message */}
-            {iframeError && (
-              <Stack
-                horizontalAlign="center"
-                verticalAlign="center"
-                styles={{
-                  root: {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: '#f9fafb',
-                    padding: 20
-                  }
-                }}
-              >
-                <MessageBar
-                  messageBarType={MessageBarType.error}
-                  isMultiline={true}
-                >
-                  <Text>Failed to load document. The file may not be available or you may not have permission to view it.</Text>
-                </MessageBar>
-              </Stack>
-            )}
-            
-            {/* Document iframe */}
-            <div style={{ height: '100%', width: '100%' }}>
-              {viewingFile && (
-                <iframe
-                  src={getDocumentUrl(viewingFile)}
-                  width="100%"
-                  height="100%"
-                  style={{ 
-                    border: 'none', 
-                    display: 'block',
-                    backgroundColor: '#f9fafb'
-                  }}
-                  title="Document Viewer"
-                  onLoad={handleIframeLoad}
-                  onError={handleIframeError}
-                />
-              )}
-            </div>
-          </Stack.Item>
+
+          <SearchBox
+            placeholder="Search files..."
+            onChange={(_, newValue) => setSearchText(newValue || "")}
+            disabled={loading || files.length === 0}
+          />
+
+          {loading && <ProgressIndicator label="Fetching files..." />}
+
+          {error && (
+            <MessageBar messageBarType={MessageBarType.error} onDismiss={clearError} isMultiline>
+              {error}
+            </MessageBar>
+          )}
+
+          <DetailsList
+            items={fileItems}
+            columns={columns}
+            selectionMode={SelectionMode.none}
+          />
+
+          {searchText && files.length > 0 && (
+            <Text>
+              Showing {filteredFiles.length} of {files.length} files
+            </Text>
+          )}
         </Stack>
-      </Modal>
-    </Panel>
+
+        {/* Document Viewer Modal */}
+        <Modal
+          isOpen={isViewerOpen && !!viewingFile}
+          onDismiss={closeViewer}
+          isBlocking={false}
+          styles={{
+            main: { 
+              width: '95%',
+              height: '95%',
+              maxWidth: '1600px',
+              maxHeight: '95vh',
+              padding: 0,
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+            },
+            scrollableContent: {
+              height: '100%',
+              padding: 0
+            }
+          }}
+        >
+          <Stack styles={{ root: { height: '100%' } }}>
+            {/* Modal header */}
+            <Stack 
+              horizontal 
+              horizontalAlign="space-between" 
+              verticalAlign="center"
+              styles={{ 
+                root: { 
+                  padding: '8px 16px',
+                  borderBottom: '1px solid #e5e7eb',
+                  backgroundColor: '#f9fafb',
+                  minHeight: '44px',
+                  height: '44px'
+                } 
+              }}
+            >
+              <Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>
+                {viewingFile}
+              </Text>
+              <DefaultButton 
+                onClick={closeViewer}
+                styles={{ root: { minWidth: '60px', height: '32px' } }}
+              >
+                Close
+              </DefaultButton>
+            </Stack>
+            
+            {/* Modal content */}
+            <Stack.Item grow styles={{ root: { position: 'relative', height: 'calc(100% - 44px)' } }}>
+              {/* Loading spinner */}
+              {iframeLoading && (
+                <Stack 
+                  horizontalAlign="center" 
+                  verticalAlign="center"
+                  styles={{
+                    root: {
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: 'rgba(255,255,255,0.8)',
+                      zIndex: 10
+                    }
+                  }}
+                >
+                  <Spinner label="Loading document..." />
+                </Stack>
+              )}
+              
+              {/* Error message */}
+              {iframeError && (
+                <Stack
+                  horizontalAlign="center"
+                  verticalAlign="center"
+                  styles={{
+                    root: {
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: '#f9fafb',
+                      padding: 20
+                    }
+                  }}
+                >
+                  <MessageBar
+                    messageBarType={MessageBarType.error}
+                    isMultiline={true}
+                  >
+                    <Text>Failed to load document. The file may not be available or you may not have permission to view it.</Text>
+                  </MessageBar>
+                </Stack>
+              )}
+              
+              {/* Document iframe */}
+              <div style={{ height: '100%', width: '100%' }}>
+                {viewingFile && (
+                  <iframe
+                    src={getDocumentUrl(viewingFile)}
+                    width="100%"
+                    height="100%"
+                    style={{ 
+                      border: 'none', 
+                      display: 'block',
+                      backgroundColor: '#f9fafb'
+                    }}
+                    title="Document Viewer"
+                    onLoad={handleIframeLoad}
+                    onError={handleIframeError}
+                  />
+                )}
+              </div>
+            </Stack.Item>
+          </Stack>
+        </Modal>
+      </Panel>
+
+      {/* File Upload Component */}
+      <FileUploadComponent
+        isOpen={isUploadPanelOpen}
+        onDismiss={() => setIsUploadPanelOpen(false)}
+        onUploadComplete={handleUploadComplete}
+      />
+    </>
   );
 };
