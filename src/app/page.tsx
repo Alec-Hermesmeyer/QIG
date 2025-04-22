@@ -66,10 +66,10 @@ interface SettingsSidebarProps {
   onSettingsChange?: (settings: Partial<SettingsState>) => void;
 }
 
-function SettingsSidebar({ 
-  open, 
-  onOpenChange, 
-  initialSettings = {}, 
+function SettingsSidebar({
+  open,
+  onOpenChange,
+  initialSettings = {},
   onSettingsChange
 }: SettingsSidebarProps) {
   // Default settings
@@ -152,9 +152,9 @@ function SettingsSidebar({
                   </TooltipContent>
                 </Tooltip>
               </div>
-              <Textarea 
-                id="prompt" 
-                className="min-h-[100px]" 
+              <Textarea
+                id="prompt"
+                className="min-h-[100px]"
                 value={settings.promptTemplate}
                 onChange={(e) => handleInputChange('promptTemplate', e.target.value)}
                 placeholder="You are an AI assistant that helps users analyze construction contracts. When analyzing a contract, focus on the financial provisions, risk allocation, and key compliance requirements."
@@ -177,19 +177,19 @@ function SettingsSidebar({
                 </Tooltip>
               </div>
               <div className="flex gap-4">
-                <Slider 
-                  id="temperature" 
-                  min={0} 
-                  max={1} 
-                  step={0.1} 
-                  value={[settings.temperature]} 
+                <Slider
+                  id="temperature"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={[settings.temperature]}
                   className="flex-1"
                   onValueChange={(value) => handleInputChange('temperature', value[0])}
                 />
-                <Input 
-                  type="number" 
-                  className="w-20" 
-                  value={settings.temperature} 
+                <Input
+                  type="number"
+                  className="w-20"
+                  value={settings.temperature}
                   onChange={(e) => handleInputChange('temperature', parseFloat(e.target.value) || 0)}
                   min={0}
                   max={1}
@@ -213,9 +213,9 @@ function SettingsSidebar({
                   </TooltipContent>
                 </Tooltip>
               </div>
-              <Input 
-                id="seed" 
-                type="text" 
+              <Input
+                id="seed"
+                type="text"
                 value={settings.seed}
                 onChange={(e) => handleInputChange('seed', e.target.value)}
                 placeholder="Leave blank for random results"
@@ -238,11 +238,11 @@ function SettingsSidebar({
                     </TooltipContent>
                   </Tooltip>
                 </div>
-                <Input 
-                  id="search-score" 
-                  type="number" 
-                  min="0" 
-                  max="5" 
+                <Input
+                  id="search-score"
+                  type="number"
+                  min="0"
+                  max="5"
                   step="0.1"
                   value={settings.minSearchScore}
                   onChange={(e) => handleInputChange('minSearchScore', parseFloat(e.target.value) || 0)}
@@ -262,11 +262,11 @@ function SettingsSidebar({
                     </TooltipContent>
                   </Tooltip>
                 </div>
-                <Input 
-                  id="reranker-score" 
-                  type="number" 
-                  min="0" 
-                  max="5" 
+                <Input
+                  id="reranker-score"
+                  type="number"
+                  min="0"
+                  max="5"
                   step="0.1"
                   value={settings.minRerankerScore}
                   onChange={(e) => handleInputChange('minRerankerScore', parseFloat(e.target.value) || 0)}
@@ -278,7 +278,7 @@ function SettingsSidebar({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Include category</label>
-                <Select 
+                <Select
                   value={settings.includeCategory}
                   onValueChange={(value) => handleInputChange('includeCategory', value)}
                 >
@@ -313,8 +313,8 @@ function SettingsSidebar({
             {/* Checkboxes */}
             <div className="space-y-4">
               <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="semantic-ranker" 
+                <Checkbox
+                  id="semantic-ranker"
                   checked={settings.useSemanticRanker}
                   onCheckedChange={(checked) => handleInputChange('useSemanticRanker', checked === true)}
                 />
@@ -326,8 +326,8 @@ function SettingsSidebar({
                 </label>
               </div>
               <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="semantic-captions" 
+                <Checkbox
+                  id="semantic-captions"
                   checked={settings.useSemanticCaptions}
                   onCheckedChange={(checked) => handleInputChange('useSemanticCaptions', checked === true)}
                 />
@@ -339,8 +339,8 @@ function SettingsSidebar({
                 </label>
               </div>
               <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="stream-response" 
+                <Checkbox
+                  id="stream-response"
                   checked={settings.streamResponse}
                   onCheckedChange={(checked) => handleInputChange('streamResponse', checked === true)}
                 />
@@ -352,8 +352,8 @@ function SettingsSidebar({
                 </label>
               </div>
               <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="follow-up" 
+                <Checkbox
+                  id="follow-up"
                   checked={settings.suggestFollowUp}
                   onCheckedChange={(checked) => handleInputChange('suggestFollowUp', checked === true)}
                 />
@@ -369,7 +369,7 @@ function SettingsSidebar({
             {/* Retrieval Mode */}
             <div className="space-y-2">
               <label className="text-sm font-medium">Retrieval mode</label>
-              <Select 
+              <Select
                 value={settings.retrievalMode}
                 onValueChange={(value) => handleInputChange('retrievalMode', value)}
               >
@@ -404,13 +404,13 @@ function SettingsSidebar({
 // until we can move it to its own file
 const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
   const [activeTab, setActiveTab] = useState(0);
-  
+
   // Helper function to extract risks from raw text
   const extractRisksFromText = (text: string) => {
     // Look for patterns like "Risk Category: X" in the text
     const risks: any[] = [];
     const riskRegex = /Risk Category:\s*(.*?)\s*\n\s*Risk Score:\s*(.*?)\s*\n\s*Risky Contract Text:\s*"(.*?)"\s*\n\s*Why This Is a Risk:\s*(.*?)\s*\n\s*Contract Location:\s*(.*?)(?:\n\n|\n$|$)/gs;
-    
+
     let match;
     while ((match = riskRegex.exec(text)) !== null) {
       risks.push({
@@ -421,36 +421,36 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
         location: match[5]?.trim()
       });
     }
-    
+
     return risks;
   };
 
   // Helper function to extract mitigation points from raw text
   const extractMitigationFromText = (text: string) => {
     const mitigations: string[] = [];
-    
+
     // Look for a mitigation section
     const mitigationSectionRegex = /Mitigation Summary:(.+?)(?:\n\n|\n[A-Z]|$)/gs;
     const mitigationSection = mitigationSectionRegex.exec(text);
-    
+
     if (mitigationSection && mitigationSection[1]) {
       // Extract bullet points
       const mitigationText = mitigationSection[1];
       const bulletPointRegex = /-\s*(.*?)(?:\n-|\n\n|$)/gs;
-      
+
       let bulletMatch;
       while ((bulletMatch = bulletPointRegex.exec(mitigationText)) !== null) {
         if (bulletMatch[1]?.trim()) {
           mitigations.push(bulletMatch[1].trim());
         }
       }
-      
+
       // If no bullet points found, try paragraph extraction
       if (mitigations.length === 0) {
         mitigations.push(...mitigationText.split('\n').map(line => line.trim()).filter(line => line));
       }
     }
-    
+
     return mitigations;
   };
 
@@ -464,11 +464,11 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
       default: return '#6b7280';         // Gray
     }
   };
-  
+
   // Parse the raw text to extract risks and mitigation points
   const extractedRisks = extractRisksFromText(analysisText);
   const extractedMitigations = extractMitigationFromText(analysisText);
-  
+
   // Group risks by severity for easy filtering
   const criticalRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'critical');
   const highRisks = extractedRisks.filter(risk => risk.score.toLowerCase() === 'high');
@@ -478,7 +478,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
   // Individual risk card component
   const RiskCard = ({ risk, index }: { risk: any; index: number }) => {
     return (
-      <div 
+      <div
         className="mb-4 p-4 rounded-lg border shadow-sm"
         style={{ borderLeftWidth: '4px', borderLeftColor: getRiskScoreColor(risk.score) }}
       >
@@ -486,22 +486,22 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
           <h4 className="font-medium text-gray-900">
             {index + 1}. {risk.category}
           </h4>
-          <span 
+          <span
             className="px-2 py-1 text-xs font-bold text-white rounded-md"
             style={{ backgroundColor: getRiskScoreColor(risk.score) }}
           >
             {risk.score}
           </span>
         </div>
-        
+
         <div className="mb-2">
           <span className="text-sm text-gray-500">Location: {risk.location}</span>
         </div>
-        
+
         <div className="bg-gray-100 p-2 rounded-md mb-3 italic text-gray-700">
           "{risk.text}"
         </div>
-        
+
         <div>
           <span className="font-medium">Why This Is a Risk:</span>
           <p className="text-gray-700">{risk.reason}</p>
@@ -509,7 +509,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
       </div>
     );
   };
-  
+
   // Import react-tabs styles directly with CSS
   return (
     <div className="h-96 overflow-scroll flex flex-col">
@@ -522,7 +522,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
             Raw Analysis
           </div> */}
           {extractedRisks.length > 0 && (
-            <div 
+            <div
               className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 1 ? 'border-blue-600 text-blue-600' : 'border-transparent hover:text-blue-600 hover:border-blue-600'}`}
               onClick={() => setActiveTab(1)}
             >
@@ -530,7 +530,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
             </div>
           )}
           {criticalRisks.length > 0 && (
-            <div 
+            <div
               className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 2 ? 'border-red-600 text-red-600' : 'border-transparent hover:text-red-600 hover:border-red-600'}`}
               onClick={() => setActiveTab(2)}
             >
@@ -538,7 +538,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
             </div>
           )}
           {highRisks.length > 0 && (
-            <div 
+            <div
               className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 3 ? 'border-orange-600 text-orange-600' : 'border-transparent hover:text-orange-600 hover:border-orange-600'}`}
               onClick={() => setActiveTab(3)}
             >
@@ -546,7 +546,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
             </div>
           )}
           {extractedMitigations.length > 0 && (
-            <div 
+            <div
               className={`px-4 py-2 cursor-pointer border-b-2 ${activeTab === 4 ? 'border-purple-600 text-purple-600' : 'border-transparent hover:text-purple-600 hover:border-purple-600'}`}
               onClick={() => setActiveTab(4)}
             >
@@ -566,7 +566,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
               </div>
             </div>
           )}
-          
+
           {/* All extracted risks */}
           {activeTab === 1 && extractedRisks.length > 0 && (
             <div className="p-4">
@@ -576,7 +576,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
               ))}
             </div>
           )}
-          
+
           {/* Critical risks */}
           {activeTab === 2 && criticalRisks.length > 0 && (
             <div className="p-4">
@@ -586,7 +586,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
               ))}
             </div>
           )}
-          
+
           {/* High risks */}
           {activeTab === 3 && highRisks.length > 0 && (
             <div className="p-4">
@@ -596,7 +596,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
               ))}
             </div>
           )}
-          
+
           {/* Mitigation suggestions */}
           {activeTab === 4 && extractedMitigations.length > 0 && (
             <div className="p-4">
@@ -634,7 +634,7 @@ export default function Page() {
   // Load settings from localStorage on init
   const loadSavedSettings = (): Partial<SettingsState> => {
     if (typeof window === 'undefined') return {};
-    
+
     try {
       const savedSettings = localStorage.getItem('contract-analysis-settings');
       return savedSettings ? JSON.parse(savedSettings) : {};
@@ -648,7 +648,7 @@ export default function Page() {
   const [settings, setSettings] = useState<SettingsState>(() => {
     // Load any saved settings from localStorage
     const savedSettings = loadSavedSettings();
-    
+
     return {
       promptTemplate: '',
       temperature: 0.3,
@@ -698,7 +698,7 @@ export default function Page() {
         ...prev,
         ...updatedSettings
       };
-      
+
       // Update chat config immediately with new settings
       setChatConfig({
         temperature: newSettings.temperature,
@@ -716,7 +716,7 @@ export default function Page() {
           retrievalMode: newSettings.retrievalMode
         }
       });
-      
+
       return newSettings;
     });
 
@@ -755,7 +755,7 @@ export default function Page() {
     if (chatRef.current) {
       // Update the chat configuration
       chatRef.current.updateConfig?.(chatConfig);
-      
+
       console.log("Updated chat configuration:", chatConfig);
     }
   }, [chatConfig, chatRef.current]);
@@ -911,7 +911,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             <div className="flex items-center gap-6">
               <Link href="/chat" className="hover:text-gray-300">Chat</Link>
               <Link href="/ask" className="hover:text-gray-300">Ask a question</Link>
-              
+
               {/* User info and logout */}
               {user && (
                 <div className="flex items-center gap-3 ml-6">
@@ -932,28 +932,28 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
         {/* Secondary Toolbar */}
         <div className="bg-[#F5F5F5]">
-          
+
           <div className="h-12 px-4 flex items-center justify-between max-w-7xl mx-auto">
             <Button variant="ghost" size="sm" className="flex items-center gap-2 cursor-pointer">
               <History className="h-4 w-4" />
               Open chat history
             </Button>
             <div className="flex items-center gap-2 cursor-pointer">
-            <Button variant="ghost"
+              <Button variant="ghost"
                 size="sm"
                 className="flex items-center gap-2 cursor-pointer"
                 onClick={() => setShowContractAnalyzer(true)} >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M16 13H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M16 17H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M10 9H9H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  Analyze Contract
+                  <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M16 13H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M16 17H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M10 9H9H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Analyze Contract
               </Button>
-              
-              
+
+
               <Button variant="ghost"
                 size="sm"
                 className="flex items-center gap-2 cursor-pointer"
@@ -966,7 +966,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 <Trash2 className="h-4 w-4" />
                 Clear chat
               </Button>
-              
+
               <Button
                 variant="ghost"
                 size="sm"
@@ -1123,7 +1123,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       Close
                     </Button>
                   </div>
-                  
+
                   {contractAnalysisResults.risks && contractAnalysisResults.risks.length > 0 ? (
                     // Normal case: Display structured risks and mitigation points
                     <ContractAnalysisDisplay
@@ -1133,7 +1133,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     />
                   ) : (
                     // Fallback case: Use our new styled fallback component when no structured risks are found
-                    <StyledFallbackAnalysis 
+                    <StyledFallbackAnalysis
                       analysisText={contractAnalysisResults.analysisText || ''}
                     />
                   )}
@@ -1163,11 +1163,19 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         <FileCabinetPanel
           isOpen={showFileCabinetPanel}
           onDismiss={() => setShowFileCabinetPanel(false)}
-          onRunAnalysis={(fileName) => {
-            handleUserMessage(`Analyze the contract for ${fileName}`);
+          onRunAnalysis={(fileName, analysisResult, citationUrl) => {
+            // Create a message to send to the chat
+            const message = `Analyze ${fileName} for potential risks and concerns.`;
+
+            // Use the chatRef to submit the message programmatically
+            if (chatRef.current) {
+              chatRef.current.submitMessage(message);
+            }
+
+            // Close the panel
+            setShowFileCabinetPanel(false);
           }}
         />
-
         {/* Settings Sidebar */}
         <SettingsSidebar
           open={settingsOpen}
