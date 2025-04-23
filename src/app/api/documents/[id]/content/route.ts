@@ -6,7 +6,6 @@ import os from 'os';
 import PDFParser from 'pdf2json';
 import * as mammoth from 'mammoth';
 
-// Helper function to create a temporary file
 async function createTempFile(buffer: Buffer, extension: string): Promise<string> {
   const tempDir = os.tmpdir();
   const tempFilePath = path.join(tempDir, `temp-${Date.now()}${extension}`);
@@ -14,7 +13,6 @@ async function createTempFile(buffer: Buffer, extension: string): Promise<string
   return tempFilePath;
 }
 
-// Helper function to process a PDF
 async function readPDFWithStream(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const pdfParser = new PDFParser(null, 1 as any);
@@ -30,7 +28,6 @@ async function readPDFWithStream(filePath: string): Promise<string> {
   });
 }
 
-// Helper function to detect if content is binary and what type
 function detectContentType(content: string): { isBinary: boolean; fileType: string | null } {
   if (content.startsWith('PK') || content.includes('[Content_Types]') || content.includes('word/document.xml')) {
     return { isBinary: true, fileType: 'docx' };
@@ -41,17 +38,16 @@ function detectContentType(content: string): { isBinary: boolean; fileType: stri
   return { isBinary: false, fileType: null };
 }
 
-// Fixed API handler signature
-export async function GET(request: NextRequest, context: { params: { id: string } }) {
+// ✅ Correct handler signature
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { id } = context.params;
+    const { id } = params;
 
     if (!id) {
       return NextResponse.json({ message: 'Document ID is required' }, { status: 400 });
     }
 
     const document = await documentCacheService.getDocument(id);
-
     if (!document) {
       return NextResponse.json({ message: 'Document not found' }, { status: 404 });
     }
@@ -60,12 +56,7 @@ export async function GET(request: NextRequest, context: { params: { id: string 
 
     if (document.metadata.chunked) {
       const fullContent = await documentCacheService.getFullDocumentContent(id);
-      if (fullContent) {
-        content = fullContent;
-      } else {
-        content = document.content.content;
-        console.warn(`Could not load chunks for document ${id}, using preview content`);
-      }
+      content = fullContent || document.content.content;
     } else {
       content = document.content.content;
     }
@@ -75,9 +66,9 @@ export async function GET(request: NextRequest, context: { params: { id: string 
     if (isBinary) {
       try {
         let extractedText = '';
+        const buffer = Buffer.from(content, 'binary');
 
         if (fileType === 'pdf') {
-          const buffer = Buffer.from(content, 'binary');
           const tempFilePath = await createTempFile(buffer, '.pdf');
           try {
             extractedText = await readPDFWithStream(tempFilePath);
@@ -89,7 +80,6 @@ export async function GET(request: NextRequest, context: { params: { id: string 
             }
           }
         } else if (fileType === 'docx') {
-          const buffer = Buffer.from(content, 'binary');
           try {
             const result = await mammoth.extractRawText({ buffer });
             extractedText = result.value;
@@ -99,11 +89,7 @@ export async function GET(request: NextRequest, context: { params: { id: string 
           }
         }
 
-        if (extractedText) {
-          content = extractedText;
-        } else {
-          content = "This document appears to be in a binary format that couldn't be parsed properly.";
-        }
+        content = extractedText || "This document appears to be in a binary format that couldn't be parsed properly.";
       } catch (error) {
         console.error('Error processing binary content:', error);
         content = "Error: Could not process this document format.";
