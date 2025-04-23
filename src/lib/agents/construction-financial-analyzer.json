@@ -1,4 +1,5 @@
-{
+
+ {
   "agentName": "ConstructionContractFinancialAnalyzer",
   "version": "1.0.0",
   "description": "An agent that analyzes construction contracts to extract financial terms, calculate exposure, and identify risk allocation mechanisms",

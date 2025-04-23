@@ -13,7 +13,7 @@ import {
 } from "@fluentui/react";
 import { AnalysisPanelTabs } from "./AnalysisPanelTabs";
 import { ThoughtProcess } from "@/components/ThoughtProcess";
-import { SupportingContent } from "@/components/SupportingContent";
+import { EnhancedSupportingContent } from "@/components/SupportingContent";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { GraphVisualization } from "@/components/GraphVisualization";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
@@ -32,6 +32,7 @@ interface AnalysisPanelProps {
   activeTab?: string;
   onActiveTabChanged?: (tab: string) => void;
   activeCitation?: string;
+  onActiveCitationChanged?: (citation: string) => void;
   citationHeight?: string;
   response?: any;
   mostRecentUserMessage?: string;
@@ -44,6 +45,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   response,
   activeTab: externalActiveTab,
   activeCitation,
+  onActiveCitationChanged,
   citationHeight = "500px",
   className = "",
   onActiveTabChanged,
@@ -53,13 +55,28 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [internalActiveTab, setInternalActiveTab] = useState<string>(
     AnalysisPanelTabs.ThoughtProcessTab
   );
+  const [internalActiveCitation, setInternalActiveCitation] = useState<string | undefined>(
+    activeCitation
+  );
   const [fileContent, setFileContent] = useState<string>("");
   const [fileLoading, setFileLoading] = useState<boolean>(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [citationLoading, setCitationLoading] = useState<boolean>(false);
   const [citationError, setCitationError] = useState<string | null>(null);
+  const [displayFullResponse, setDisplayFullResponse] = useState<boolean>(true);
 
+  // Use either the external or internal active tab
   const activeTab = externalActiveTab || internalActiveTab;
+  
+  // Use either the external or internal active citation
+  const currentActiveCitation = activeCitation || internalActiveCitation;
+
+  // Update internal state when props change
+  useEffect(() => {
+    if (activeCitation !== undefined) {
+      setInternalActiveCitation(activeCitation);
+    }
+  }, [activeCitation]);
 
   useEffect(() => {
     if ((activeTab === FILE_VIEWER_TAB || !activeTab) && contractFileName) {
@@ -68,13 +85,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   }, [activeTab, contractFileName]);
 
   useEffect(() => {
-    if (activeTab === AnalysisPanelTabs.CitationTab && activeCitation) {
+    if (activeTab === AnalysisPanelTabs.CitationTab && currentActiveCitation) {
       setCitationLoading(true);
       setCitationError(null);
       const timer = setTimeout(() => setCitationLoading(false), 500);
       return () => clearTimeout(timer);
     }
-  }, [activeTab, activeCitation]);
+  }, [activeTab, currentActiveCitation]);
 
   const fetchFileContent = async (fileName: string) => {
     if (!fileName) return;
@@ -95,42 +112,183 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   const handleTabChange = (item?: PivotItem) => {
     const tabKey = item?.props.itemKey || AnalysisPanelTabs.ThoughtProcessTab;
-    onActiveTabChanged ? onActiveTabChanged(tabKey) : setInternalActiveTab(tabKey);
+    if (onActiveTabChanged) {
+      onActiveTabChanged(tabKey);
+    } else {
+      setInternalActiveTab(tabKey);
+    }
+  };
+
+  // Function to handle citation changes
+  const handleCitationChange = (citation: string) => {
+    // Update external state if callback provided
+    if (onActiveCitationChanged) {
+      onActiveCitationChanged(citation);
+    } else {
+      // Otherwise update internal state
+      setInternalActiveCitation(citation);
+    }
+    
+    // Switch to citation tab
+    if (onActiveTabChanged) {
+      onActiveTabChanged(AnalysisPanelTabs.CitationTab);
+    } else {
+      setInternalActiveTab(AnalysisPanelTabs.CitationTab);
+    }
+  };
+
+  // Create enriched data points with full context from documents
+  const createEnrichedDataPoints = () => {
+    // Real data processing starts here
+    if (!response) return null;
+    
+    // If we already have structured data_points, use them but check if they're too small
+    if (response.context?.data_points?.text) {
+      const existingText = response.context.data_points.text;
+      
+      // Check if text items are very short snippets
+      const hasShortSnippets = existingText.some((item: string) => {
+        const parts = item.split(":");
+        return parts.length > 1 && parts[1].trim().length < 100;
+      });
+      
+      // If they seem complete enough, use as-is
+      if (!hasShortSnippets) {
+        return response.context.data_points;
+      }
+    }
+    
+    // If we have no structured data or snippets are too short, extract from content
+    if (response.content) {
+      const content = response.content;
+      const citedDocuments = extractCitedDocuments(content);
+      
+      // If we have document excerpts from the paste.txt, enrich with those
+      const documentContent = getDocumentContentFromPaste();
+      if (documentContent && Object.keys(documentContent).length > 0) {
+        return createDataPointsFromDocumentContent(citedDocuments, documentContent);
+      }
+      
+      // Extract citations with context from content
+      if (citedDocuments.length > 0) {
+        return {
+          text: extractFullCitationsFromContent(content, citedDocuments)
+        };
+      }
+    }
+    
+    // If we only have the context and data_points (even if small)
+    if (response.context?.data_points) {
+      return response.context.data_points;
+    }
+    
+    return null;
+  };
+  
+  // Extract document names cited in response
+  const extractCitedDocuments = (content: string): string[] => {
+    if (!content) return [];
+    
+    const citationRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
+    const matches = [...content.matchAll(citationRegex)];
+    return [...new Set(matches.map(match => match[1]))];
+  };
+  
+  // Extract fuller citations from content
+  const extractFullCitationsFromContent = (content: string, documents: string[]): string[] => {
+    const textItems: string[] = [];
+    
+    documents.forEach(doc => {
+      // Escape special regex characters in document name
+      const escapedDoc = doc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(.*?\\[${escapedDoc}\\].*?)(?=\\[|$)`, 'gs');
+      const matches = [...content.matchAll(regex)];
+      
+      if (matches.length > 0) {
+        // Get the longest match for better context
+        const longestMatch = matches.reduce((longest, current) => 
+          current[1].length > longest[1].length ? current : longest
+        );
+        
+        // Clean up the citation to make a nice excerpt
+        const cleanedCitation = longestMatch[1]
+          .replace(`[${doc}]`, '')
+          .trim();
+        
+        textItems.push(`${doc}: ${cleanedCitation}`);
+      } else {
+        textItems.push(`${doc}: Referenced in the response.`);
+      }
+    });
+    
+    return textItems;
+  };
+  
+  // Get document content from the paste.txt document
+  const getDocumentContentFromPaste = () => {
+    // This is where we would extract content from the paste.txt document
+    // For now, return minimal document content structure to avoid errors
+    return {};
+  };
+  
+  // Create data points from document content
+  const createDataPointsFromDocumentContent = (
+    citedDocuments: string[], 
+    documentContent: {[key: string]: string}
+  ) => {
+    const textItems: string[] = [];
+    
+    citedDocuments.forEach(docName => {
+      const content = documentContent[docName];
+      if (!content) {
+        // If we don't have content for this document, just add a reference
+        textItems.push(`${docName}: Referenced in the response.`);
+        return;
+      }
+      
+      // If we have content, break it up into paragraphs
+      const paragraphs = content.split(/\n\n|\.\s+(?=[A-Z])/g)
+        .filter(para => para.trim().length > 0)
+        .slice(0, 5); // Limit to 5 paragraphs per document
+      
+      paragraphs.forEach(para => {
+        // Only add reasonably sized paragraphs
+        if (para.length > 50) {
+          textItems.push(`${docName}: ${para.trim()}`);
+        }
+      });
+    });
+    
+    return { text: textItems };
   };
 
   const getResponseData = () => {
-    if (!response) return { thoughts: [], data_points: [], graphData: null };
-    if (response.context) {
-      return {
-        thoughts: response.context.thoughts || [],
-        data_points: response.context.data_points || [],
-        graphData: response.context.graphData || null,
-      };
-    }
-    if (typeof response.content === 'string') {
+    if (!response) return { thoughts: [], data_points: null, graphData: null };
+    
+    // Extract thoughts from response
+    let thoughts: string[] = [];
+    if (response.context?.thoughts) {
+      if (Array.isArray(response.context.thoughts)) {
+        thoughts = response.context.thoughts;
+      } else if (Array.isArray(response.context.thoughts[0]?.description)) {
+        thoughts = response.context.thoughts[0].description
+          .filter((item: any) => item.role === 'assistant' || item.role === 'user')
+          .map((item: any) => item.content);
+      }
+    } else if (response?.content) {
+      // Create simple thoughts from content if none provided
       const content = response.content;
       const sentences = content.split(/(?<=\.)\s+/);
-      const thoughts = sentences.slice(0, 3);
-      const citationRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
-      const matches = [...content.matchAll(citationRegex)];
-      const data_points = matches.map(match => `${match[1]}: Referenced in the response.`);
-      return { thoughts, data_points, graphData: null };
+      thoughts = sentences.slice(0, Math.min(3, sentences.length));
     }
-    if (response.message?.content) {
-      try {
-        const parsed = JSON.parse(response.message.content);
-        return {
-          thoughts: parsed.context?.thoughts || [],
-          data_points: parsed.context?.data_points || [],
-          graphData: parsed.context?.graphData || null,
-        };
-      } catch {
-        const sentences = response.message.content.split(/(?<=\.)\s+/);
-        const thoughts = sentences.slice(0, 3);
-        return { thoughts, data_points: [], graphData: null };
-      }
-    }
-    return { thoughts: [], data_points: [], graphData: null };
+    
+    // Get enhanced data points
+    const data_points = createEnrichedDataPoints();
+    
+    // Extract graph data if available
+    const graphData = response?.context?.graphData || null;
+    
+    return { thoughts, data_points, graphData };
   };
 
   const { thoughts, data_points, graphData } = getResponseData();
@@ -147,8 +305,70 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     setCitationError(null);
   };
 
+  // Extract text content from supporting content items for highlighting
+  const extractSearchTerms = () => {
+    if (!mostRecentUserMessage) return [];
+    
+    const userMessage = mostRecentUserMessage.toLowerCase();
+    const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'as', 'of']);
+    const words = userMessage.split(/\s+/).filter(word => 
+      word.length > 3 && !commonWords.has(word)
+    );
+    
+    return [...new Set(words)].slice(0, 5);
+  };
+
+  // Render the full response panel with highlighted citations
+  const renderResponsePanel = () => {
+    if (!response?.content) return null;
+    
+    // Get the full response content
+    const content = response.content;
+    
+    // Highlight citations in the content
+    const highlightedContent = content.replace(
+      /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi,
+      '<span class="bg-blue-100 text-blue-800 px-1 rounded cursor-pointer" onclick="document.dispatchEvent(new CustomEvent(\'citationClick\', {detail: \'$1\'}))">[$1]</span>'
+    );
+    
+    return (
+      <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-lg font-semibold text-gray-900">Complete Response</h3>
+          <button 
+            onClick={() => setDisplayFullResponse(!displayFullResponse)}
+            className="text-sm text-blue-600 hover:text-blue-800"
+          >
+            {displayFullResponse ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        
+        {displayFullResponse && (
+          <div 
+            className="text-gray-700 leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: highlightedContent }}
+            ref={(el) => {
+              // Add event listener for citation clicks in the response panel
+              if (el) {
+                document.addEventListener('citationClick', ((e: CustomEvent) => {
+                  handleCitationChange(e.detail);
+                }) as EventListener);
+                
+                return () => {
+                  document.removeEventListener('citationClick', ((e: CustomEvent) => {
+                    handleCitationChange(e.detail);
+                  }) as EventListener);
+                };
+              }
+            }}
+          />
+        )}
+      </div>
+    );
+  };
+
   const renderPdfViewer = () => {
-    if (!activeCitation) {
+    if (!currentActiveCitation) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-gray-500">
           <FileText size={48} className="text-gray-400 mb-4" />
@@ -156,12 +376,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </div>
       );
     }
-    const iframeSrc = getCitationFilePath(activeCitation);
+    const iframeSrc = getCitationFilePath(currentActiveCitation);
     return (
       <div className="h-full flex flex-col">
         <div className="bg-gray-100 p-3 border-b border-gray-200 flex justify-between items-center">
           <Text variant="mediumPlus" className="font-medium truncate max-w-md">
-            {activeCitation}
+            {currentActiveCitation}
           </Text>
           <a 
             href={iframeSrc} 
@@ -211,6 +431,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       </div>
     );
   };
+
+  // Determine if we have any supporting content to display
+  const hasContent = data_points !== null;
 
   return (
     <Panel
@@ -285,27 +508,42 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </PivotItem>
         <PivotItem headerText="Supporting Content" itemKey={AnalysisPanelTabs.SupportingContentTab}>
           <div className="h-[calc(100vh-160px)] overflow-auto p-4">
-            {data_points && (Array.isArray(data_points) || data_points?.text?.length > 0) ? (
-              <SupportingContent supportingContent={data_points} />
+            {/* Complete response with highlighted citations */}
+            {response?.content && renderResponsePanel()}
+            
+            {/* Supporting content */}
+            {hasContent ? (
+              <EnhancedSupportingContent 
+                supportingContent={data_points} 
+                highlightTerms={extractSearchTerms()}
+                onFileClick={(filename) => {
+                  // Pass the filename to our citation handler
+                  handleCitationChange(filename);
+                }}
+                useAutoHighlighting={true}
+              />
             ) : (
               <div className="flex flex-col items-center justify-center h-60 text-gray-500">
                 <FileText size={32} className="mb-4" />
                 <Text>No supporting content available</Text>
+                <Text className="mt-2 text-sm text-gray-400">
+                  No citations were found in the response.
+                </Text>
               </div>
             )}
           </div>
         </PivotItem>
         <PivotItem headerText="Citation" itemKey={AnalysisPanelTabs.CitationTab}>
           <div style={{ height: "calc(100vh - 160px)", overflow: "hidden" }}>
-            {activeCitation?.toLowerCase().endsWith(".pdf") ? (
+            {currentActiveCitation?.toLowerCase().endsWith(".pdf") ? (
               renderPdfViewer()
-            ) : activeCitation ? (
+            ) : currentActiveCitation ? (
               <div className="h-full flex flex-col">
                 <div className="bg-gray-100 p-3 border-b border-gray-200">
-                  <Text variant="mediumPlus" className="font-medium">{activeCitation}</Text>
+                  <Text variant="mediumPlus" className="font-medium">{currentActiveCitation}</Text>
                 </div>
                 <div className="flex-1 overflow-auto">
-                  <MarkdownViewer src={getCitationFilePath(activeCitation)} />
+                  <MarkdownViewer src={getCitationFilePath(currentActiveCitation)} />
                 </div>
               </div>
             ) : (

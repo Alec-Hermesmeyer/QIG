@@ -1,0 +1,135 @@
+// financial-analysis-config.ts
+// Financial Analysis configuration using shared types
+
+import { FinancialAnalysisConfig, TopicCategory } from './types';
+
+// Export the financial analysis configuration
+const financialAnalysisConfig: FinancialAnalysisConfig = {
+  functionId: "financial-analysis",
+  name: "Financial Provision Analysis",
+  description: "Analyze financial terms, calculate potential exposure, and identify risk allocation",
+  icon: "dollar-sign",
+  category: "contract-analysis",
+  promptTemplate: {
+    system: "You are an expert construction contract analyst specializing in financial provision analysis. Your task is to analyze and extract all financial terms, calculate potential financial exposure, and identify risk allocation mechanisms.",
+    instructions: [
+      "Identify all financial provisions in the contract",
+      "Extract payment terms, schedules, and conditions",
+      "Calculate total potential financial exposure",
+      "Analyze risk allocation mechanisms and contingency provisions"
+    ],
+    financialElements: [
+      "Contract sum/price",
+      "Unit prices",
+      "Allowances",
+      "Contingency funds",
+      "Schedule of values requirements",
+      "Payment terms and schedules",
+      "Retention amounts and release conditions",
+      "Change order pricing mechanisms",
+      "Liquidated damages amounts",
+      "Bonus provisions",
+      "Insurance requirements and costs",
+      "Performance security requirements",
+      "Limitation of liability caps"
+    ],
+    topicCategories: [
+      {
+        name: "Payment Terms and Process",
+        elements: ["Application requirements", "Schedules", "Conditions"]
+      },
+      {
+        name: "Liquidated Damages",
+        elements: ["Daily rates", "Caps", "Applicability"]
+      },
+      {
+        name: "Limitation of Liability",
+        elements: ["Financial caps", "Exclusions"]
+      },
+      {
+        name: "Contingency",
+        elements: ["Amount", "Usage rules", "Approval rights", "Balance disposition"]
+      },
+      {
+        name: "Allowance/Savings/Buyout",
+        elements: ["Sharing provisions", "Conversion to contingency"]
+      },
+      {
+        name: "Performance Security",
+        elements: ["Bonds", "Letters of credit", "Retention amounts"]
+      },
+      {
+        name: "Termination",
+        elements: ["Payment obligations upon various termination scenarios"]
+      },
+      {
+        name: "Change Relief",
+        elements: ["Pricing mechanisms for changes and extras"]
+      },
+      {
+        name: "Insurances",
+        elements: ["Required coverage types", "Limits", "Costs"]
+      },
+      {
+        name: "Indemnities from Contractor",
+        elements: ["Financial exposure from indemnification obligations"]
+      },
+      {
+        name: "Title and Risk of Loss",
+        elements: ["Financial implications of title transfer and risk allocation"]
+      }
+    ],
+    outputFormat: {
+      sections: [
+        {
+          name: "Contract Value Analysis",
+          elements: [
+            "Base contract sum",
+            "Allowances included",
+            "Contingency provisions",
+            "Potential bonus amounts",
+            "Maximum change order capacity"
+          ]
+        },
+        {
+          name: "Payment Analysis",
+          elements: [
+            "Payment cycle",
+            "Documentation requirements",
+            "Approval process",
+            "Retention percentage and release conditions",
+            "Final payment conditions"
+          ]
+        },
+        {
+          name: "Financial Risk Exposure",
+          elements: [
+            "Maximum liquidated damages exposure",
+            "Warranty cost exposure",
+            "Limitation of liability provisions",
+            "Indemnification financial impact",
+            "Insurance requirements and costs"
+          ]
+        },
+        {
+          name: "Financial Risk Controls",
+          elements: [
+            "Change order limits",
+            "Contingency usage rules",
+            "Payment safeguards",
+            "Cost control mechanisms"
+          ]
+        }
+      ],
+      conclusion: "Cash flow projections based on contract terms and recommendations for financial risk management strategies"
+    }
+  },
+  parameters: {
+    documentId: "",
+    calculateTotalExposure: true,
+    includeCashFlowProjection: true,
+    outputFormat: "structured"
+  }
+};
+
+export default financialAnalysisConfig;

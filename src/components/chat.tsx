@@ -11,6 +11,7 @@ import {
 import { Send, FileText, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getContractAnalysisPrompt } from '@/lib/contract-service';
+import { motion, AnimatePresence } from 'framer-motion'; // Import framer-motion
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -54,6 +55,29 @@ export interface ImprovedChatHandle {
   submitMessage: (message: string) => void;
   updateConfig?: (config: ChatConfig) => void;
 }
+
+// Animation variants
+const fadeIn = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.3 } }
+};
+
+const slideUp = {
+  hidden: { y: 20, opacity: 0 },
+  visible: { y: 0, opacity: 1, transition: { duration: 0.3 } }
+};
+
+const pulse = {
+  initial: { scale: 1 },
+  animate: { 
+    scale: [1, 1.05, 1],
+    transition: { 
+      duration: 1.5, 
+      repeat: Infinity,
+      repeatType: "loop" as "loop" | "reverse" | "mirror" 
+    }
+  }
+};
 
 export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function ImprovedChat(
   {
@@ -445,98 +469,189 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   };
 
   return (
-    <div className="w-full max-w-4xl mt-auto">
-      {isLoading && (
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <p className="text-gray-500 text-sm mb-2">
-            {waitingForFirstChunk ? 'Thinking...' : 'Generating response...'}
-          </p>
-          <div className="text-gray-700">
-            {accumulatedContent || (
-              <div className="flex items-center gap-1">
-                <div className="h-2 w-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="h-2 w-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="h-2 w-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-              </div>
-            )}
-            {accumulatedContent && <span className="inline-block animate-pulse">▋</span>}
-          </div>
-        </div>
-      )}
-
-      {showContractSelector && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] flex flex-col">
-            <h3 className="text-lg font-semibold mb-4">
-              Select Contract to Analyze
-            </h3>
-
-            <div className="relative mb-4">
-              <Search
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-                size={16}
-              />
-              <input
-                type="text"
-                placeholder="Search contracts..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              />
-            </div>
-
-            <div className="overflow-y-auto flex-1 mb-4">
-              {filteredContracts.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">
-                  No contracts found
-                </p>
+    <motion.div 
+      className="w-full max-w-4xl mt-auto"
+      initial="hidden"
+      animate="visible"
+      variants={fadeIn}
+    >
+      <AnimatePresence>
+        {isLoading && (
+          <motion.div 
+            className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            <p className="text-gray-500 text-sm mb-2">
+              {waitingForFirstChunk ? 'Thinking...' : 'Generating response...'}
+            </p>
+            <div className="text-gray-700">
+              {accumulatedContent ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  {accumulatedContent}
+                  <motion.span 
+                    className="inline-block"
+                    animate={{ opacity: [1, 0, 1] }}
+                    transition={{ repeat: Infinity, duration: 0.8 }}
+                  >▋</motion.span>
+                </motion.div>
               ) : (
-                <div className="space-y-2">
-                  {filteredContracts.map((contract, index) => (
-                    <button
-                      key={index}
-                      className="w-full text-left p-3 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"
-                      onClick={() => selectContract(contract)}
-                    >
-                      <FileText size={16} className="text-indigo-600" />
-                      <span className="truncate">{contract}</span>
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1">
+                  <motion.div 
+                    className="h-2 w-2 bg-indigo-500 rounded-full" 
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0 }}
+                  ></motion.div>
+                  <motion.div 
+                    className="h-2 w-2 bg-indigo-500 rounded-full" 
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0.15 }}
+                  ></motion.div>
+                  <motion.div 
+                    className="h-2 w-2 bg-indigo-500 rounded-full" 
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ repeat: Infinity, duration: 0.6, delay: 0.3 }}
+                  ></motion.div>
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => setShowContractSelector(false)}
-                className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedContract && (
-        <div className="mb-4 flex items-center gap-2 text-sm bg-indigo-50 text-indigo-700 p-2 rounded-md">
-          <FileText size={16} />
-          <span>
-            Ready to analyze: <strong>{selectedContract}</strong>
-          </span>
-          <button
-            onClick={() => setSelectedContract(null)}
-            className="ml-auto text-indigo-500 hover:text-indigo-700"
+      <AnimatePresence>
+        {showContractSelector && (
+          <motion.div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowContractSelector(false)}
           >
-            ×
-          </button>
-        </div>
-      )}
+            <motion.div 
+              className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] flex flex-col"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold mb-4">
+                Select Contract to Analyze
+              </h3>
 
-      <form onSubmit={handleSubmit} className="flex gap-2 items-center">
-        <input
+              <motion.div 
+                className="relative mb-4"
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.1 }}
+              >
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                  size={16}
+                />
+                <input
+                  type="text"
+                  placeholder="Search contracts..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </motion.div>
+
+              <motion.div 
+                className="overflow-y-auto flex-1 mb-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.2 }}
+              >
+                {filteredContracts.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">
+                    No contracts found
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredContracts.map((contract, index) => (
+                      <motion.button
+                        key={index}
+                        className="w-full text-left p-3 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"
+                        onClick={() => selectContract(contract)}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.1 + index * 0.05 }}
+                        whileHover={{ backgroundColor: "#f3f4f6", x: 5 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <FileText size={16} className="text-indigo-600" />
+                        <span className="truncate">{contract}</span>
+                      </motion.button>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+
+              <motion.div 
+                className="flex justify-end gap-2"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+              >
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowContractSelector(false)}
+                    className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </Button>
+                </motion.div>
+              </motion.div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedContract && (
+          <motion.div 
+            className="mb-4 flex items-center gap-2 text-sm bg-indigo-50 text-indigo-700 p-2 rounded-md"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+            variants={pulse}
+            whileHover={{ backgroundColor: "#e0e7ff" }}
+          >
+            <FileText size={16} />
+            <span>
+              Ready to analyze: <strong>{selectedContract}</strong>
+            </span>
+            <motion.button
+              onClick={() => setSelectedContract(null)}
+              className="ml-auto text-indigo-500 hover:text-indigo-700"
+              whileHover={{ scale: 1.2, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ duration: 0.2 }}
+            >
+              ×
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <motion.form 
+        onSubmit={handleSubmit} 
+        className="flex gap-2 items-center"
+        variants={slideUp}
+      >
+        <motion.input
           ref={inputRef}
           type="text"
           value={input}
@@ -546,43 +661,68 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               ? `Ask about ${selectedContract}...`
               : 'Type your message or select a contract to analyze...'
           }
-          className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white shadow-md"
           disabled={isLoading || isDisabled}
+          initial={{ opacity: 0, width: '90%' }}
+          animate={{ opacity: 1, width: '100%' }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          whileFocus={{ boxShadow: "0 0 0 3px rgba(99, 102, 241, 0.2)" }}
         />
 
         {availableContracts.length > 0 && (
-          <Button
-            type="button"
-            onClick={() => setShowContractSelector(true)}
-            disabled={isLoading || isDisabled}
-            className="h-12 px-4 rounded-md bg-gray-100 border border-gray-300 hover:bg-gray-200 text-gray-700"
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
           >
-            <FileText className="h-5 w-5 mr-2" />
-            Contracts
-          </Button>
+            <Button
+              type="button"
+              onClick={() => setShowContractSelector(true)}
+              disabled={isLoading || isDisabled}
+              className="h-12 px-4 rounded-md bg-gray-100 border border-gray-300 hover:bg-gray-200 text-gray-700"
+            >
+              <FileText className="h-5 w-5 mr-2" />
+              Contracts
+            </Button>
+          </motion.div>
         )}
 
-        <Button
-          type="submit"
-          className="h-12 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors text-white"
-          disabled={isLoading || !input.trim() || isDisabled}
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.3 }}
         >
-          <Send className="h-5 w-5 mr-2" />
-          Send
-        </Button>
-      </form>
+          <Button
+            type="submit"
+            className="h-12 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors text-white shadow-md"
+            disabled={isLoading || !input.trim() || isDisabled}
+          >
+            <Send className="h-5 w-5 mr-2" />
+            Send
+          </Button>
+        </motion.div>
+      </motion.form>
 
       {/* Optional: Configuration Indicator */}
       {process.env.NODE_ENV === 'development' && (
-        <div className="mt-2 text-xs text-gray-400">
+        <motion.div 
+          className="mt-2 text-xs text-gray-400"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+        >
           {/* Show current configuration settings for debugging */}
           <span>T: {config.temperature?.toFixed(1)} | </span>
           {config.seed && <span>Seed: {config.seed} | </span>}
           <span>Stream: {config.streamResponse ? 'On' : 'Off'} | </span>
           <span>Follow-up: {config.suggestFollowUpQuestions ? 'On' : 'Off'}</span>
           {config.promptTemplate && <span> | Custom Prompt: Yes</span>}
-        </div>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 });

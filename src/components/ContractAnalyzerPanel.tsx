@@ -54,7 +54,7 @@ import {
 } from '@fluentui/react-icons-mdl2';
 import { Prompt } from '@/lib/prompt';
 // Import the DataDrivenAnalysisButtons component from the second file
-import { DataDrivenAnalysisButtons, analysisTypeConfig } from './DataDrivenAnalysisButtons';
+import { DataDrivenAnalysisButtons, getAnalysisConfigByType } from './DataDrivenAnalysisButtons';
 
 // Initialize the default icon set
 initializeIcons();
@@ -130,7 +130,7 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
   const [showFixModal, setShowFixModal] = useState(false);
 
   // Add new state for selected analysis type
-  const [selectedAnalysisType, setSelectedAnalysisType] = useState<keyof typeof analysisTypeConfig>('comprehensive');
+  const [selectedAnalysisType, setSelectedAnalysisType] = useState<string>('comprehensive');
   const [analysisPrompt, setAnalysisPrompt] = useState<string>('');
   const [contractType, setContractType] = useState('construction');
   const [isRedlineModalOpen, setIsRedlineModalOpen] = useState(false);
@@ -180,6 +180,11 @@ export const ContractAnalyzerPanel: React.FC<Props> = ({ isOpen, onDismiss, onAn
 
   // Handle analysis type selection
   const handleAnalysisTypeSelect = (analysisType: string, prompt: string) => {
+    const analysisTypeConfig = {
+      comprehensive: { name: 'Comprehensive Analysis' },
+      risk: { name: 'Risk Analysis' },
+      summary: { name: 'Summary Analysis' },
+    };
     setSelectedAnalysisType(analysisType as keyof typeof analysisTypeConfig);
     
     // Only store the prompt text if specifically provided by the button
@@ -2115,7 +2120,7 @@ Please provide:
                       {/* Analyze button */}
                       <div className="flex justify-center items-center gap-4 mt-6">
                         <PrimaryButton
-                          text={`Analyze Contract (${analysisTypeConfig[selectedAnalysisType]?.name || 'Custom Analysis'})`}
+                          text={`Analyze Contract (${getAnalysisConfigByType(selectedAnalysisType)?.name || 'Custom Analysis'})`}
                           onClick={handleAnalyze}
                           disabled={!contractText || loading}
                           className="mb-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded disabled:bg-gray-200 disabled:text-gray-400"
@@ -2171,7 +2176,11 @@ Please provide:
                       <div className="flex justify-between items-center py-2 border-b border-gray-200 mb-3">
                         <div className="flex items-center gap-3">
                           <Text className="font-semibold text-lg text-gray-800">
-                            {selectedAnalysisType ? analysisTypeConfig[selectedAnalysisType]?.name || 'Analysis Results' : 'Contract Analysis Results'}
+                            {selectedAnalysisType ? {
+                                comprehensive: { name: 'Comprehensive Analysis' },
+                                risk: { name: 'Risk Analysis' },
+                                summary: { name: 'Summary Analysis' },
+                              }[selectedAnalysisType]?.name || 'Analysis Results' : 'Contract Analysis Results'}
                           </Text>
 
                           <div className="flex bg-gray-100 p-0.5 rounded border border-gray-300">

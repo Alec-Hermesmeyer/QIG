@@ -1,5 +1,15 @@
 // prompt.ts
-import { analysisTypeConfig } from '@/components/DataDrivenAnalysisButtons';
+import {getAnalysisConfigByType} from '@/components/DataDrivenAnalysisButtons';
+
+// Define the expected types for the config
+interface AnalysisConfigItem {
+  prompt?: string;
+  name?: string;
+}
+
+// Get analysis config but properly type it
+const rawConfig = getAnalysisConfigByType('defaultType');
+const analysisTypeConfig: Record<string, AnalysisConfigItem> = rawConfig && typeof rawConfig === 'object' ? rawConfig as unknown as Record<string, AnalysisConfigItem> : {};
 
 // The base comprehensive contract analysis prompt
 export const BaseContractPrompt = `# CONSTRUCTION CONTRACT RISK ANALYSIS
@@ -100,7 +110,7 @@ Focus on both explicit risks (problematic language) and implicit risks (omission
 - Balance legal analysis with practical business implications`;
 
 // Function to generate specialized prompts based on analysis type
-export const getSpecializedPrompt = (analysisType: keyof typeof analysisTypeConfig, contractType: string = 'construction') => {
+export const getSpecializedPrompt = (analysisType: string, contractType: string = 'construction') => {
   // Get the base prompt from the analysis type config
   const specializedBase = analysisTypeConfig[analysisType]?.prompt || '';
   
@@ -278,7 +288,7 @@ Dispute Resolution Recommendations:
 
 // Main prompt function for backward compatibility
 export const Prompt = (analysisType: string = 'comprehensive', contractType: string = 'construction') => {
-  return getSpecializedPrompt(analysisType as keyof typeof analysisTypeConfig, contractType);
+  return getSpecializedPrompt(analysisType, contractType);
 };
 
 // Backward compatibility for your existing code
