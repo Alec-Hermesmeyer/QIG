@@ -1,3 +1,5 @@
+// src/app/api/analyze/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import * as mammoth from 'mammoth';
 import { promises as fs } from 'fs';
@@ -14,14 +16,18 @@ export const config = {
   },
 };
 
+// Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Simple function to estimate tokens (approximately 4 chars per token)
 function estimateTokenCount(text: string): number {
+  // GPT models typically use ~4 chars per token on average
   return Math.ceil(text.length / 4);
 }
 
+// Helper function to create a temporary file
 async function createTempFile(buffer: Buffer, extension: string): Promise<string> {
   const tempDir = os.tmpdir();
   const tempFilePath = path.join(tempDir, `temp-${Date.now()}${extension}`);
@@ -29,17 +35,26 @@ async function createTempFile(buffer: Buffer, extension: string): Promise<string
   return tempFilePath;
 }
 
+// Helper function to process a PDF
 async function readPDFWithStream(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const pdfParser = new PDFParser(null, 1 as any);
-    pdfParser.on("pdfParser_dataError", (errData: Record<"parserError", Error>) => reject(errData.parserError));
+    const pdfParser = new PDFParser(null, 1 as any); // Type cast to any to avoid TypeScript error
+    
+    pdfParser.on("pdfParser_dataError", (errData: Record<"parserError", Error>) => {
+      reject(errData.parserError);
+    });
+    
     pdfParser.on("pdfParser_dataReady", () => {
       try {
-        resolve(pdfParser.getRawTextContent());
+        // Get text content
+        const text = pdfParser.getRawTextContent();
+        resolve(text);
       } catch (error) {
         reject(error);
       }
     });
+    
+    // Load the PDF
     pdfParser.loadPDF(filePath);
   });
 }
@@ -49,35 +64,109 @@ async function readDocx(fileBuffer: Buffer): Promise<string> {
   return result.value;
 }
 
+// Function to chunk text into sections for embedding
+// Fixed function to chunk text into sections for embedding
 function chunkTextForEmbeddings(text: string, maxChunkSize = 1000, overlap = 200): string[] {
+  // Input validation
+  if (!text || typeof text !== 'string') {
+    console.warn('Invalid text provided for chunking');
+    return [];
+  }
+  
+  // Ensure parameters are reasonable
+  maxChunkSize = Math.max(100, Math.min(maxChunkSize, 8000)); // Limit to reasonable range
+  overlap = Math.max(0, Math.min(overlap, maxChunkSize / 2)); // Ensure overlap is reasonable
+  
   const chunks: string[] = [];
   let i = 0;
-  while (i < text.length) {
-    let chunkEnd = Math.min(i + maxChunkSize, text.length);
-    if (chunkEnd < text.length) {
-      const nextBreak = text.substring(i, chunkEnd + 100).search(/[.!?]\s/);
-      if (nextBreak !== -1 && nextBreak < maxChunkSize + 100) {
-        chunkEnd = i + nextBreak + 2;
+  
+  try {
+    // Safety check for infinite loops
+    const maxIterations = Math.ceil(text.length / (maxChunkSize - overlap)) * 2;
+    let iterations = 0;
+    
+    while (i < text.length && iterations < maxIterations) {
+      iterations++;
+      
+      // Calculate the end position for this chunk
+      const remainingLength = text.length - i;
+      let chunkEnd = i + Math.min(maxChunkSize, remainingLength);
+      
+      // Don't go beyond text length
+      if (chunkEnd > text.length) {
+        chunkEnd = text.length;
+      }
+      
+      // If we're not at the end and have room to look for a clean break
+      if (chunkEnd < text.length && chunkEnd - i > 10) {
+        // Look for sentence boundaries
+        const searchText = text.substring(i, Math.min(chunkEnd + 100, text.length));
+        const match = searchText.match(/[.!?]\s/);
+        
+        if (match && match.index !== undefined && match.index < maxChunkSize) {
+          chunkEnd = i + match.index + 2; // +2 to include the punctuation and space
+        }
+      }
+      
+      // Safety check for valid substring indices
+      if (i >= chunkEnd || i >= text.length || chunkEnd > text.length) {
+        break;
+      }
+      
+      // Add the chunk
+      chunks.push(text.substring(i, chunkEnd));
+      
+      // Move to next position with overlap
+      i = chunkEnd - overlap;
+      
+      // Ensure forward progress
+      if (i <= 0 || i >= text.length) {
+        break;
       }
     }
-    chunks.push(text.substring(i, chunkEnd));
-    i = chunkEnd - overlap;
+    
+    console.log(`Created ${chunks.length} chunks from text of length ${text.length}`);
+    return chunks;
+  } catch (error) {
+    console.error('Error in chunkTextForEmbeddings:', error);
+    
+    // Fallback approach: create fewer, larger chunks
+    try {
+      const simpleChunks = [];
+      const simpleChunkSize = Math.min(text.length, 8000);
+      
+      for (let j = 0; j < text.length; j += simpleChunkSize) {
+        const end = Math.min(j + simpleChunkSize, text.length);
+        simpleChunks.push(text.substring(j, end));
+      }
+      
+      console.log(`Fallback created ${simpleChunks.length} simple chunks`);
+      return simpleChunks;
+    } catch (fallbackError) {
+      console.error('Fallback chunking also failed:', fallbackError);
+      return [text.substring(0, Math.min(8000, text.length))]; // Return just the beginning if all else fails
+    }
   }
-  return chunks;
 }
-
-async function generateChunkEmbeddings(chunks: string[]): Promise<{ text: string; embedding: number[] }[]> {
+// Generate embeddings for document chunks
+async function generateChunkEmbeddings(chunks: string[]): Promise<{text: string, embedding: number[]}[]> {
   try {
-    const batchSize = 20;
-    const embeddingResults: { text: string; embedding: number[] }[] = [];
+    // Process in batches if there are many chunks
+    const batchSize = 20; // Adjust based on rate limits and performance
+    const embeddingResults: {text: string, embedding: number[]}[] = [];
+    
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batchChunks = chunks.slice(i, i + batchSize);
+      console.log(`Generating embeddings for chunks ${i+1} to ${Math.min(i+batchSize, chunks.length)}`);
+      
       try {
         const response = await openai.embeddings.create({
-          model: "text-embedding-3-small",
+          model: "text-embedding-3-small", // or text-embedding-ada-002 for older models
           input: batchChunks,
           encoding_format: "float"
         });
+        
+        // Map the embeddings to their text chunks
         for (let j = 0; j < batchChunks.length; j++) {
           embeddingResults.push({
             text: batchChunks[j],
@@ -85,45 +174,64 @@ async function generateChunkEmbeddings(chunks: string[]): Promise<{ text: string
           });
         }
       } catch (error) {
-        console.error(`Embedding error in batch ${i}-${i + batchSize}:`, error);
+        console.error(`Error generating embeddings for batch ${i+1}-${Math.min(i+batchSize, chunks.length)}:`, error);
+        // Add chunks without embeddings to not lose the text
         batchChunks.forEach(chunk => {
-          embeddingResults.push({ text: chunk, embedding: [] });
+          embeddingResults.push({
+            text: chunk,
+            embedding: [] // Empty embedding
+          });
         });
       }
+      
+      // Add a small delay between batches to avoid rate limits
       if (i + batchSize < chunks.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
+    
     return embeddingResults;
   } catch (error) {
-    console.error('Embedding generation error:', error);
-    return chunks.map(chunk => ({ text: chunk, embedding: [] }));
+    console.error('Error generating embeddings:', error);
+    // Return chunks without embeddings as fallback
+    return chunks.map(chunk => ({
+      text: chunk,
+      embedding: []
+    }));
   }
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
+export async function POST(req: NextRequest) {
   try {
     if (req.headers.get('content-type')?.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
-
+      
       if (!file) {
         return NextResponse.json({ error: 'No file provided' }, { status: 400 });
       }
-
+      
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       let text = '';
-      const fileType = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' :
-                       file.name.toLowerCase().endsWith('.docx') ? 'docx' :
+      
+      // Determine file type
+      const fileType = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 
+                       file.name.toLowerCase().endsWith('.docx') ? 'docx' : 
                        file.name.toLowerCase().endsWith('.doc') ? 'doc' : 'unknown';
-
+      
       if (fileType === 'pdf') {
+        // Create a temporary file for the PDF
         const tempFilePath = await createTempFile(buffer, '.pdf');
+        
         try {
+          // Process the PDF using a stream-based approach
           text = await readPDFWithStream(tempFilePath);
         } finally {
-          try { await fs.unlink(tempFilePath); } catch (cleanupError) {
+          // Clean up temporary file
+          try {
+            await fs.unlink(tempFilePath);
+          } catch (cleanupError) {
             console.error('Error removing temp file:', cleanupError);
           }
         }
@@ -132,53 +240,79 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       } else {
         return NextResponse.json({ error: 'Unsupported file type' }, { status: 400 });
       }
-
+      
+      // Analyze the text
       const analysisResult = await analyzeText(text);
-
-      if (analysisResult.success && analysisResult.analysis) {
+      
+      // Process and store document embeddings
+      if (analysisResult.success) {
         const { analysis } = analysisResult;
-        const chunks = chunkTextForEmbeddings(text);
-        const embeddedChunks = await generateChunkEmbeddings(chunks);
-        const metadata = await documentCacheService.storeDocumentWithEmbeddings(
-          file.name,
-          fileType,
-          text,
-          analysis.summary,
-          analysis.wordCount,
-          analysis.tokenCount,
-          embeddedChunks
-        );
-        if (metadata) analysis.documentId = metadata.id;
+        if (analysis) {
+          // Create document chunks for embeddings
+          const chunks = chunkTextForEmbeddings(text);
+          console.log(`Created ${chunks.length} chunks for embedding generation`);
+          
+          // Generate embeddings for chunks
+          const embeddedChunks = await generateChunkEmbeddings(chunks);
+          console.log(`Generated embeddings for ${embeddedChunks.length} chunks`);
+          
+          // Store document with chunks and embeddings
+          const metadata = await documentCacheService.storeDocumentWithEmbeddings(
+            file.name,
+            fileType,
+            text,
+            analysis.summary,
+            analysis.wordCount,
+            analysis.tokenCount,
+            embeddedChunks
+          );
+          
+          if (metadata) {
+            analysis.documentId = metadata.id;
+          }
+        }
       }
-
+      
       return NextResponse.json(analysisResult);
     } else {
       const body = await req.json();
       const input = body.input as string;
+      
+      // Process text input
       const analysisResult = await analyzeText(input);
-
-      if (analysisResult.success && analysisResult.analysis) {
+      
+      if (analysisResult.success) {
         const { analysis } = analysisResult;
-        const chunks = chunkTextForEmbeddings(input);
-        const embeddedChunks = await generateChunkEmbeddings(chunks);
-        const metadata = await documentCacheService.storeDocumentWithEmbeddings(
-          'text-input.txt',
-          'txt',
-          input,
-          analysis.summary,
-          analysis.wordCount,
-          analysis.tokenCount,
-          embeddedChunks
-        );
-        if (metadata) analysis.documentId = metadata.id;
+        if (analysis) {
+          // Create document chunks for embeddings
+          const chunks = chunkTextForEmbeddings(input);
+          
+          // Generate embeddings for chunks (if not too large)
+          const embeddedChunks = await generateChunkEmbeddings(chunks);
+          
+          // Store document with chunks and embeddings
+          const metadata = await documentCacheService.storeDocumentWithEmbeddings(
+            'text-input.txt',
+            'txt',
+            input,
+            analysis.summary,
+            analysis.wordCount,
+            analysis.tokenCount,
+            embeddedChunks
+          );
+          
+          if (metadata) {
+            analysis.documentId = metadata.id;
+          }
+        }
       }
-
+      
       return NextResponse.json(analysisResult);
     }
   } catch (error) {
-    console.error('POST handler error:', error);
-    return NextResponse.json({
-      error: 'Failed to process request',
+    console.error('Request processing error:', error);
+    return NextResponse.json({ 
+      error: 'Failed to process request', 
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
@@ -189,10 +323,11 @@ async function analyzeText(input: string) {
     if (!input || typeof input !== 'string') {
       throw new Error('Input must be a valid string.');
     }
-
+    
+    // Calculate token count
     const tokenCount = estimateTokenCount(input);
     const wordCount = input.split(/\s+/).filter(Boolean).length;
-
+    
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -202,8 +337,8 @@ async function analyzeText(input: string) {
       body: JSON.stringify({
         model: 'gpt-4.1-mini',
         messages: [
-          {
-            role: 'system',
+          { 
+            role: 'system', 
             content: `You are a professional document analyzer. Analyze the document provided and create a comprehensive summary with the following guidelines:
 
 1. Use markdown formatting to structure your response
@@ -211,35 +346,37 @@ async function analyzeText(input: string) {
 3. Use bullet points or numbered lists where appropriate
 4. Bold (**text**) important terms, names, and key figures
 5. Structure your analysis with the following sections:
-   - Executive Summary
-   - Key Parties and Entities
-   - Main Components
-   - Critical Points
-   - Implications
+   - Executive Summary (brief overview)
+   - Key Parties and Entities (identify who's involved)
+   - Main Components (outline major elements)
+   - Critical Points (highlight important aspects)
+   - Implications (what this means in practical terms)
 
-Ensure your summary is clear and structured.`
+Ensure your summary is well-formatted, clear, and captures the essential information from the document.`
           },
-          {
-            role: 'user',
+          { 
+            role: 'user', 
             content: input.length > 25000 ? input.slice(0, 25000) + '...(document truncated for length)' : input
           },
         ],
-        temperature: 0.3,
-        max_tokens: 1000,
+        temperature: 0.3, // Lower temperature for more consistent, focused summaries
+        max_tokens: 1000, // Allow for a comprehensive summary
       }),
     });
-
+    
     if (!response.ok) {
       const errText = await response.text();
       throw new Error(`OpenAI API error (${response.status}): ${errText}`);
     }
-
+    
     const data = await response.json();
     const output = data.choices?.[0]?.message?.content || 'No summary returned.';
+    
+    // Calculate usage metrics if available in the response
     const inputTokensUsed = data.usage?.prompt_tokens || tokenCount;
     const outputTokensUsed = data.usage?.completion_tokens || estimateTokenCount(output);
     const totalTokensUsed = data.usage?.total_tokens || (inputTokensUsed + outputTokensUsed);
-
+    
     return {
       success: true,
       analysis: {
@@ -251,7 +388,7 @@ Ensure your summary is clear and structured.`
           outputTokens: outputTokensUsed,
           totalTokens: totalTokensUsed
         },
-        documentId: undefined as string | undefined,
+        documentId: undefined as string | undefined, // Initialize documentId as undefined with explicit type
       },
     };
   } catch (err: unknown) {
