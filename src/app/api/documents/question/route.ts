@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import documentCacheService from '@/services/documentCache';
 import { OpenAI } from 'openai';
+import PDFParser from 'pdf2json';
+import * as mammoth from 'mammoth';
+import { promises as fs } from 'fs';
+import path from 'path';
+import os from 'os';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -16,6 +21,175 @@ interface MemoryStore {
 
 // In-memory document store for testing without a database
 const memoryDocumentStore: MemoryStore = {};
+
+// Helper function to create a temporary file
+async function createTempFile(buffer: Buffer, extension: string): Promise<string> {
+  const tempDir = os.tmpdir();
+  const tempFilePath = path.join(tempDir, `temp-${Date.now()}${extension}`);
+  await fs.writeFile(tempFilePath, buffer);
+  return tempFilePath;
+}
+
+// Helper function to process a PDF
+async function readPDFWithStream(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const pdfParser = new PDFParser(null, 1 as any);
+    pdfParser.on("pdfParser_dataError", (errData: Record<"parserError", Error>) => reject(errData.parserError));
+    pdfParser.on("pdfParser_dataReady", () => {
+      try {
+        resolve(pdfParser.getRawTextContent());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    pdfParser.loadPDF(filePath);
+  });
+}
+
+// Helper function to detect if content is a binary file format and what type
+function detectContentType(content: string): { isBinary: boolean; fileType: string | null } {
+  if (!content || typeof content !== 'string') {
+    return { isBinary: false, fileType: null };
+  }
+  
+  // Check for PDF signature
+  if (content.startsWith('%PDF') || content.includes('%PDF-')) {
+    console.log("Detected PDF content");
+    return { isBinary: true, fileType: 'pdf' };
+  }
+  
+  // Check for Word document signature
+  if (content.startsWith('PK') || content.includes('[Content_Types]') || content.includes('word/document.xml')) {
+    console.log("Detected DOCX content");
+    return { isBinary: true, fileType: 'docx' };
+  }
+  
+  // Default to plain text
+  return { isBinary: false, fileType: null };
+}
+
+// Extract text from binary content
+async function extractTextFromBinaryContent(content: string, fileType: string): Promise<string> {
+  if (!content) return '';
+  
+  try {
+    // Create buffer from binary content
+    const buffer = Buffer.from(content, 'binary');
+    console.log(`Processing ${fileType} content, buffer size: ${buffer.length}`);
+    
+    if (fileType === 'pdf') {
+      // Process PDF
+      const tempFilePath = await createTempFile(buffer, '.pdf');
+      
+      try {
+        // Extract text from PDF
+        const extractedText = await readPDFWithStream(tempFilePath);
+        console.log(`PDF text extraction completed, text length: ${extractedText.length}`);
+        return extractedText;
+      } catch (pdfError) {
+        console.error('Error extracting PDF text:', pdfError);
+        return "Error extracting text from PDF document.";
+      } finally {
+        try {
+          await fs.unlink(tempFilePath);
+        } catch (err) {
+          console.error('Error removing temp PDF file:', err);
+        }
+      }
+    } else if (fileType === 'docx') {
+      // Process DOCX
+      try {
+        const result = await mammoth.extractRawText({ buffer });
+        console.log(`DOCX text extraction completed, text length: ${result.value.length}`);
+        return result.value;
+      } catch (err) {
+        console.error('Error extracting text from DOCX:', err);
+        return "Failed to extract text from this document format.";
+      }
+    } else {
+      return "Unsupported binary format";
+    }
+  } catch (error) {
+    console.error('Error in extractTextFromBinaryContent:', error);
+    return "Error processing binary content";
+  }
+}
+
+// NEW: Function to identify if a question can be answered from structured data
+function canUseStructuredData(question: string): boolean {
+  const structuredDataPatterns = [
+    // General document information
+    /what (type|kind) of (document|contract)/i,
+    /who (are|is) the part(y|ies)/i,
+    /who (signed|executed) the (document|contract|agreement)/i,
+    
+    // Financial terms
+    /what('s| is| are) the (financial terms|payment terms|total amount|contract sum)/i,
+    /how much (money|payment|is the contract worth)/i,
+    /(what|when|how) (is|are) (payment|payments) (made|scheduled)/i,
+    
+    // Dates and timelines
+    /when (was|is) the (effective date|termination date|completion date)/i,
+    /what('s| is| are) the (deadline|timeline|schedule)/i,
+    
+    // Risks
+    /what (are|is) the (risk|risks)/i,
+    /what financial risks/i,
+    /what legal (risk|risks)/i,
+    /what performance (risk|risks)/i,
+    /what termination (risk|risks)/i,
+    /what compliance (risk|risks)/i,
+    
+    // Obligations
+    /what (are|is) the (key|main) obligations/i,
+    /what (must|should|is required to) the (contractor|owner|party)/i,
+    
+    // Termination
+    /how can (this|the) (contract|agreement) be terminated/i,
+    /what are the termination (conditions|clauses|terms)/i,
+    
+    // Critical clauses
+    /what (are|is) the (critical|important|key) clauses/i,
+    /which clauses (are|pose) (a risk|risks|problematic)/i
+  ];
+  
+  return structuredDataPatterns.some(pattern => pattern.test(question));
+}
+
+// NEW: Function to query structured data for answers
+async function queryStructuredData(question: string, structuredData: any): Promise<string> {
+  try {
+    const prompt = `
+You are an AI assistant that answers questions about documents based on structured data.
+You have access to the following structured data about a document:
+
+${JSON.stringify(structuredData, null, 2)}
+
+Question: ${question}
+
+Provide a concise, factual answer based strictly on the structured data above. 
+Do not make up information. If the structured data doesn't contain the information needed to answer the question, 
+say "I don't have that specific information in the structured data."
+
+Answer:
+`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4", // You can change this to a different model
+      messages: [
+        { role: "system", content: "You are a helpful AI document assistant." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.2, // Very low temperature for factual responses
+      max_tokens: 500
+    });
+    
+    return response.choices[0].message.content || "I couldn't generate an answer based on the structured data.";
+  } catch (error) {
+    console.error('Error querying structured data:', error);
+    throw error;
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -40,6 +214,7 @@ export async function POST(request: NextRequest) {
     let filename: string;
     let document: any = null;
     let useEmbeddingSearch = false;
+    let structuredData = null;  // NEW: Variable to hold structured data
     
     if (documentContent) {
       // If document content is passed directly in the request
@@ -66,8 +241,19 @@ export async function POST(request: NextRequest) {
         );
       }
       
+      // NEW: Try to get structured data
+      if (document.analysis && document.analysis.structuredData) {
+        structuredData = document.analysis.structuredData;
+        console.log('Found structured data for document');
+      }
+      
+      // First check for extracted text if it exists
+      if (document.metadata.hasExtractedText && document.content.extractedText) {
+        console.log(`Using extracted text for document ${documentId}`);
+        content = document.content.extractedText;
+      }
       // Check if chunked and if we need to get full content
-      if (document.metadata.chunked) {
+      else if (document.metadata.chunked) {
         if (document.metadata.hasEmbeddings) {
           // If document has embeddings, we'll use them instead of loading full content
           useEmbeddingSearch = true;
@@ -82,6 +268,24 @@ export async function POST(request: NextRequest) {
       }
       
       filename = document.metadata.filename;
+      
+      // Check if content is binary and needs extraction
+      const { isBinary, fileType } = detectContentType(content);
+      if (isBinary) {
+        console.log(`Document ${documentId} contains binary ${fileType} content, extracting text`);
+        const extractedText = await extractTextFromBinaryContent(content, fileType || '');
+        
+        // Save the extracted text for future use
+        try {
+          await documentCacheService.updateExtractedContent(documentId, extractedText);
+          console.log(`Saved extracted text for future use, length: ${extractedText.length}`);
+        } catch (updateError) {
+          console.error("Error saving extracted text:", updateError);
+        }
+        
+        // Use the extracted text
+        content = extractedText;
+      }
     }
     else {
       // No document available
@@ -91,6 +295,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // NEW: Check if we can use structured data for this question
+    if (structuredData && canUseStructuredData(question)) {
+      try {
+        console.log('Using structured data to answer the question');
+        const answer = await queryStructuredData(question, structuredData);
+        
+        return NextResponse.json({
+          answer,
+          sources: [{
+            text: "This answer was generated from structured analysis of the document.",
+            score: 1.0
+          }]
+        });
+      } catch (structuredDataError) {
+        console.error('Error using structured data, falling back to text search:', structuredDataError);
+        // Fall back to text search if structured data query fails
+      }
+    }
+
+    // If structured data couldn't be used, proceed with text search
+    console.log('Using text search to answer the question');
+    
     // Find relevant content for the question
     let relevantChunks;
     

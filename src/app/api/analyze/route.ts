@@ -65,7 +65,6 @@ async function readDocx(fileBuffer: Buffer): Promise<string> {
 }
 
 // Function to chunk text into sections for embedding
-// Fixed function to chunk text into sections for embedding
 function chunkTextForEmbeddings(text: string, maxChunkSize = 1000, overlap = 200): string[] {
   // Input validation
   if (!text || typeof text !== 'string') {
@@ -148,6 +147,7 @@ function chunkTextForEmbeddings(text: string, maxChunkSize = 1000, overlap = 200
     }
   }
 }
+
 // Generate embeddings for document chunks
 async function generateChunkEmbeddings(chunks: string[]): Promise<{text: string, embedding: number[]}[]> {
   try {
@@ -201,8 +201,107 @@ async function generateChunkEmbeddings(chunks: string[]): Promise<{text: string,
   }
 }
 
+// Backup document storage in case Supabase fails
+async function saveDocumentToFile(documentId: string, content: any) {
+  try {
+    // In Next.js API routes in production, we can't write to the filesystem directly
+    // so we'll use this as a debug function in development only
+    if (process.env.NODE_ENV === 'development') {
+      const fsModule = require('fs').promises;
+      const pathModule = require('path');
+      const dir = pathModule.join(process.cwd(), 'data');
+      
+      // Create directory if it doesn't exist
+      await fsModule.mkdir(dir, { recursive: true });
+      
+      // Save document to file
+      const filePath = pathModule.join(dir, `${documentId}.json`);
+      await fsModule.writeFile(filePath, JSON.stringify(content, null, 2));
+      
+      console.log(`Document saved to file: ${filePath}`);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error saving document to file:', error);
+    return false;
+  }
+}
+
+// Handler for GET requests (diagnostic endpoint)
+export async function GET(req: NextRequest) {
+  try {
+    // Check Supabase environment variables
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ 
+        error: 'Supabase configuration missing',
+        envVars: {
+          url: supabaseUrl ? 'configured' : 'missing',
+          key: supabaseKey ? 'configured' : 'missing'
+        }
+      }, { status: 500 });
+    }
+    
+    // Initialize service
+    const initialized = await documentCacheService.initialize();
+    
+    if (!initialized) {
+      return NextResponse.json({ 
+        error: 'Document cache service failed to initialize',
+        status: 'disconnected'
+      }, { status: 500 });
+    }
+    
+    // Get all documents to test connectivity
+    const documents = await documentCacheService.getAllDocuments();
+    
+    return NextResponse.json({
+      initialized,
+      connectionStatus: 'connected',
+      documentCount: documents.length,
+      documents: documents.map(doc => ({
+        id: doc.id,
+        filename: doc.filename,
+        uploadDate: doc.uploadDate,
+        fileType: doc.fileType,
+        hasEmbeddings: doc.hasEmbeddings
+      }))
+    });
+  } catch (error) {
+    console.error('Database connection test failed:', error);
+    return NextResponse.json({ 
+      initialized: false,
+      connectionStatus: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
+    // Verify Supabase configuration
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      console.error("Supabase configuration is missing");
+      return NextResponse.json({ 
+        error: 'Database configuration is missing', 
+        status: 'configuration_error' 
+      }, { status: 500 });
+    }
+
+    // Explicitly initialize the document cache service
+    console.log("Initializing document cache service...");
+    const initialized = await documentCacheService.initialize();
+    if (!initialized) {
+      console.error("Failed to initialize document cache service");
+      return NextResponse.json({ 
+        error: 'Database initialization failed', 
+        status: 'initialization_error' 
+      }, { status: 500 });
+    }
+    console.log("Document cache service initialized successfully");
+
     if (req.headers.get('content-type')?.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
@@ -242,7 +341,7 @@ export async function POST(req: NextRequest) {
       }
       
       // Analyze the text
-      const analysisResult = await analyzeText(text);
+      const analysisResult = await analyzeText(text, file);
       
       // Process and store document embeddings
       if (analysisResult.success) {
@@ -257,18 +356,37 @@ export async function POST(req: NextRequest) {
           console.log(`Generated embeddings for ${embeddedChunks.length} chunks`);
           
           // Store document with chunks and embeddings
-          const metadata = await documentCacheService.storeDocumentWithEmbeddings(
-            file.name,
-            fileType,
-            text,
-            analysis.summary,
-            analysis.wordCount,
-            analysis.tokenCount,
-            embeddedChunks
-          );
-          
-          if (metadata) {
-            analysis.documentId = metadata.id;
+          try {
+            console.log("Storing document in Supabase...");
+            const metadata = await documentCacheService.storeDocumentWithEmbeddings(
+              file.name,
+              fileType,
+              text,
+              analysis.summary,
+              analysis.wordCount,
+              analysis.tokenCount,
+              embeddedChunks
+            );
+            
+            if (metadata) {
+              analysis.documentId = metadata.id;
+              console.log(`Successfully stored document with ID: ${metadata.id}`);
+              
+              // Create a backup copy for debugging
+              await saveDocumentToFile(metadata.id, {
+                metadata,
+                content: {
+                  summary: analysis.summary,
+                  contentPreview: text.substring(0, 500) + '...'
+                },
+                analysis: analysis
+              });
+            } else {
+              console.error("Document storage returned null metadata");
+            }
+          } catch (storageError) {
+            console.error("Error storing document in Supabase:", storageError);
+            // Continue processing to return analysis even if storage fails
           }
         }
       }
@@ -279,30 +397,41 @@ export async function POST(req: NextRequest) {
       const input = body.input as string;
       
       // Process text input
-      const analysisResult = await analyzeText(input);
+      const analysisResult = await analyzeText(input, new File([""], "placeholder.txt"));
       
       if (analysisResult.success) {
         const { analysis } = analysisResult;
         if (analysis) {
           // Create document chunks for embeddings
           const chunks = chunkTextForEmbeddings(input);
+          console.log(`Created ${chunks.length} chunks for embedding generation`);
           
           // Generate embeddings for chunks (if not too large)
           const embeddedChunks = await generateChunkEmbeddings(chunks);
+          console.log(`Generated embeddings for ${embeddedChunks.length} chunks`);
           
           // Store document with chunks and embeddings
-          const metadata = await documentCacheService.storeDocumentWithEmbeddings(
-            'text-input.txt',
-            'txt',
-            input,
-            analysis.summary,
-            analysis.wordCount,
-            analysis.tokenCount,
-            embeddedChunks
-          );
-          
-          if (metadata) {
-            analysis.documentId = metadata.id;
+          try {
+            console.log("Storing text input in Supabase...");
+            const metadata = await documentCacheService.storeDocumentWithEmbeddings(
+              'text-input.txt',
+              'txt',
+              input,
+              analysis.summary,
+              analysis.wordCount,
+              analysis.tokenCount,
+              embeddedChunks
+            );
+            
+            if (metadata) {
+              analysis.documentId = metadata.id;
+              console.log(`Successfully stored text input with ID: ${metadata.id}`);
+            } else {
+              console.error("Document storage returned null metadata");
+            }
+          } catch (storageError) {
+            console.error("Error storing text input in Supabase:", storageError);
+            // Continue processing to return analysis even if storage fails
           }
         }
       }
@@ -318,16 +447,12 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function analyzeText(input: string) {
+async function analyzeDocument(content: string, filename: string) {
   try {
-    if (!input || typeof input !== 'string') {
-      throw new Error('Input must be a valid string.');
-    }
-    
-    // Calculate token count
-    const tokenCount = estimateTokenCount(input);
-    const wordCount = input.split(/\s+/).filter(Boolean).length;
-    
+    // Calculate basic metrics
+    const wordCount = content.split(/\s+/).filter(Boolean).length;
+    const tokenCount = Math.ceil(content.length / 4); // Simple token estimate
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -338,63 +463,89 @@ async function analyzeText(input: string) {
         model: 'gpt-4.1-mini',
         messages: [
           {
-            role: 'system', 
-            content: `You are an expert legal document analyzer specializing in contract risk assessment. Analyze the contract provided and create a detailed risk assessment with the following structure:
-          
-          1. Use markdown formatting to organize your response clearly
-          2. Include headings (## and ###) to structure different risk categories
-          3. Use bullet points for specific risks and their potential impacts
-          4. Bold (**text**) critical risk factors, liability clauses, and key obligations
-          
-          Structure your analysis with these specific sections:
-             - ## Executive Summary
-               - Brief overview of the contract and overall risk assessment (low/medium/high)
-             
-             - ## Risk Profile Analysis
-               - ### Financial Risks
-                 - Payment terms, penalties, cost escalation clauses
-                 - Currency and inflation risks
-                 - Budget overrun provisions
-               
-               - ### Legal Liability Risks
-                 - Indemnification clauses
-                 - Limitation of liability provisions
-                 - Warranty and guarantee obligations
-                 - Intellectual property protection/exposure
-               
-               - ### Performance Risks
-                 - Deliverable specifications and quality standards
-                 - Timeline commitments and delay consequences
-                 - Force majeure provisions
-                 - Change request mechanisms
-               
-               - ### Termination Risks
-                 - Termination rights and notice periods
-                 - Post-termination obligations
-                 - Transition and wind-down provisions
-               
-               - ### Compliance Risks
-                 - Regulatory requirements
-                 - Data privacy and security obligations
-                 - Industry-specific compliance issues
-          
-             - ## Critical Clauses Assessment
-               - Identify the 3-5 most concerning clauses that present the highest risk
-               - Explain specifically why these clauses are problematic
-             
-             - ## Risk Mitigation Recommendations
-               - Specific suggestions for addressing each major risk identified
-               - Prioritization of which risks need immediate attention
-          
-          Ensure your analysis is comprehensive but focused on material risks. For each identified risk, explain both the potential consequences and the likelihood of occurrence. Flag any unusual terms, ambiguous language, or missing provisions that should typically be present in this type of contract.`
+            role: 'system',
+            content: `You are an expert document analyzer that extracts key information from documents and returns it as clean, structured JSON. You will be given document content and must extract the relevant information.
+
+For contract documents, extract:
+1. Parties involved (names, roles)
+2. Contract type and purpose
+3. Key dates (effective date, termination date, etc.)
+4. Financial terms (payment amounts, schedule, penalties)
+5. Performance obligations
+6. Termination conditions
+7. Governing law
+8. Risk assessment (categorized as financial, legal, performance, etc.)
+
+Return a JSON object with these properties:
+{
+  "documentType": "string", // Contract, Agreement, Amendment, etc.
+  "title": "string",
+  "parties": [{
+    "name": "string",
+    "role": "string" // e.g., Owner, Contractor, Vendor, etc.
+  }],
+  "dates": {
+    "effective": "ISO date string or null",
+    "termination": "ISO date string or null",
+    "other": [{
+      "name": "string",
+      "date": "ISO date string"
+    }]
+  },
+  "financialTerms": {
+    "totalAmount": "number or null",
+    "currency": "string",
+    "paymentSchedule": "string",
+    "penalties": "string or null"
+  },
+  "keyObligations": ["string"],
+  "terminationConditions": ["string"],
+  "governingLaw": "string or null",
+  "riskAssessment": {
+    "overall": "string", // Low, Medium, High
+    "financialRisks": [{
+      "description": "string",
+      "severity": "string", // Low, Medium, High
+      "likelihood": "string" // Low, Medium, High
+    }],
+    "legalRisks": [{
+      "description": "string",
+      "severity": "string",
+      "likelihood": "string"
+    }],
+    "performanceRisks": [{
+      "description": "string",
+      "severity": "string",
+      "likelihood": "string"
+    }],
+    "terminationRisks": [{
+      "description": "string", 
+      "severity": "string",
+      "likelihood": "string"
+    }],
+    "complianceRisks": [{
+      "description": "string",
+      "severity": "string",
+      "likelihood": "string"
+    }]
+  },
+  "criticalClauses": [{
+    "clause": "string",
+    "concern": "string",
+    "recommendation": "string"
+  }],
+  "extractedContent": {
+    "summary": "string"
+  }
+}`
           },
-          { 
-            role: 'user', 
-            content: input.length > 25000 ? input.slice(0, 25000) + '...(document truncated for length)' : input
-          },
+          {
+            role: 'user',
+            content: content
+          }
         ],
-        temperature: 0.3, // Lower temperature for more consistent, focused summaries
-        max_tokens: 1000, // Allow for a comprehensive summary
+        temperature: 0.3,
+        response_format: { type: "json_object" }
       }),
     });
     
@@ -404,33 +555,82 @@ async function analyzeText(input: string) {
     }
     
     const data = await response.json();
-    const output = data.choices?.[0]?.message?.content || 'No summary returned.';
+    
+    // Parse the JSON response from the API
+    let jsonResponse;
+    try {
+      // The content should already be JSON since we specified response_format
+      if (typeof data.choices[0].message.content === 'string') {
+        jsonResponse = JSON.parse(data.choices[0].message.content);
+      } else {
+        jsonResponse = data.choices[0].message.content;
+      }
+    } catch (parseError) {
+      console.error('Error parsing JSON response:', parseError);
+      throw new Error('Failed to parse document analysis JSON');
+    }
     
     // Calculate usage metrics if available in the response
     const inputTokensUsed = data.usage?.prompt_tokens || tokenCount;
-    const outputTokensUsed = data.usage?.completion_tokens || estimateTokenCount(output);
+    const outputTokensUsed = data.usage?.completion_tokens || Math.ceil(data.choices[0].message.content.length / 4);
     const totalTokensUsed = data.usage?.total_tokens || (inputTokensUsed + outputTokensUsed);
     
+    // Ensure we have a summary from the JSON response
+    const summary = jsonResponse.extractedContent?.summary || 
+                   "No summary available in the analysis.";
+    
+    // Return values compatible with your document storage function
     return {
       success: true,
       analysis: {
         wordCount,
         tokenCount,
-        summary: output.trim(),
+        // Important: Include these required fields
+        filename: filename,
+        content: content,
+        summary: summary,
         usage: {
           inputTokens: inputTokensUsed,
           outputTokens: outputTokensUsed,
           totalTokens: totalTokensUsed
         },
-        documentId: undefined as string | undefined, // Initialize documentId as undefined with explicit type
+        documentId: undefined as string | undefined,
+        // Include the structured JSON data
+        structuredData: jsonResponse
       },
     };
   } catch (err: unknown) {
-    console.error('AnalyzeText Error:', err);
+    console.error('AnalyzeDocument Error:', err);
     return {
       success: false,
-      error: 'Failed to analyze text.',
+      error: 'Failed to analyze document.',
       message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
+async function analyzeText(text: string, file: File) {
+  try {
+    // Analyze the document content
+    const analysisResult = await analyzeDocument(text, file.name);
+
+    if (analysisResult.success) {
+      return {
+        success: true,
+        analysis: analysisResult.analysis,
+      };
+    } else {
+      return {
+        success: false,
+        error: analysisResult.error || 'Unknown error during analysis',
+      };
+    }
+  } catch (error) {
+    console.error('Error in analyzeText:', error);
+    return {
+      success: false,
+      error: 'Failed to analyze text',
+      message: error instanceof Error ? error.message : 'Unknown error',
     };
   }
 }
