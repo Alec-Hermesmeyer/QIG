@@ -6,12 +6,6 @@ import os from 'os';
 import PDFParser from 'pdf2json';
 import * as mammoth from 'mammoth';
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
 // Helper function to create a temporary file
 async function createTempFile(buffer: Buffer, extension: string): Promise<string> {
   const tempDir = os.tmpdir();
@@ -61,7 +55,11 @@ function detectContentType(content: string): { isBinary: boolean; fileType: stri
 }
 
 // API endpoint to fetch full document content, including all chunks if needed
-export async function GET(request: NextRequest, { params }: RouteParams) {
+// Use NextJS's expected parameter pattern
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const { id } = params;
     
