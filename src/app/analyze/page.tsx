@@ -207,7 +207,7 @@ export default function HomePage() {
           {recentDocuments.length > 0 && (
             <Link 
               href="/documents" 
-              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-4 py-2 rounded-md text-white text-sm font-medium transition-colors"
+              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-4 py-2 rounded-md text-black text-sm font-medium transition-colors"
             >
               View All Documents
             </Link>
@@ -223,7 +223,7 @@ export default function HomePage() {
                 <Link 
                   key={doc.id}
                   href={`/documents/${doc.id}`} 
-                  className="bg-white bg-opacity-10 hover:bg-opacity-20 p-3 rounded-md text-white flex items-center justify-between transition-colors"
+                  className="bg-white bg-opacity-10 hover:bg-opacity-20 p-3 rounded-md text-black flex items-center justify-between transition-colors"
                 >
                   <div className="flex items-center">
                     <FileText className="h-4 w-4 mr-2 flex-shrink-0" />

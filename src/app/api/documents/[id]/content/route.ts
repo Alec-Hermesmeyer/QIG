@@ -44,11 +44,11 @@ function detectContentType(content: string): { isBinary: boolean; fileType: stri
 // API endpoint to fetch full document content, including all chunks if needed
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
-  try {
-    const id = context.params.id;
-    
+  const id = params.id;
+
+  try {    
     if (!id) {
       return NextResponse.json({ message: 'Document ID is required' }, { status: 400 });
     }

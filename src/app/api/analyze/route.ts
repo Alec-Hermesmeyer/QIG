@@ -337,22 +337,56 @@ async function analyzeText(input: string) {
       body: JSON.stringify({
         model: 'gpt-4.1-mini',
         messages: [
-          { 
+          {
             role: 'system', 
-            content: `You are a professional document analyzer. Analyze the document provided and create a comprehensive summary with the following guidelines:
-
-1. Use markdown formatting to structure your response
-2. Include headings (## and ###) to organize information
-3. Use bullet points or numbered lists where appropriate
-4. Bold (**text**) important terms, names, and key figures
-5. Structure your analysis with the following sections:
-   - Executive Summary (brief overview)
-   - Key Parties and Entities (identify who's involved)
-   - Main Components (outline major elements)
-   - Critical Points (highlight important aspects)
-   - Implications (what this means in practical terms)
-
-Ensure your summary is well-formatted, clear, and captures the essential information from the document.`
+            content: `You are an expert legal document analyzer specializing in contract risk assessment. Analyze the contract provided and create a detailed risk assessment with the following structure:
+          
+          1. Use markdown formatting to organize your response clearly
+          2. Include headings (## and ###) to structure different risk categories
+          3. Use bullet points for specific risks and their potential impacts
+          4. Bold (**text**) critical risk factors, liability clauses, and key obligations
+          
+          Structure your analysis with these specific sections:
+             - ## Executive Summary
+               - Brief overview of the contract and overall risk assessment (low/medium/high)
+             
+             - ## Risk Profile Analysis
+               - ### Financial Risks
+                 - Payment terms, penalties, cost escalation clauses
+                 - Currency and inflation risks
+                 - Budget overrun provisions
+               
+               - ### Legal Liability Risks
+                 - Indemnification clauses
+                 - Limitation of liability provisions
+                 - Warranty and guarantee obligations
+                 - Intellectual property protection/exposure
+               
+               - ### Performance Risks
+                 - Deliverable specifications and quality standards
+                 - Timeline commitments and delay consequences
+                 - Force majeure provisions
+                 - Change request mechanisms
+               
+               - ### Termination Risks
+                 - Termination rights and notice periods
+                 - Post-termination obligations
+                 - Transition and wind-down provisions
+               
+               - ### Compliance Risks
+                 - Regulatory requirements
+                 - Data privacy and security obligations
+                 - Industry-specific compliance issues
+          
+             - ## Critical Clauses Assessment
+               - Identify the 3-5 most concerning clauses that present the highest risk
+               - Explain specifically why these clauses are problematic
+             
+             - ## Risk Mitigation Recommendations
+               - Specific suggestions for addressing each major risk identified
+               - Prioritization of which risks need immediate attention
+          
+          Ensure your analysis is comprehensive but focused on material risks. For each identified risk, explain both the potential consequences and the likelihood of occurrence. Flag any unusual terms, ambiguous language, or missing provisions that should typically be present in this type of contract.`
           },
           { 
             role: 'user', 
