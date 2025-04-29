@@ -8,7 +8,7 @@ import {
   forwardRef,
   useImperativeHandle
 } from 'react';
-import { Send, FileText, Search, Mic, MicOff, Volume2, Loader2 } from 'lucide-react';
+import { Send, FileText, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -78,8 +78,9 @@ const pulse = {
   }
 };
 
-// Configuration for Deepgram
+// Configuration for Deepgram and ElevenLabs
 const DEEPGRAM_API_URL = 'wss://api.deepgram.com/v1/listen';
+const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
 
 // Define proper TypeScript interfaces for Deepgram response
 interface DeepgramWordInfo {
@@ -139,6 +140,12 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [interimTranscript, setInterimTranscript] = useState('');
   const [speechError, setSpeechError] = useState<string | null>(null);
   
+  // Text-to-speech state
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isTTSLoading, setIsTTSLoading] = useState(false);
+  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
   // Speech-to-text refs
   const socketRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -148,6 +155,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
   // Keep a record of all messages for the session
   const [allMessages, setAllMessages] = useState<Array<{ role: string, content: string }>>([]);
+  const [lastResponseTimestamp, setLastResponseTimestamp] = useState<number | null>(null);
 
   // Configuration state
   const [config, setConfig] = useState<ChatConfig>({
@@ -208,8 +216,31 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   useEffect(() => {
     return () => {
       cleanupSpeechResources();
+      cleanupAudioResources();
     };
   }, []);
+
+  // Create audio element for TTS
+  useEffect(() => {
+    audioRef.current = new Audio();
+    audioRef.current.onended = () => {
+      setIsPlaying(false);
+    };
+    
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+    };
+  }, []);
+
+  // Handle audio source changes
+  useEffect(() => {
+    if (audioSrc && audioRef.current) {
+      audioRef.current.src = audioSrc;
+    }
+  }, [audioSrc]);
 
   const cleanupSpeechResources = () => {
     try {
@@ -261,6 +292,22 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       }
     } catch (error) {
       console.error('Error cleaning up speech resources:', error);
+    }
+  };
+
+  const cleanupAudioResources = () => {
+    try {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+        
+        if (audioSrc) {
+          URL.revokeObjectURL(audioSrc);
+          setAudioSrc(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up audio resources:', error);
     }
   };
 
@@ -414,6 +461,110 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     return buf.buffer;
   };
 
+  // Generate a summary of the response text for TTS
+  const generateSummary = (text: string): string => {
+    // Simple summary generation - first sentence or first 150 chars
+    const firstSentence = text.split(/(?<=[.!?])\s+/)[0] || '';
+    
+    if (firstSentence.length <= 200) {
+      return firstSentence;
+    }
+    
+    // If first sentence is too long, get first 150 chars and find a good break point
+    let summary = text.substring(0, 150);
+    const lastPunctuationIndex = Math.max(
+      summary.lastIndexOf('.'), 
+      summary.lastIndexOf('!'), 
+      summary.lastIndexOf('?')
+    );
+    
+    if (lastPunctuationIndex > 50) {
+      summary = summary.substring(0, lastPunctuationIndex + 1);
+    }
+    
+    return summary;
+  };
+
+  // Text-to-speech conversion using ElevenLabs
+  const generateTTS = async (text: string) => {
+    try {
+      setIsTTSLoading(true);
+      
+      // Get ElevenLabs API key and voice ID from environment variables
+      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+      const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM'; // Default voice ID
+      
+      if (!apiKey) {
+        console.error('ElevenLabs API key is missing');
+        setIsTTSLoading(false);
+        return;
+      }
+      
+      // Generate a summary to speak
+      const summary = generateSummary(text);
+      
+      // Clear any existing audio
+      cleanupAudioResources();
+      
+      // Make request to ElevenLabs API
+      const response = await fetch(`${ELEVENLABS_API_URL}/${voiceId}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': apiKey
+        },
+        body: JSON.stringify({
+          text: summary,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.7
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`ElevenLabs API error: ${response.status}`);
+      }
+      
+      // Convert response to blob and create URL
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      // Update state with new audio URL
+      setAudioSrc(audioUrl);
+      setIsTTSLoading(false);
+      
+      // Play the audio
+      if (audioRef.current) {
+        audioRef.current.src = audioUrl;
+        audioRef.current.play().catch(err => {
+          console.error('Error playing audio:', err);
+        });
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Error generating TTS:', error);
+      setIsTTSLoading(false);
+    }
+  };
+
+  // Play/pause the TTS audio
+  const toggleAudio = () => {
+    if (!audioRef.current || !audioSrc) return;
+    
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch(err => {
+        console.error('Error playing audio:', err);
+      });
+      setIsPlaying(true);
+    }
+  };
+
   const filteredContracts = availableContracts.filter(contract =>
     contract.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -528,6 +679,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
         await handleNonStreamingResponse(response);
       }
+      
+      // Save the timestamp of the latest response
+      setLastResponseTimestamp(Date.now());
     } catch (error) {
       console.error('Error fetching response:', error);
       const errorMessage = "I'm sorry, I encountered an error processing your request.";
@@ -557,7 +711,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
     try {
       // Check if the first chunk is a complete response (non-streaming backend fallback)
-      const initialChunks = [];
       let contentStarted = false;
 
       while (true) {
@@ -674,6 +827,11 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
     // Notify parent component
     onAssistantMessage(fullContent);
+    
+    // Generate TTS for the response
+    if (fullContent) {
+      generateTTS(fullContent);
+    }
   };
 
   // Handler for non-streaming responses
@@ -696,6 +854,11 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
     // Notify parent component
     onAssistantMessage(content);
+    
+    // Generate TTS for the response
+    if (content) {
+      generateTTS(content);
+    }
   };
 
   return (
@@ -751,6 +914,43 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TTS Audio Controls */}
+      <AnimatePresence>
+        {(audioSrc && lastResponseTimestamp && Date.now() - lastResponseTimestamp < 60000) && (
+          <motion.div 
+            className="mb-4 flex items-center gap-2 text-sm bg-blue-50 text-blue-700 p-2 rounded-md"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            <span>Audio summary available</span>
+            
+            <motion.button
+              onClick={toggleAudio}
+              className="ml-auto text-blue-500 hover:text-blue-700 flex items-center gap-1"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+            >
+              {isTTSLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isPlaying ? (
+                <>
+                  <VolumeX className="h-4 w-4" />
+                  <span>Pause</span>
+                </>
+              ) : (
+                <>
+                  <Volume className="h-4 w-4" />
+                  <span>Play</span>
+                </>
+              )}
+            </motion.button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1027,6 +1227,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           <span>Follow-up: {config.suggestFollowUpQuestions ? 'On' : 'Off'}</span>
           {config.promptTemplate && <span> | Custom Prompt: Yes</span>}
           {isRecording && <span> | Speech Recording: Active</span>}
+          {isPlaying && <span> | Audio: Playing</span>}
         </motion.div>
       )}
     </motion.div>
