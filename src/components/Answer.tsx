@@ -12,7 +12,6 @@ import {
     Lightbulb,
     ClipboardList,
     Bug,
-    FileSearch,
     ChevronDown,
     ChevronUp
 } from "lucide-react";
@@ -27,7 +26,6 @@ interface Props {
     onSupportingContentClicked: () => void;
     onFollowupQuestionClicked?: (question: string) => void;
     showFollowupQuestions?: boolean;
-    onAnalyzeClick?: () => void; // Analysis panel trigger
 }
 
 export default function Answer({
@@ -40,7 +38,6 @@ export default function Answer({
     onSupportingContentClicked,
     onFollowupQuestionClicked,
     showFollowupQuestions,
-    onAnalyzeClick,
 }: Props) {
     const [debugMode, setDebugMode] = useState(false);
     const [expanded, setExpanded] = useState(true);
@@ -90,27 +87,6 @@ export default function Answer({
     };
 
     const followupQuestions = extractFollowups();
-
-    // Enhanced function to determine if this answer relates to contract analysis
-    const isContractAnalysis = () => {
-        if (typeof content === 'string') {
-            const analysisKeywords = [
-                'analyzed the contract', 
-                'contract analysis',
-                'contract risk',
-                'key risks identified',
-                'risks in the contract',
-                'contract terms',
-                'contract review',
-                'risk assessment'
-            ];
-            
-            return analysisKeywords.some(keyword => 
-                content.toLowerCase().includes(keyword.toLowerCase())
-            );
-        }
-        return false;
-    };
 
     // Process content to improve citation display
     const processContent = () => {
@@ -403,20 +379,6 @@ export default function Answer({
                     >
                         <Bug size={18} />
                     </motion.button>
-                    
-                    {isContractAnalysis() && onAnalyzeClick && (
-                        <motion.button
-                            variants={buttonVariants}
-                            initial="initial"
-                            whileHover="hover"
-                            whileTap="tap"
-                            title="Open Contract Analysis" 
-                            onClick={onAnalyzeClick} 
-                            className="p-2 rounded-full hover:bg-green-100 text-green-600 transition-colors"
-                        >
-                            <FileSearch size={18} />
-                        </motion.button>
-                    )}
 
                     <motion.button
                         variants={buttonVariants}
@@ -522,28 +484,6 @@ export default function Answer({
                                 </motion.button>
                             ))}
                         </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-                {isContractAnalysis() && expanded && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        transition={{ duration: 0.3, delay: 0.1 }}
-                        className="mt-4"
-                    >
-                        <motion.button
-                            onClick={onSupportingContentClicked}
-                            className="w-full py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md font-medium transition-colors flex items-center justify-center gap-2"
-                            whileHover={{ y: -2, boxShadow: "0 4px 12px rgba(147, 51, 234, 0.15)" }}
-                            whileTap={{ y: 0, boxShadow: "0 0px 0px rgba(147, 51, 234, 0)" }}
-                        >
-                            <FileSearch size={18} />
-                            View Contract Analysis Results
-                        </motion.button>
                     </motion.div>
                 )}
             </AnimatePresence>

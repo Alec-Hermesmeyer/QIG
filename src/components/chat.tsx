@@ -144,6 +144,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  const [currentTTSSummary, setCurrentTTSSummary] = useState<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
   // Speech-to-text refs
@@ -461,31 +462,129 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     return buf.buffer;
   };
 
-  // Generate a summary of the response text for TTS
+  // IMPROVED: Generate a better summary of the response text for TTS
   const generateSummary = (text: string): string => {
-    // Simple summary generation - first sentence or first 150 chars
-    const firstSentence = text.split(/(?<=[.!?])\s+/)[0] || '';
+    // Bail early for empty or very short text
+    if (!text || text.length < 20) {
+      return "I don't have enough information to summarize.";
+    }
+
+    // Clean up text - remove document markers, citation tags, etc.
+    const cleanText = text
+  .replace(/<\/?document.*?>/g, '')
+  .replace(/<\/?source>/g, '')
+  .replace(/<\/?document_content>/g, '')
+  // Replace this empty regex with something meaningful
+  // For example, to remove citation tags:
+  .replace(/|<\/antml:cite>/g, '')
+  .replace(/<userStyle>.*?<\/userStyle>/g, '')
+  .replace(/\[\d+\]/g, '') // Remove citation numbers like [1], [2]
+  .replace(/\n\s*\n/g, '\n'); // Normalize multiple newlines
+
+
+    // Split into paragraphs and sentences
+    const paragraphs = cleanText.split(/\n+/).filter(p => p.trim().length > 0);
     
-    if (firstSentence.length <= 200) {
-      return firstSentence;
+    // If we have a short, well-structured response, just use it all
+    if (paragraphs.length > 0 && cleanText.length <= 600) {
+      return cleanText;
+    }
+
+    // Handle multi-paragraph responses
+    if (paragraphs.length > 0) {
+      // Get first paragraph + check if it's a good summary
+      const firstPara = paragraphs[0].trim();
+      
+      // If first paragraph is good length for TTS and has complete sentences, use it
+      if (firstPara.length >= 100 && firstPara.length <= 400 && 
+          (firstPara.endsWith('.') || firstPara.endsWith('!') || firstPara.endsWith('?'))) {
+        return firstPara;
+      }
+      
+      // If first paragraph is too short, combine first 2 paragraphs if available
+      if (firstPara.length < 100 && paragraphs.length > 1) {
+        const combinedParas = firstPara + ' ' + paragraphs[1].trim();
+        if (combinedParas.length <= 500) {
+          return combinedParas;
+        }
+      }
+      
+      // Handle lists - combine opening paragraph with first few list items
+      const isList = paragraphs.some(p => p.trim().match(/^[•\-\d*]\s/));
+      if (isList && paragraphs.length > 2) {
+        let summary = paragraphs[0] + ' ';
+        
+        // Add "Here are some key points: " as transition if not already implied
+        if (!paragraphs[0].includes('key points') && 
+            !paragraphs[0].includes('here are') && 
+            !paragraphs[0].endsWith(':')) {
+          summary += "Here are some key points: ";
+        }
+        
+        // Add first 3 list items (or fewer if not available)
+        const listItems = paragraphs.slice(1).filter(p => p.trim().match(/^[•\-\d*]\s/));
+        const itemsToInclude = listItems.slice(0, 3);
+        
+        summary += itemsToInclude.map(item => item.trim()).join('. ');
+        
+        // Add "and more" if there are more items
+        if (listItems.length > 3) {
+          summary += ", and more.";
+        }
+        
+        if (summary.length <= 600) {
+          return summary;
+        }
+      }
     }
     
-    // If first sentence is too long, get first 150 chars and find a good break point
-    let summary = text.substring(0, 150);
-    const lastPunctuationIndex = Math.max(
+    // Split text into sentences for more granular control
+    const sentences = cleanText.split(/(?<=[.!?])\s+/);
+  
+  // Build a coherent summary from sentences
+  let summary = '';
+  for (let i = 0; i < Math.min(sentences.length, 7); i++) {
+    const sentence = sentences[i].trim();
+    
+    // Skip very short sentences that might just be acknowledgments or incomplete
+    if (sentence.length < 10 || 
+        sentence.toLowerCase().startsWith('hi') ||
+        sentence.toLowerCase().startsWith('hello') ||
+        sentence.toLowerCase().startsWith('thank')) {
+      continue;
+    }
+    
+    summary += sentence + ' ';
+    
+    // Stop when we have a reasonable length summary
+    if (summary.length > 200 && i >= 2) break;
+    if (summary.length > 500) break;
+  }
+  
+  // Final check - if summary somehow ended up empty or too short, use the first chunk
+  if (summary.length < 50) {
+    summary = cleanText.substring(0, 500);
+    
+    // Ensure we end with a complete sentence
+    const lastPeriod = Math.max(
       summary.lastIndexOf('.'), 
       summary.lastIndexOf('!'), 
       summary.lastIndexOf('?')
     );
     
-    if (lastPunctuationIndex > 50) {
-      summary = summary.substring(0, lastPunctuationIndex + 1);
+    if (lastPeriod > 50) {
+      summary = summary.substring(0, lastPeriod + 1);
     }
-    
-    return summary;
-  };
+  }
+  
+  // One final pass to remove any remaining citation artifacts
+  return summary.trim()
+    .replace(/\s+citation\s+\d+/gi, '')
+    .replace(/\[\d+\]/g, '')
+    .replace(/\s{2,}/g, ' ');
+};
 
-  // Text-to-speech conversion using ElevenLabs
+  // IMPROVED: Text-to-speech generation with better error handling and quality settings
   const generateTTS = async (text: string) => {
     try {
       setIsTTSLoading(true);
@@ -500,57 +599,104 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         return;
       }
       
-      // Generate a summary to speak
+      // Generate a meaningful summary to speak
       const summary = generateSummary(text);
+      
+      // Store the summary for display
+      setCurrentTTSSummary(summary);
+      
+      // If the summary is too short, don't bother with TTS
+      if (summary.length < 20) {
+        console.warn('Summary too short for TTS conversion');
+        setIsTTSLoading(false);
+        return;
+      }
       
       // Clear any existing audio
       cleanupAudioResources();
       
-      // Make request to ElevenLabs API
-      const response = await fetch(`${ELEVENLABS_API_URL}/${voiceId}`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': apiKey
-        },
-        body: JSON.stringify({
-          text: summary,
-          model_id: 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.7
-          }
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`ElevenLabs API error: ${response.status}`);
-      }
-      
-      // Convert response to blob and create URL
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      
-      // Update state with new audio URL
-      setAudioSrc(audioUrl);
-      setIsTTSLoading(false);
-      
-      // Play the audio
-      if (audioRef.current) {
-        audioRef.current.src = audioUrl;
-        audioRef.current.play().catch(err => {
-          console.error('Error playing audio:', err);
+      // Make request to ElevenLabs API with improved error handling
+      try {
+        const response = await fetch(`${ELEVENLABS_API_URL}/${voiceId}`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'audio/mpeg',
+            'Content-Type': 'application/json',
+            'xi-api-key': apiKey
+          },
+          body: JSON.stringify({
+            text: summary,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: {
+              stability: 0.6,
+              similarity_boost: 0.7,
+              style: 0.35,
+              use_speaker_boost: true
+            }
+          })
         });
-        setIsPlaying(true);
+        
+        if (!response.ok) {
+          throw new Error(`ElevenLabs API error: ${response.status}`);
+        }
+        
+        // Convert response to blob and create URL
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        // Update state with new audio URL
+        setAudioSrc(audioUrl);
+        
+        // Create a new audio element if needed
+        if (!audioRef.current) {
+          audioRef.current = new Audio();
+        }
+        
+        // Now we can safely use audioRef.current as we've ensured it exists
+        const audio = audioRef.current;
+        audio.src = audioUrl;
+        
+        // Add event listeners for better error handling
+        audio.onloadedmetadata = () => {
+          // Check if audio duration is reasonable
+          if (audio.duration < 0.5) {
+            console.warn('Audio duration too short, likely an error in TTS generation');
+            setIsTTSLoading(false);
+            return;
+          }
+          
+          audio.play()
+            .then(() => {
+              setIsPlaying(true);
+            })
+            .catch(err => {
+              console.error('Error playing audio:', err);
+              setIsPlaying(false);
+            });
+        };
+        
+        audio.onerror = () => {
+          console.error('Error loading audio');
+          setIsPlaying(false);
+        };
+        
+        // Add onended handler to update state when playback completes
+        audio.onended = () => {
+          setIsPlaying(false);
+        };
+        
+      } catch (error) {
+        console.error('Error with ElevenLabs API:', error);
+        // Don't show audio controls if TTS failed
+        setAudioSrc(null);
       }
     } catch (error) {
       console.error('Error generating TTS:', error);
+    } finally {
       setIsTTSLoading(false);
     }
   };
-
-  // Play/pause the TTS audio
+  // IMPROVED: Play/pause the TTS audio
   const toggleAudio = () => {
     if (!audioRef.current || !audioSrc) return;
     
@@ -918,39 +1064,55 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         )}
       </AnimatePresence>
 
-      {/* TTS Audio Controls */}
+      {/* IMPROVED: TTS Audio Controls with summary display */}
       <AnimatePresence>
         {(audioSrc && lastResponseTimestamp && Date.now() - lastResponseTimestamp < 60000) && (
           <motion.div 
-            className="mb-4 flex items-center gap-2 text-sm bg-blue-50 text-blue-700 p-2 rounded-md"
+            className="mb-4 flex flex-col gap-2 bg-blue-50 text-blue-700 p-3 rounded-md border border-blue-100"
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
           >
-            <span>Audio summary available</span>
+            <div className="flex items-center justify-between">
+              <span className="font-medium">Audio summary available</span>
+              
+              <motion.button
+                onClick={toggleAudio}
+                className="text-blue-600 hover:text-blue-800 flex items-center gap-1 px-3 py-1 rounded hover:bg-blue-100 transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+              >
+                {isTTSLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : isPlaying ? (
+                  <>
+                    <VolumeX className="h-4 w-4" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume className="h-4 w-4" />
+                    <span>Play</span>
+                  </>
+                )}
+              </motion.button>
+            </div>
             
-            <motion.button
-              onClick={toggleAudio}
-              className="ml-auto text-blue-500 hover:text-blue-700 flex items-center gap-1"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              transition={{ duration: 0.2 }}
-            >
-              {isTTSLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : isPlaying ? (
-                <>
-                  <VolumeX className="h-4 w-4" />
-                  <span>Pause</span>
-                </>
-              ) : (
-                <>
-                  <Volume className="h-4 w-4" />
-                  <span>Play</span>
-                </>
+            {/* Show summary text when playing or on hover */}
+            <AnimatePresence>
+              {(isPlaying || currentTTSSummary) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="text-sm text-blue-600 bg-blue-100/50 p-2 rounded max-h-24 overflow-y-auto"
+                >
+                  <span className="italic">{currentTTSSummary}</span>
+                </motion.div>
               )}
-            </motion.button>
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
