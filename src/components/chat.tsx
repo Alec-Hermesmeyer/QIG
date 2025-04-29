@@ -8,10 +8,9 @@ import {
   forwardRef,
   useImperativeHandle
 } from 'react';
-import { Send, FileText, Search } from 'lucide-react';
+import { Send, FileText, Search, Mic, MicOff, Volume2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { getContractAnalysisPrompt } from '@/lib/contract-service';
-import { motion, AnimatePresence } from 'framer-motion'; // Import framer-motion
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -79,6 +78,33 @@ const pulse = {
   }
 };
 
+// Configuration for Deepgram
+const DEEPGRAM_API_URL = 'wss://api.deepgram.com/v1/listen';
+
+// Define proper TypeScript interfaces for Deepgram response
+interface DeepgramWordInfo {
+  word: string;
+  start: number;
+  end: number;
+  confidence: number;
+}
+
+interface DeepgramAlternative {
+  transcript: string;
+  confidence: number;
+  words: DeepgramWordInfo[];
+}
+
+interface DeepgramResponse {
+  type: string;
+  channel_index: number[];
+  is_final: boolean;
+  speech_final: boolean;
+  channel: {
+    alternatives: DeepgramAlternative[];
+  };
+}
+
 export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function ImprovedChat(
   {
     onUserMessage,
@@ -106,6 +132,19 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContract, setSelectedContract] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Speech-to-text state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  
+  // Speech-to-text refs
+  const socketRef = useRef<WebSocket | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // Keep a record of all messages for the session
   const [allMessages, setAllMessages] = useState<Array<{ role: string, content: string }>>([]);
@@ -165,6 +204,216 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     }
   }, [isLoading]);
 
+  // Clean up speech-to-text resources on component unmount
+  useEffect(() => {
+    return () => {
+      cleanupSpeechResources();
+    };
+  }, []);
+
+  const cleanupSpeechResources = () => {
+    try {
+      // Close WebSocket connection
+      if (socketRef.current) {
+        // Try to send a close stream message if the connection is still open
+        if (socketRef.current.readyState === WebSocket.OPEN) {
+          try {
+            // Send CloseStream message to Deepgram for clean shutdown
+            socketRef.current.send(JSON.stringify({ type: "CloseStream" }));
+          } catch (err) {
+            console.warn('Error sending close stream message', err);
+          }
+          
+          // Give a small delay for the close message to be sent
+          setTimeout(() => {
+            if (socketRef.current) {
+              socketRef.current.close();
+              socketRef.current = null;
+            }
+          }, 100);
+        } else {
+          socketRef.current.close();
+          socketRef.current = null;
+        }
+      }
+
+      // Disconnect and close audio processing nodes
+      if (sourceNodeRef.current) {
+        sourceNodeRef.current.disconnect();
+        sourceNodeRef.current = null;
+      }
+
+      if (processorNodeRef.current) {
+        processorNodeRef.current.disconnect();
+        processorNodeRef.current = null;
+      }
+
+      // Close audio context
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(console.error);
+        audioContextRef.current = null;
+      }
+
+      // Stop all tracks in the media stream
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+    } catch (error) {
+      console.error('Error cleaning up speech resources:', error);
+    }
+  };
+
+  const startSpeechToText = async () => {
+    try {
+      setIsConnecting(true);
+      setSpeechError(null);
+
+      // Define a hardcoded key for development purposes only
+      // In production, you should use environment variables properly
+      const hardcodedKey = 'your_deepgram_api_key_here'; // Replace with your actual key
+      
+      // Try to get the API key from environment variables first
+      let apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+      
+      // If not available in environment, use the hardcoded key
+      if (!apiKey) {
+        console.warn('Using hardcoded Deepgram API key. For production, set NEXT_PUBLIC_DEEPGRAM_API_KEY in your .env.local file.');
+        apiKey = hardcodedKey;
+      }
+
+      // Get user media (microphone access)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      // Create URL parameters
+      const params = new URLSearchParams({
+        encoding: 'linear16',
+        sample_rate: '16000',
+        model: 'nova',
+        smart_format: 'true'
+      });
+      
+      const wsUrl = `${DEEPGRAM_API_URL}?${params.toString()}`;
+      console.log('Connecting to Deepgram WebSocket:', wsUrl);
+      
+      // Create WebSocket connection with proper protocols
+      const socket = new WebSocket(wsUrl, [
+        'token',
+        apiKey
+      ]);
+
+      socketRef.current = socket;
+
+      // Set up WebSocket event handlers
+      socket.onopen = () => {
+        console.log('WebSocket connection opened');
+        
+        // Create AudioContext (Safari-compatible)
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+        
+        // Create audio source from the stream
+        if (mediaStreamRef.current) {
+          const sourceNode = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
+          sourceNodeRef.current = sourceNode;
+          
+          // Create script processor node (works in Safari)
+          const processorNode = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+          processorNodeRef.current = processorNode;
+          
+          // Connect the audio processing pipeline
+          sourceNodeRef.current.connect(processorNodeRef.current);
+          processorNodeRef.current.connect(audioContextRef.current.destination);
+          
+          // Process audio data
+          processorNodeRef.current.onaudioprocess = (e: AudioProcessingEvent) => {
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+              // Get audio data
+              const inputData = e.inputBuffer.getChannelData(0);
+              
+              // Convert to 16-bit PCM (required format for Deepgram)
+              const pcmData = convertFloatToInt16(inputData);
+              
+              // Send audio data to Deepgram
+              socketRef.current.send(pcmData);
+              
+              // Send periodic keepalive
+              if (Date.now() % 5000 < 100) { // Every ~5 seconds
+                try {
+                  socketRef.current.send(JSON.stringify({ type: "KeepAlive" }));
+                } catch (err) {
+                  console.warn('Error sending keepalive', err);
+                }
+              }
+            }
+          };
+        }
+
+        setIsRecording(true);
+        setIsConnecting(false);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as DeepgramResponse;
+          
+          // Check if this is a transcription result
+          if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
+            const transcription = data.channel.alternatives[0].transcript;
+            
+            // Handle interim vs final results
+            if (data.is_final) {
+              setInput(prev => prev + transcription.trim() + ' ');
+              setInterimTranscript('');
+            } else {
+              setInterimTranscript(transcription);
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setSpeechError('Connection error. Please check console for details.');
+        stopSpeechToText();
+      };
+
+      socket.onclose = () => {
+        console.log('WebSocket connection closed');
+        if (isRecording) {
+          stopSpeechToText();
+        }
+      };
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      setSpeechError(error instanceof Error ? error.message : 'Failed to start recording');
+      setIsConnecting(false);
+    }
+  };
+
+  const stopSpeechToText = () => {
+    cleanupSpeechResources();
+    setIsRecording(false);
+    setIsConnecting(false);
+  };
+
+  // Utility function to convert Float32Array to Int16Array
+  const convertFloatToInt16 = (buffer: Float32Array): ArrayBuffer => {
+    const l = buffer.length;
+    const buf = new Int16Array(l);
+    
+    for (let i = 0; i < l; i++) {
+      // Convert float (-1 to 1) to int16 (-32768 to 32767)
+      buf[i] = Math.min(1, Math.max(-1, buffer[i])) * 32767;
+    }
+    
+    return buf.buffer;
+  };
+
   const filteredContracts = availableContracts.filter(contract =>
     contract.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -172,8 +421,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const selectContract = (contractName: string) => {
     setSelectedContract(contractName);
     setShowContractSelector(false);
-    const analyzeCommand = `Analyze the contract "${contractName}" for potential risks.`;
-    setInput(analyzeCommand);
+    // Modified to not include specific analysis command
+    setInput(`Ask about ${contractName}`);
     if (inputRef.current) inputRef.current.focus();
   };
 
@@ -198,14 +447,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     onUserMessage(userMessage);
 
     try {
-      const isContractAnalysis =
-        (selectedContract &&
-          userMessage
-            .toLowerCase()
-            .includes(`analyze the contract "${selectedContract.toLowerCase()}"`)) ||
-        userMessage.toLowerCase().includes('analyze this contract') ||
-        userMessage.toLowerCase().includes('analyze the contract');
-
       // Create a session ID
       const sessionId = localStorage.getItem('chat_session_id') ||
         Math.random().toString(36).substring(2, 15) +
@@ -243,14 +484,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             language: "en"
           }
         },
-        session_state: sessionId,
-
-        // Contract analysis specific options
-        ...(isContractAnalysis && selectedContract ? {
-          contractAnalysis: true,
-          contractName: selectedContract,
-          analysisPrompt: getContractAnalysisPrompt()
-        } : {})
+        session_state: sessionId
       };
 
       console.log("Sending chat request with config:", {
@@ -293,10 +527,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         }
 
         await handleNonStreamingResponse(response);
-      }
-
-      if (isContractAnalysis) {
-        setSelectedContract(null);
       }
     } catch (error) {
       console.error('Error fetching response:', error);
@@ -543,7 +773,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-lg font-semibold mb-4">
-                Select Contract to Analyze
+                Select Contract
               </h3>
 
               <motion.div 
@@ -631,7 +861,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           >
             <FileText size={16} />
             <span>
-              Ready to analyze: <strong>{selectedContract}</strong>
+              Selected contract: <strong>{selectedContract}</strong>
             </span>
             <motion.button
               onClick={() => setSelectedContract(null)}
@@ -641,6 +871,51 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               transition={{ duration: 0.2 }}
             >
               ×
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Speech error message */}
+      <AnimatePresence>
+        {speechError && (
+          <motion.div 
+            className="mb-4 p-2 text-sm text-red-600 bg-red-50 rounded-md"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            {speechError}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Speech recognition indicator */}
+      <AnimatePresence>
+        {isRecording && (
+          <motion.div 
+            className="mb-4 flex items-center gap-2 text-sm bg-green-50 text-green-700 p-2 rounded-md"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Volume2 size={16} className="animate-pulse" />
+            <span>
+              Listening...
+              {interimTranscript && (
+                <span className="italic ml-2 text-gray-500">"{interimTranscript}"</span>
+              )}
+            </span>
+            <motion.button
+              onClick={stopSpeechToText}
+              className="ml-auto text-green-500 hover:text-green-700"
+              whileHover={{ scale: 1.2 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ duration: 0.2 }}
+            >
+              <MicOff size={16} />
             </motion.button>
           </motion.div>
         )}
@@ -657,9 +932,11 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder={
-            selectedContract
-              ? `Ask about ${selectedContract}...`
-              : 'Type your message or select a contract to analyze...'
+            isRecording
+              ? "Speak or type your message..."
+              : selectedContract
+                ? `Ask about ${selectedContract}...`
+                : 'Type your message or select a contract...'
           }
           className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white shadow-md"
           disabled={isLoading || isDisabled}
@@ -668,6 +945,34 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           transition={{ duration: 0.3, delay: 0.1 }}
           whileFocus={{ boxShadow: "0 0 0 3px rgba(99, 102, 241, 0.2)" }}
         />
+
+        {/* Voice input button */}
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+        >
+          <Button
+            type="button"
+            onClick={isRecording ? stopSpeechToText : startSpeechToText}
+            disabled={isLoading || isDisabled || isConnecting}
+            className={`h-12 px-4 rounded-md ${
+              isRecording 
+                ? 'bg-red-500 hover:bg-red-600 text-white' 
+                : 'bg-gray-100 border border-gray-300 hover:bg-gray-200 text-gray-700'
+            }`}
+          >
+            {isConnecting ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : isRecording ? (
+              <MicOff className="h-5 w-5" />
+            ) : (
+              <Mic className="h-5 w-5" />
+            )}
+          </Button>
+        </motion.div>
 
         {availableContracts.length > 0 && (
           <motion.div
@@ -721,6 +1026,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           <span>Stream: {config.streamResponse ? 'On' : 'Off'} | </span>
           <span>Follow-up: {config.suggestFollowUpQuestions ? 'On' : 'Off'}</span>
           {config.promptTemplate && <span> | Custom Prompt: Yes</span>}
+          {isRecording && <span> | Speech Recording: Active</span>}
         </motion.div>
       )}
     </motion.div>

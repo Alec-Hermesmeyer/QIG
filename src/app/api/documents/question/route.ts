@@ -115,7 +115,7 @@ async function extractTextFromBinaryContent(content: string, fileType: string): 
   }
 }
 
-// NEW: Function to identify if a question can be answered from structured data
+// Function to identify if a question can be answered from structured data
 function canUseStructuredData(question: string): boolean {
   const structuredDataPatterns = [
     // General document information
@@ -156,7 +156,7 @@ function canUseStructuredData(question: string): boolean {
   return structuredDataPatterns.some(pattern => pattern.test(question));
 }
 
-// NEW: Function to query structured data for answers
+// Function to query structured data for answers
 async function queryStructuredData(question: string, structuredData: any): Promise<string> {
   try {
     const prompt = `
@@ -196,6 +196,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { documentId, question, documentContent } = body;
 
+    console.log(`Question API called with documentId: ${documentId}, questionLength: ${question?.length}`);
+
     // If OpenAI is not configured, return a demo response
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({
@@ -214,7 +216,7 @@ export async function POST(request: NextRequest) {
     let filename: string;
     let document: any = null;
     let useEmbeddingSearch = false;
-    let structuredData = null;  // NEW: Variable to hold structured data
+    let structuredData = null;  // Variable to hold structured data
     
     if (documentContent) {
       // If document content is passed directly in the request
@@ -224,32 +226,52 @@ export async function POST(request: NextRequest) {
       // Store in memory for future reference
       const tempId = `temp_${Date.now()}`;
       memoryDocumentStore[tempId] = { content, filename };
+      console.log(`Document content provided directly, stored with tempId: ${tempId}`);
     } 
     else if (documentId && memoryDocumentStore[documentId]) {
       // If we have the document in our memory store
       content = memoryDocumentStore[documentId].content;
       filename = memoryDocumentStore[documentId].filename;
+      console.log(`Retrieved document from memory store, contentLength: ${content.length}`);
     } 
     else if (documentId) {
       // Try to get from database
+      console.log(`Retrieving document ${documentId} from database`);
+      
+      // Initialize the document cache service first
+      const initialized = await documentCacheService.initialize();
+      if (!initialized) {
+        console.error("Failed to initialize document cache service");
+        return NextResponse.json({ message: 'Database initialization failed' }, { status: 500 });
+      }
+      
       document = await documentCacheService.getDocument(documentId);
       
       if (!document) {
+        console.error(`Document ${documentId} not found in database`);
         return NextResponse.json(
           { message: 'Document not found' },
           { status: 404 }
         );
       }
       
-      // NEW: Try to get structured data
+      console.log(`Document retrieved: ID=${documentId}, filename=${document.metadata.filename}, hasExtractedText=${document.metadata.hasExtractedText}, contentLength=${document.content.content?.length || 0}`);
+      
+      // Check for structured data in various possible locations
       if (document.analysis && document.analysis.structuredData) {
         structuredData = document.analysis.structuredData;
-        console.log('Found structured data for document');
+        console.log('Found structured data in document.analysis');
+      } else if (document.content && document.content.structuredData) {
+        structuredData = document.content.structuredData;
+        console.log('Found structured data in document.content');
+      } else if (document.metadata.structuredData) {
+        structuredData = document.metadata.structuredData;
+        console.log('Found structured data in document.metadata');
       }
       
       // First check for extracted text if it exists
       if (document.metadata.hasExtractedText && document.content.extractedText) {
-        console.log(`Using extracted text for document ${documentId}`);
+        console.log(`Using extracted text for document ${documentId}, length: ${document.content.extractedText.length}`);
         content = document.content.extractedText;
       }
       // Check if chunked and if we need to get full content
@@ -258,13 +280,22 @@ export async function POST(request: NextRequest) {
           // If document has embeddings, we'll use them instead of loading full content
           useEmbeddingSearch = true;
           content = document.content.content; // Just use preview content for now
+          console.log(`Document is chunked with embeddings. Will use embedding search.`);
         } else {
           // Load full content if embeddings aren't available
+          console.log(`Document is chunked without embeddings. Loading full content.`);
           const fullContent = await documentCacheService.getFullDocumentContent(documentId);
-          content = fullContent || document.content.content;
+          if (fullContent) {
+            console.log(`Loaded full document content, length: ${fullContent.length}`);
+            content = fullContent;
+          } else {
+            console.warn(`Failed to load full content, using preview content, length: ${document.content.content.length}`);
+            content = document.content.content;
+          }
         }
       } else {
         content = document.content.content;
+        console.log(`Using standard document content, length: ${content.length}`);
       }
       
       filename = document.metadata.filename;
@@ -289,24 +320,35 @@ export async function POST(request: NextRequest) {
     }
     else {
       // No document available
+      console.error('No document ID or content provided');
       return NextResponse.json(
         { message: 'Document not found or content not provided' },
         { status: 400 }
       );
     }
 
-    // NEW: Check if we can use structured data for this question
+    // Log content details for debugging
+    console.log(`Content ready for processing: length=${content?.length || 0}, preview: ${content?.substring(0, 100)?.replace(/\n/g, ' ')}...`);
+
+    // Check if we can use structured data for this question
     if (structuredData && canUseStructuredData(question)) {
       try {
         console.log('Using structured data to answer the question');
         const answer = await queryStructuredData(question, structuredData);
+        console.log(`Generated answer from structured data, length: ${answer.length}`);
         
         return NextResponse.json({
           answer,
           sources: [{
             text: "This answer was generated from structured analysis of the document.",
             score: 1.0
-          }]
+          }],
+          debug: {
+            method: 'structured_data',
+            documentId,
+            hasStructuredData: true,
+            contentLength: content?.length || 0
+          }
         });
       } catch (structuredDataError) {
         console.error('Error using structured data, falling back to text search:', structuredDataError);
@@ -322,29 +364,46 @@ export async function POST(request: NextRequest) {
     
     if (useEmbeddingSearch && document) {
       // Use embedding-based search
+      console.log('Using embedding-based search');
       relevantChunks = await findRelevantChunksWithEmbeddings(question, documentId);
     } else {
       // Use text-based chunking and search
+      console.log('Using text-based chunking and search');
       const chunks = chunkText(content);
+      console.log(`Created ${chunks.length} chunks for text search`);
       relevantChunks = await findRelevantChunks(question, chunks);
     }
     
-    // Build context from relevant chunks
-    const context = relevantChunks.map(chunk => chunk.text).join("\n\n");
+    console.log(`Found ${relevantChunks.length} relevant chunks, top score: ${relevantChunks.length > 0 ? relevantChunks[0].score : 'N/A'}`);
+    
+    // Build context from relevant chunks with more structure
+    const context = relevantChunks.map((chunk, index) => {
+      return `SECTION ${index + 1} (relevance: ${chunk.score.toFixed(2)}):\n${chunk.text}`;
+    }).join("\n\n");
+    
+    console.log(`Built context for answer generation, length: ${context.length}`);
     
     // Generate answer using OpenAI
     const answer = await generateAnswer(question, context, filename);
+    console.log(`Generated answer, length: ${answer.length}`);
     
-    // Return response
+    // Return response with debug info
     return NextResponse.json({
       answer,
-      sources: relevantChunks.slice(0, 3) // Return top 3 sources
+      sources: relevantChunks.slice(0, 3), // Return top 3 sources
+      debug: {
+        contentLength: content?.length || 0,
+        chunksFound: relevantChunks?.length || 0,
+        contextLength: context?.length || 0,
+        usedStructuredData: false,
+        retrievalMethod: useEmbeddingSearch ? 'embeddings' : 'text'
+      }
     });
     
   } catch (error) {
     console.error('Error in document question API:', error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { message: 'Internal server error', error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
@@ -439,8 +498,11 @@ async function findRelevantChunks(question: string, chunks: string[], topK = 5) 
   try {
     // If there are no chunks, return an empty array
     if (!chunks || chunks.length === 0) {
+      console.warn('No chunks provided for relevance search');
       return [];
     }
+    
+    console.log(`Finding relevant chunks among ${chunks.length} chunks`);
     
     // Get embedding for the question
     const questionEmbeddingResponse = await openai.embeddings.create({
@@ -456,6 +518,7 @@ async function findRelevantChunks(question: string, chunks: string[], topK = 5) 
     
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batchChunks = chunks.slice(i, i + batchSize);
+      console.log(`Generating embeddings for chunks ${i+1} to ${Math.min(i+batchSize, chunks.length)}`);
       
       // Get embeddings for this batch of chunks
       const response = await openai.embeddings.create({
@@ -487,10 +550,16 @@ async function findRelevantChunks(question: string, chunks: string[], topK = 5) 
     });
     
     // Sort by score and return top K
-    return scoredChunks.sort((a, b) => b.score - a.score).slice(0, topK);
+    const result = scoredChunks
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+      
+    console.log(`Top chunk score: ${result.length > 0 ? result[0].score.toFixed(4) : 'N/A'}`);
+    return result;
   } catch (error) {
     console.error('Error finding relevant chunks with embeddings:', error);
     // Fallback: return all chunks with no scoring
+    console.log('Falling back to simple chunk return without scoring');
     return chunks.map(chunk => ({ text: chunk, score: 1 })).slice(0, topK);
   }
 }
@@ -498,43 +567,54 @@ async function findRelevantChunks(question: string, chunks: string[], topK = 5) 
 // Function to find relevant chunks using pre-stored embeddings
 async function findRelevantChunksWithEmbeddings(question: string, documentId: string, topK = 5) {
   try {
+    console.log(`Finding relevant chunks using stored embeddings for document ${documentId}`);
+    
     // Generate embedding for the question
-    const embeddingResponse = await fetch('/api/generate-embedding', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ text: question }),
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: question,
+      encoding_format: "float"
     });
     
-    if (!embeddingResponse.ok) {
-      throw new Error('Failed to generate question embedding');
-    }
-    
-    const { embedding } = await embeddingResponse.json();
+    const embedding = embeddingResponse.data[0].embedding;
+    console.log(`Generated question embedding with dimension ${embedding.length}`);
     
     // Find similar chunks using the document service
     const similarChunks = await documentCacheService.findSimilarChunks(embedding, documentId, topK);
+    console.log(`Found ${similarChunks.length} similar chunks using vector search`);
     
     // Format results
-    return similarChunks.map(result => ({
+    const results = similarChunks.map(result => ({
       text: result.chunk.content,
       score: result.similarity
     }));
+    
+    if (results.length > 0) {
+      console.log(`Top chunk score: ${results[0].score.toFixed(4)}`);
+    }
+    
+    return results;
   } catch (error) {
     console.error('Error finding relevant chunks with stored embeddings:', error);
     
     // Fallback to getting document chunks and searching without embeddings
-    const document = await documentCacheService.getDocument(documentId);
-    if (!document || !document.chunks) {
-      throw new Error('Document or chunks not found');
+    console.log('Falling back to regular document chunks');
+    try {
+      const document = await documentCacheService.getDocument(documentId);
+      if (!document || !document.chunks) {
+        throw new Error('Document or chunks not found');
+      }
+      
+      // Use the chunks we have but without sophisticated scoring
+      const chunks = document.chunks.map(chunk => chunk.content);
+      console.log(`Falling back to ${chunks.length} document chunks`);
+      
+      // Simple keyword matching as a fallback
+      return findRelevantChunksSimple(question, chunks, topK);
+    } catch (fallbackError) {
+      console.error('Fallback error:', fallbackError);
+      return [];
     }
-    
-    // Use the chunks we have but without sophisticated scoring
-    const chunks = document.chunks.map(chunk => chunk.content);
-    
-    // Simple keyword matching as a fallback
-    return findRelevantChunksSimple(question, chunks, topK);
   }
 }
 
@@ -546,12 +626,16 @@ function findRelevantChunksSimple(question: string, chunks: string[], topK = 5) 
       return [];
     }
     
+    console.log(`Finding relevant chunks using simple keyword matching among ${chunks.length} chunks`);
+    
     // Extract keywords from the question (simple approach)
     const stopWords = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'about', 'is', 'are', 'was', 'were']);
     const keywords = question.toLowerCase()
       .replace(/[^\w\s]/g, '')
       .split(/\s+/)
       .filter(word => word.length > 2 && !stopWords.has(word));
+    
+    console.log(`Extracted keywords: ${keywords.join(', ')}`);
     
     // If no keywords were found, return chunks with equal scores
     if (keywords.length === 0) {
@@ -586,13 +670,16 @@ function findRelevantChunksSimple(question: string, chunks: string[], topK = 5) 
     });
     
     // Sort by score and return top K
-    return scoredChunks
+    const result = scoredChunks
       .sort((a, b) => b.score - a.score)
       .slice(0, topK)
       .map(chunk => ({
         ...chunk,
         score: Math.min(0.95, Math.max(0.5, chunk.score / 5)) // Normalize to a reasonable range
       }));
+      
+    console.log(`Top simple-match score: ${result.length > 0 ? result[0].score.toFixed(4) : 'N/A'}`);
+    return result;
   } catch (err) {
     console.error('Error in simple chunk relevance scoring:', err);
     return chunks.slice(0, topK).map(chunk => ({
@@ -636,25 +723,28 @@ function calculateCosineSimilarity(a: number[], b: number[]): number {
 // Generate an answer using OpenAI
 async function generateAnswer(question: string, context: string, documentName: string): Promise<string> {
   const prompt = `
-You are an AI assistant that answers questions about documents.
+You are an AI assistant that answers questions about documents with high precision.
 You are currently answering a question about the document: "${documentName}".
 
-CONTEXT:
+CONTEXT FROM THE DOCUMENT:
 ${context}
 
-QUESTION:
+USER QUESTION:
 ${question}
 
 INSTRUCTIONS:
-1. Answer the question based only on the provided context.
-2. If the answer is not in the context, say "I couldn't find information about that in the document."
-3. Don't make up information or reference things not in the context.
-4. Keep your answer concise and to the point.
+1. Answer the question based ONLY on the provided context.
+2. If the answer is not completely contained in the context, say "Based on the available context, I don't have complete information about that."
+3. DO NOT make up or infer information not present in the context.
+4. Be specific and cite the relevant parts of the context in your answer.
+5. Keep your answer clear, concise, and directly address the question.
+6. When the question concerns specific sections, clauses, or details that can be directly quoted, include short quotes in your answer.
 
 ANSWER:
 `;
 
   try {
+    console.log('Generating answer with OpenAI');
     const response = await openai.chat.completions.create({
       model: "gpt-4", // You can change this to a different model
       messages: [
