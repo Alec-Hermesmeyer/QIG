@@ -916,24 +916,14 @@ export default function Page() {
       content,
       timestamp: new Date().toISOString()
     };
-
+  
     setChatHistory(prev => [...prev, newMessage]);
     setMostRecentUserMessage(content);
-
+  
     if (!conversationStarted) {
       setConversationStarted(true);
     }
-
-    // Check if the user is asking to analyze a contract
-    if (
-      content.toLowerCase().includes('contract') &&
-      (content.toLowerCase().includes('analyze') ||
-        content.toLowerCase().includes('analysis') ||
-        content.toLowerCase().includes('risk'))
-    ) {
-      // Open contract analyzer panel
-      setShowContractAnalyzer(true);
-    }
+    setIsStreaming(true);
   };
 
   const handleAssistantMessage = (content: string) => {
