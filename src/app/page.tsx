@@ -108,7 +108,7 @@ function SettingsSidebar({
     useSemanticRanker: true,
     useSemanticCaptions: false,
     streamResponse: true,
-    suggestFollowUp: false,
+    suggestFollowUp: true,
     retrievalMode: 'hybrid'
   };
 

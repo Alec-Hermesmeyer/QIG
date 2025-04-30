@@ -15,6 +15,7 @@ import {
     ChevronDown,
     ChevronUp
 } from "lucide-react";
+import { parseAnswerToHtml } from "./AnswerParser"; // Make sure to import your parser
 
 interface Props {
     answer: any;
@@ -37,21 +38,18 @@ export default function Answer({
     onThoughtProcessClicked,
     onSupportingContentClicked,
     onFollowupQuestionClicked,
-    showFollowupQuestions,
+    showFollowupQuestions = false, // Default to false
 }: Props) {
     const [debugMode, setDebugMode] = useState(false);
     const [expanded, setExpanded] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
 
-    const getContent = () => {
-        if (typeof answer === 'string') return answer;
-        if (answer?.content) return answer.content;
-        if (answer?.answer) return answer.answer;
-        return JSON.stringify(answer);
-    };
-
-    const content = getContent();
+    // Parse the answer using our improved parser
+    const parsedAnswer = parseAnswerToHtml(answer, isStreaming, onCitationClicked);
+    const content = parsedAnswer.answerHtml;
+    const citations = parsedAnswer.citations;
+    const followupQuestions = parsedAnswer.followupQuestions || [];
 
     // Reset copied state after 2 seconds
     useEffect(() => {
@@ -62,55 +60,6 @@ export default function Answer({
             return () => clearTimeout(timer);
         }
     }, [isCopied]);
-
-    // Enhanced citation extraction to handle multiple formats
-    const extractCitations = () => {
-        // Handle bracketed citations like [filename.pdf]
-        const bracketRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
-        const bracketMatches = [...(content.matchAll(bracketRegex) || [])];
-        
-        // Also check for in-paragraph citations with the format "text" (filename.pdf)
-        const parenthesisRegex = /"[^"]+"\s+\(([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\)/gi;
-        const parenthesisMatches = [...(content.matchAll(parenthesisRegex) || [])];
-        
-        // Combine and deduplicate results
-        const allMatches = [...bracketMatches, ...parenthesisMatches].map(match => match[1]);
-        return [...new Set(allMatches)]; // Remove duplicates
-    };
-
-    const citations = extractCitations();
-
-    const extractFollowups = () => {
-        return Array.isArray(answer?.context?.followup_questions)
-            ? answer.context.followup_questions
-            : [];
-    };
-
-    const followupQuestions = extractFollowups();
-
-    // Process content to improve citation display
-    const processContent = () => {
-        let processedContent = content;
-        
-        // Replace bracketed citation references like [filename.pdf] with numbered citations [1]
-        if (citations.length > 0) {
-            citations.forEach((citation, index) => {
-                const regex = new RegExp(`\\[${citation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'g');
-                processedContent = processedContent.replace(regex, `[${index + 1}]`);
-            });
-            
-            // Find and replace all numeric citation references [1], [2], etc. with styled ones
-            for (let i = 1; i <= citations.length; i++) {
-                const numericRegex = new RegExp(`\\[${i}\\]`, 'g');
-                processedContent = processedContent.replace(
-                    numericRegex,
-                    `<sup class="text-blue-600 font-bold cursor-pointer citation-number" data-citation-index="${i}">[${i}]</sup>`
-                );
-            }
-        }
-        
-        return processedContent;
-    };
 
     // Setup click handlers for citation numbers
     useEffect(() => {
@@ -147,12 +96,20 @@ export default function Answer({
         };
     }, [citations, onCitationClicked]);
 
-    const processedContent = processContent();
-
     // Handle the clipboard icon click - copy content to clipboard
     const handleClipboardIconClick = () => {
         try {
-            const contentToCopy = getContent();
+            // Use the raw content for copying, not the HTML-formatted version
+            let contentToCopy = "";
+            if (typeof answer === 'string') {
+                contentToCopy = answer;
+            } else if (answer?.content) {
+                contentToCopy = answer.content;
+            } else if (answer?.answer) {
+                contentToCopy = answer.answer;
+            } else {
+                contentToCopy = JSON.stringify(answer);
+            }
             
             // Modern clipboard API
             if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -417,7 +374,7 @@ export default function Answer({
                 <div ref={contentRef} className="text-base font-normal leading-snug py-4">
                     <div className="prose max-w-none">
                         <ReactMarkdown rehypePlugins={[rehypeRaw]} remarkPlugins={[remarkGfm]}>
-                            {processedContent}
+                            {content}
                         </ReactMarkdown>
                     </div>
                     {isStreaming && (
