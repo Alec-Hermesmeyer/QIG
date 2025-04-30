@@ -8,7 +8,7 @@ import {
   forwardRef,
   useImperativeHandle
 } from 'react';
-import { Send, FileText, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lucide-react';
+import { Send, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -39,7 +39,6 @@ interface ChatProps {
   onConversationStart?: () => void;
   onStreamingChange?: (isStreaming: boolean) => void;
   isDisabled?: boolean;
-  availableContracts?: string[];
 
   // Configuration props
   temperature?: number;
@@ -64,18 +63,6 @@ const fadeIn = {
 const slideUp = {
   hidden: { y: 20, opacity: 0 },
   visible: { y: 0, opacity: 1, transition: { duration: 0.3 } }
-};
-
-const pulse = {
-  initial: { scale: 1 },
-  animate: { 
-    scale: [1, 1.05, 1],
-    transition: { 
-      duration: 1.5, 
-      repeat: Infinity,
-      repeatType: "loop" as "loop" | "reverse" | "mirror" 
-    }
-  }
 };
 
 // Configuration for Deepgram and ElevenLabs
@@ -113,7 +100,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     onConversationStart,
     onStreamingChange,
     isDisabled = false,
-    availableContracts = [],
     // Configuration props with defaults
     temperature = 0,
     seed,
@@ -129,9 +115,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [isLoading, setIsLoading] = useState(false);
   const [accumulatedContent, setAccumulatedContent] = useState('');
   const [waitingForFirstChunk, setWaitingForFirstChunk] = useState(false);
-  const [showContractSelector, setShowContractSelector] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedContract, setSelectedContract] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Speech-to-text state
@@ -471,15 +454,13 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
     // Clean up text - remove document markers, citation tags, etc.
     const cleanText = text
-  .replace(/<\/?document.*?>/g, '')
-  .replace(/<\/?source>/g, '')
-  .replace(/<\/?document_content>/g, '')
-  // Replace this empty regex with something meaningful
-  // For example, to remove citation tags:
-  .replace(/|<\/antml:cite>/g, '')
-  .replace(/<userStyle>.*?<\/userStyle>/g, '')
-  .replace(/\[\d+\]/g, '') // Remove citation numbers like [1], [2]
-  .replace(/\n\s*\n/g, '\n'); // Normalize multiple newlines
+      .replace(/<\/?document.*?>/g, '')
+      .replace(/<\/?source>/g, '')
+      .replace(/<\/?document_content>/g, '')
+      .replace(/|<\/antml:cite>/g, '')
+      .replace(/<userStyle>.*?<\/userStyle>/g, '')
+      .replace(/\[\d+\]/g, '') // Remove citation numbers like [1], [2]
+      .replace(/\n\s*\n/g, '\n'); // Normalize multiple newlines
 
 
     // Split into paragraphs and sentences
@@ -541,48 +522,48 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     // Split text into sentences for more granular control
     const sentences = cleanText.split(/(?<=[.!?])\s+/);
   
-  // Build a coherent summary from sentences
-  let summary = '';
-  for (let i = 0; i < Math.min(sentences.length, 7); i++) {
-    const sentence = sentences[i].trim();
-    
-    // Skip very short sentences that might just be acknowledgments or incomplete
-    if (sentence.length < 10 || 
-        sentence.toLowerCase().startsWith('hi') ||
-        sentence.toLowerCase().startsWith('hello') ||
-        sentence.toLowerCase().startsWith('thank')) {
-      continue;
+    // Build a coherent summary from sentences
+    let summary = '';
+    for (let i = 0; i < Math.min(sentences.length, 7); i++) {
+      const sentence = sentences[i].trim();
+      
+      // Skip very short sentences that might just be acknowledgments or incomplete
+      if (sentence.length < 10 || 
+          sentence.toLowerCase().startsWith('hi') ||
+          sentence.toLowerCase().startsWith('hello') ||
+          sentence.toLowerCase().startsWith('thank')) {
+        continue;
+      }
+      
+      summary += sentence + ' ';
+      
+      // Stop when we have a reasonable length summary
+      if (summary.length > 200 && i >= 2) break;
+      if (summary.length > 500) break;
     }
-    
-    summary += sentence + ' ';
-    
-    // Stop when we have a reasonable length summary
-    if (summary.length > 200 && i >= 2) break;
-    if (summary.length > 500) break;
-  }
   
-  // Final check - if summary somehow ended up empty or too short, use the first chunk
-  if (summary.length < 50) {
-    summary = cleanText.substring(0, 500);
-    
-    // Ensure we end with a complete sentence
-    const lastPeriod = Math.max(
-      summary.lastIndexOf('.'), 
-      summary.lastIndexOf('!'), 
-      summary.lastIndexOf('?')
-    );
-    
-    if (lastPeriod > 50) {
-      summary = summary.substring(0, lastPeriod + 1);
+    // Final check - if summary somehow ended up empty or too short, use the first chunk
+    if (summary.length < 50) {
+      summary = cleanText.substring(0, 500);
+      
+      // Ensure we end with a complete sentence
+      const lastPeriod = Math.max(
+        summary.lastIndexOf('.'), 
+        summary.lastIndexOf('!'), 
+        summary.lastIndexOf('?')
+      );
+      
+      if (lastPeriod > 50) {
+        summary = summary.substring(0, lastPeriod + 1);
+      }
     }
-  }
   
-  // One final pass to remove any remaining citation artifacts
-  return summary.trim()
-    .replace(/\s+citation\s+\d+/gi, '')
-    .replace(/\[\d+\]/g, '')
-    .replace(/\s{2,}/g, ' ');
-};
+    // One final pass to remove any remaining citation artifacts
+    return summary.trim()
+      .replace(/\s+citation\s+\d+/gi, '')
+      .replace(/\[\d+\]/g, '')
+      .replace(/\s{2,}/g, ' ');
+  };
 
   // IMPROVED: Text-to-speech generation with better error handling and quality settings
   const generateTTS = async (text: string) => {
@@ -696,6 +677,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       setIsTTSLoading(false);
     }
   };
+  
   // IMPROVED: Play/pause the TTS audio
   const toggleAudio = () => {
     if (!audioRef.current || !audioSrc) return;
@@ -709,18 +691,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       });
       setIsPlaying(true);
     }
-  };
-
-  const filteredContracts = availableContracts.filter(contract =>
-    contract.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const selectContract = (contractName: string) => {
-    setSelectedContract(contractName);
-    setShowContractSelector(false);
-    // Modified to not include specific analysis command
-    setInput(`Ask about ${contractName}`);
-    if (inputRef.current) inputRef.current.focus();
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -1117,127 +1087,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {showContractSelector && (
-          <motion.div 
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setShowContractSelector(false)}
-          >
-            <motion.div 
-              className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] flex flex-col"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-lg font-semibold mb-4">
-                Select Contract
-              </h3>
-
-              <motion.div 
-                className="relative mb-4"
-                initial={{ y: 10, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: 0.1 }}
-              >
-                <Search
-                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-                  size={16}
-                />
-                <input
-                  type="text"
-                  placeholder="Search contracts..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  autoFocus
-                />
-              </motion.div>
-
-              <motion.div 
-                className="overflow-y-auto flex-1 mb-4"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.2 }}
-              >
-                {filteredContracts.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">
-                    No contracts found
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredContracts.map((contract, index) => (
-                      <motion.button
-                        key={index}
-                        className="w-full text-left p-3 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"
-                        onClick={() => selectContract(contract)}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.1 + index * 0.05 }}
-                        whileHover={{ backgroundColor: "#f3f4f6", x: 5 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        <FileText size={16} className="text-indigo-600" />
-                        <span className="truncate">{contract}</span>
-                      </motion.button>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-
-              <motion.div 
-                className="flex justify-end gap-2"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-              >
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setShowContractSelector(false)}
-                    className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                  >
-                    Cancel
-                  </Button>
-                </motion.div>
-              </motion.div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {selectedContract && (
-          <motion.div 
-            className="mb-4 flex items-center gap-2 text-sm bg-indigo-50 text-indigo-700 p-2 rounded-md"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.3 }}
-            variants={pulse}
-            whileHover={{ backgroundColor: "#e0e7ff" }}
-          >
-            <FileText size={16} />
-            <span>
-              Selected contract: <strong>{selectedContract}</strong>
-            </span>
-            <motion.button
-              onClick={() => setSelectedContract(null)}
-              className="ml-auto text-indigo-500 hover:text-indigo-700"
-              whileHover={{ scale: 1.2, rotate: 90 }}
-              whileTap={{ scale: 0.9 }}
-              transition={{ duration: 0.2 }}
-            >
-              ×
-            </motion.button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Speech error message */}
       <AnimatePresence>
         {speechError && (
@@ -1293,13 +1142,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={
-            isRecording
-              ? "Speak or type your message..."
-              : selectedContract
-                ? `Ask about ${selectedContract}...`
-                : 'Type your message or select a contract...'
-          }
+          placeholder={isRecording ? "Speak or type your message..." : "Type your message..."}
           className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white shadow-md"
           disabled={isLoading || isDisabled}
           initial={{ opacity: 0, width: '90%' }}
@@ -1335,26 +1178,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             )}
           </Button>
         </motion.div>
-
-        {availableContracts.length > 0 && (
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3, delay: 0.2 }}
-          >
-            <Button
-              type="button"
-              onClick={() => setShowContractSelector(true)}
-              disabled={isLoading || isDisabled}
-              className="h-12 px-4 rounded-md bg-gray-100 border border-gray-300 hover:bg-gray-200 text-gray-700"
-            >
-              <FileText className="h-5 w-5 mr-2" />
-              Contracts
-            </Button>
-          </motion.div>
-        )}
 
         <motion.div
           whileHover={{ scale: 1.05 }}
