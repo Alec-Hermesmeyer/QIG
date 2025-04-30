@@ -25,6 +25,9 @@ import { FileCabinetPanel } from "@/components/FileCabinetPanel";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ContractRiskAnalysisModal from "@/components/EnhancedRiskAnalysisModal";
+import { chatHistoryService, ChatMessage as HistoryMessage } from '@/services/chatHistoryService';
+import ChatHistoryPanel from '@/components/ChatHistoryPanel';
+
 
 
 // Define interface for settings state
@@ -112,6 +115,8 @@ function SettingsSidebar({
     retrievalMode: 'hybrid'
   };
 
+
+
   // Initialize settings with defaults and any provided initial settings
   const [settings, setSettings] = useState<SettingsState>({
     ...defaultSettings,
@@ -165,7 +170,7 @@ function SettingsSidebar({
             <SheetHeader className="mb-6">
               <SheetTitle>Configure answer generation</SheetTitle>
             </SheetHeader>
-            <motion.div 
+            <motion.div
               className="space-y-6"
               variants={staggerChildren}
               initial="hidden"
@@ -419,7 +424,7 @@ function SettingsSidebar({
               </motion.div>
 
               {/* Action Buttons */}
-              <motion.div 
+              <motion.div
                 className="flex gap-4"
                 variants={slideUp}
                 transition={{ delay: 0.2 }}
@@ -607,7 +612,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
           <AnimatePresence mode="wait">
             {/* Raw text panel */}
             {activeTab === 0 && (
-              <motion.div 
+              <motion.div
                 key="raw"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -623,7 +628,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
 
             {/* All extracted risks */}
             {activeTab === 1 && extractedRisks.length > 0 && (
-              <motion.div 
+              <motion.div
                 key="all-risks"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -639,7 +644,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
 
             {/* Critical risks */}
             {activeTab === 2 && criticalRisks.length > 0 && (
-              <motion.div 
+              <motion.div
                 key="critical-risks"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -655,7 +660,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
 
             {/* High risks */}
             {activeTab === 3 && highRisks.length > 0 && (
-              <motion.div 
+              <motion.div
                 key="high-risks"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -671,7 +676,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
 
             {/* Mitigation suggestions */}
             {activeTab === 4 && extractedMitigations.length > 0 && (
-              <motion.div 
+              <motion.div
                 key="mitigation"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -679,7 +684,7 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
                 className="p-4"
               >
                 <h3 className="text-lg font-semibold mb-4">Mitigation Strategies</h3>
-                <motion.div 
+                <motion.div
                   className="bg-green-50 border-l-4 border-green-400 p-4"
                   initial={{ x: -20, opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
@@ -687,8 +692,8 @@ const StyledFallbackAnalysis = ({ analysisText }: { analysisText: string }) => {
                 >
                   <ul className="list-disc ml-5 space-y-2">
                     {extractedMitigations.map((point, index) => (
-                      <motion.li 
-                        key={index} 
+                      <motion.li
+                        key={index}
                         className="text-gray-800"
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
@@ -836,6 +841,39 @@ export default function Page() {
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
   const chatRef = useRef<ImprovedChatHandle>(null);
   const [showFileCabinetPanel, setShowFileCabinetPanel] = useState(false);
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  // Add this effect to load the active session on mount
+  useEffect(() => {
+    // Try to get active session from localStorage
+    const activeSession = chatHistoryService.getActiveSession();
+
+    if (activeSession) {
+      setActiveSessionId(activeSession.id);
+
+      // Load messages from the active session
+      if (activeSession.messages.length > 0) {
+        // Convert the format to your ChatMessage format
+        const formattedMessages = activeSession.messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        }));
+
+        setChatHistory(formattedMessages);
+
+        // If there are messages, the conversation has started
+        if (formattedMessages.length > 0) {
+          setConversationStarted(true);
+        }
+      }
+    } else {
+      // Create a new session if none exists
+      const newSession = chatHistoryService.createSession();
+      setActiveSessionId(newSession.id);
+    }
+  }, []);
 
   // Scroll to latest message
   useEffect(() => {
@@ -853,15 +891,7 @@ export default function Page() {
   }, [chatConfig, chatRef.current]);
 
   // Clear chat functionality
-  const clearChat = () => {
-    setChatHistory([]);
-    setConversationStarted(false);
-    setIsStreaming(false);
-    setContractAnalysisResults(null);
-    setShowAnalysisPanel(false);
-    setShowContractPanel(false);
-    setCurrentMessageForAnalysis(null);
-  };
+
 
   // Handle logout
   const handleLogout = async () => {
@@ -910,16 +940,26 @@ export default function Page() {
   };
 
   // Handle new message
+  // Modify your handleUserMessage and handleAssistantMessage functions
   const handleUserMessage = (content: string) => {
     const newMessage: ChatMessage = {
       role: 'user',
       content,
       timestamp: new Date().toISOString()
     };
-  
+
     setChatHistory(prev => [...prev, newMessage]);
     setMostRecentUserMessage(content);
-  
+
+    // Save message to active session
+    if (activeSessionId) {
+      chatHistoryService.addMessage(activeSessionId, {
+        role: 'user',
+        content,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     if (!conversationStarted) {
       setConversationStarted(true);
     }
@@ -934,8 +974,77 @@ export default function Page() {
     };
 
     setChatHistory(prev => [...prev, newMessage]);
+
+    // Save message to active session
+    if (activeSessionId) {
+      chatHistoryService.addMessage(activeSessionId, {
+        role: 'assistant',
+        content,
+        timestamp: new Date().toISOString()
+      });
+    }
   };
 
+  // Add these helper functions for session management
+  const handleSelectSession = (sessionId: string) => {
+    if (sessionId === activeSessionId) {
+      // Already selected
+      setHistoryPanelOpen(false);
+      return;
+    }
+
+    const session = chatHistoryService.getSession(sessionId);
+    if (!session) return;
+
+    // Set as active session
+    chatHistoryService.setActiveSession(sessionId);
+    setActiveSessionId(sessionId);
+
+    // Load messages from the session
+    const formattedMessages = session.messages.map(msg => ({
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp
+    }));
+
+    // Update chat history
+    setChatHistory(formattedMessages);
+
+    // Update conversation state
+    setConversationStarted(formattedMessages.length > 0);
+
+    // Close the panel
+    setHistoryPanelOpen(false);
+  };
+
+  const handleNewSession = () => {
+    // Create a new session
+    const newSession = chatHistoryService.createSession();
+    setActiveSessionId(newSession.id);
+
+    // Clear chat history
+    setChatHistory([]);
+    setConversationStarted(false);
+
+    // Close the panel
+    setHistoryPanelOpen(false);
+  };
+
+  // Modify your clearChat function
+  const clearChat = () => {
+    setChatHistory([]);
+    setConversationStarted(false);
+    setIsStreaming(false);
+    setContractAnalysisResults(null);
+    setShowAnalysisPanel(false);
+    setShowContractPanel(false);
+    setCurrentMessageForAnalysis(null);
+
+    // Clear messages in the active session
+    if (activeSessionId) {
+      chatHistoryService.clearSessionMessages(activeSessionId);
+    }
+  };
   // Handle contract analysis completion
   const handleAnalysisComplete = (analysisText: string, risks: Risk[], mitigationPoints: string[], contractText: string) => {
     console.log("Analysis complete, risks:", risks.length, "mitigation points:", mitigationPoints.length);
@@ -985,7 +1094,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
     <ProtectedRoute>
       <div className="min-h-screen flex flex-col">
         {/* Top Navigation */}
-        <motion.header 
+        <motion.header
           className="bg-[#1C1C1C] text-white"
           initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -995,7 +1104,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             <Link href="/" className="text-lg font-medium">
               QIG Contract Analyst
             </Link>
-            <motion.div 
+            <motion.div
               className="flex items-center gap-6"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1006,7 +1115,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
               {/* User info and logout */}
               {user && (
-                <motion.div 
+                <motion.div
                   className="flex items-center gap-3 ml-6"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -1030,14 +1139,27 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         </motion.header>
 
         {/* Secondary Toolbar */}
-        <motion.div 
+        <motion.div
           className="bg-[#F5F5F5]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3, duration: 0.4 }}
         >
           <div className="h-12 px-4 flex items-center justify-between max-w-7xl mx-auto">
-            <Button variant="ghost" size="sm" className="flex items-center gap-2 cursor-pointer">
+            <ChatHistoryPanel
+              isOpen={historyPanelOpen}
+              onClose={() => setHistoryPanelOpen(false)}
+              onSelectSession={handleSelectSession}
+              onNewSession={handleNewSession}
+              activeSessionId={activeSessionId}
+            />
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex items-center gap-2 cursor-pointer"
+              onClick={() => setHistoryPanelOpen(true)}
+            >
               <History className="h-4 w-4" />
               Open chat history
             </Button>
@@ -1094,14 +1216,14 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         <main className="flex-1 flex flex-col items-center px-4 py-16 bg-[#F5F5F5]">
           {!conversationStarted && (
             <>
-              <motion.div 
+              <motion.div
                 className="text-center mb-16"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.5, duration: 0.5 }}
               >
                 <div className="relative mb-4">
-                  <motion.h1 
+                  <motion.h1
                     className="text-4xl font-bold mb-2 mt-40"
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -1110,19 +1232,19 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     Chat with your data
                   </motion.h1>
                   {/* Decorative Stars */}
-                  <motion.div 
+                  <motion.div
                     className="absolute -top-36 right-[calc(50%-30px)] text-[#6B5FCD]"
                     initial={{ rotate: -10, opacity: 0 }}
                     animate={{ rotate: 0, opacity: 1 }}
                     transition={{ delay: 0.8, duration: 0.5 }}
                   >
-                    <motion.svg 
+                    <motion.svg
                       animate={{ rotate: 360 }}
                       transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-                      width="100" 
-                      height="100" 
-                      viewBox="0 0 40 40" 
-                      fill="none" 
+                      width="100"
+                      height="100"
+                      viewBox="0 0 40 40"
+                      fill="none"
                       xmlns="http://www.w3.org/2000/svg"
                     >
                       <path d="M20 0L25 15L40 20L25 25L20 40L15 25L0 20L15 15L20 0Z" fill="currentColor" />
@@ -1141,7 +1263,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     </motion.svg>
                   </motion.div>
                 </div>
-                <motion.p 
+                <motion.p
                   className="text-gray-600 font-bold"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1152,7 +1274,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               </motion.div>
 
               {/* Example Questions */}
-              <motion.div 
+              <motion.div
                 className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl mb-8"
                 variants={staggerChildren}
                 initial="hidden"
@@ -1168,8 +1290,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     className="px-4 py-12 bg-gray-200 rounded-lg text-left hover:bg-gray-300 transition-colors"
                     onClick={() => chatRef.current?.submitMessage(question)}
                     variants={slideUp}
-                    whileHover={{ 
-                      scale: 1.03, 
+                    whileHover={{
+                      scale: 1.03,
                       boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
                       backgroundColor: "#E5E7EB"
                     }}
@@ -1191,8 +1313,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               <div className="w-full mb-4">
                 <AnimatePresence initial={false}>
                   {chatHistory.map((message, index) => (
-                    <motion.div 
-                      key={index} 
+                    <motion.div
+                      key={index}
                       className="mb-4"
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -1201,7 +1323,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       {/* User Message */}
                       {message.role === 'user' && (
                         <div className="w-full flex justify-end">
-                          <motion.div 
+                          <motion.div
                             className="bg-blue-100 text-right p-4 rounded-lg max-w-lg"
                             initial={{ x: 50, opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
@@ -1235,8 +1357,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                             }}
                             onFollowupQuestionClicked={handleFollowupQuestionClicked}
                             showFollowupQuestions={settings.suggestFollowUp}
-                           
-                            
+
+
                           />
                         </motion.div>
                       )}
@@ -1247,7 +1369,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               </div>
 
               {/* Chat Input */}
-              <motion.div 
+              <motion.div
                 className="w-full max-w-7xl flex justify-center mb-4"
                 initial={conversationStarted ? { opacity: 1 } : { opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1271,7 +1393,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
               {/* Contract Analysis Button - always visible when chat has started */}
               {conversationStarted && (
-                <motion.div 
+                <motion.div
                   className="w-full mt-6 flex justify-center"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1281,14 +1403,14 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                   >
-                    
+
                   </motion.div>
                 </motion.div>
               )}
             </div>
 
             {/* Contract Risk Analysis Modal - replaces old panel */}
-            <ContractRiskAnalysisModal 
+            <ContractRiskAnalysisModal
               isOpen={showContractPanel}
               onClose={() => setShowContractPanel(false)}
               analysisData={contractAnalysisResults ? {
@@ -1348,6 +1470,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           initialSettings={settings}
           onSettingsChange={handleSettingsChange}
         />
+
       </div>
     </ProtectedRoute>
   );
