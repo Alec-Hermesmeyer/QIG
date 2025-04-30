@@ -696,41 +696,48 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-
+  
     const userMessage = input.trim();
     setInput('');
     setIsLoading(true);
     setAccumulatedContent('');
     setWaitingForFirstChunk(true);
-
+  
     if (onStreamingChange) onStreamingChange(true);
     if (onConversationStart) onConversationStart();
-
+  
     // Add message to history
     const newUserMessage = { role: 'user', content: userMessage };
     setAllMessages(prev => [...prev, newUserMessage]);
-
+  
     // Notify parent component
     onUserMessage(userMessage);
-
+  
     try {
       // Create a session ID
       const sessionId = localStorage.getItem('chat_session_id') ||
         Math.random().toString(36).substring(2, 15) +
         Math.random().toString(36).substring(2, 15);
-
+  
       // Store session ID for future use
       localStorage.setItem('chat_session_id', sessionId);
-
-      // Format messages in old UI format (last message only)
-      const formattedMessages = [{
+  
+      // Include all previous messages for context, plus the new message
+      // This is the key change to maintain conversation context
+      const formattedMessages = allMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+      
+      // Add the new user message
+      formattedMessages.push({
         role: 'user',
         content: userMessage
-      }];
-
+      });
+  
       // Prepare the request body with configuration options matching old UI format
       const requestBody = {
-        messages: formattedMessages,
+        messages: formattedMessages, // Now includes conversation history
         context: {
           overrides: {
             prompt_template: config.promptTemplate,
@@ -753,19 +760,20 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         },
         session_state: sessionId
       };
-
+  
       console.log("Sending chat request with config:", {
         temperature: config.temperature,
         seed: config.seed,
         stream: config.streamResponse,
         suggestFollowUp: config.suggestFollowUpQuestions,
         hasPromptTemplate: !!config.promptTemplate,
-        hasSearchConfig: !!config.searchConfig
+        hasSearchConfig: !!config.searchConfig,
+        messageCount: formattedMessages.length // Log message count for debugging
       });
-
+  
       // Choose endpoint based on stream configuration
       let endpoint, response;
-
+  
       if (config.streamResponse) {
         // Use our new stream API route
         endpoint = '/api/chat-stream';
@@ -774,11 +782,11 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
         });
-
+  
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }
-
+  
         await handleStreamingResponse(response);
       } else {
         // Use the regular non-streaming endpoint
@@ -788,11 +796,11 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
         });
-
+  
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }
-
+  
         await handleNonStreamingResponse(response);
       }
       
@@ -801,10 +809,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     } catch (error) {
       console.error('Error fetching response:', error);
       const errorMessage = "I'm sorry, I encountered an error processing your request.";
-
+  
       // Add error message to history
       setAllMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
-
+  
       // Notify parent component
       onAssistantMessage(errorMessage);
     } finally {
