@@ -1436,7 +1436,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                                 handleSupportingContentClicked(index);
                               }}
                               onFollowupQuestionClicked={handleFollowupQuestionClicked}
-                              showFollowupQuestions={settings.suggestFollowUp}
+                              showFollowupQuestions={true}
                             />
                           </motion.div>
                         )}
