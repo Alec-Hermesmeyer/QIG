@@ -1,12 +1,14 @@
 'use client';
 
 import { v4 as uuidv4 } from 'uuid';
+import { SearchResults } from '@/types/groundx';
 
 // Define interfaces for type safety
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  searchResults?: SearchResults;
 }
 
 export interface ChatSession {

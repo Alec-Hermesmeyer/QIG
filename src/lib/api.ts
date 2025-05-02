@@ -184,24 +184,35 @@ import {
   }
   
  // lib/api.ts
-export function getCitationFilePath(citation: string): string {
+ export function getCitationFilePath(citation: string): string {
+  if (!citation) return '';
+  
+  // Check if this is a GroundX document ID 
+  // GroundX IDs are typically numeric or UUIDs
+  if (/^[0-9]+$/.test(citation) || 
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(citation)) {
+    // Return the path to our GroundX proxy API
+    return `/api/groundx/proxy/${citation}/view`;
+  }
+  
+  // Handle citations that look like filenames with groundx prefix
+  if (citation.includes('.') || citation.includes('groundx:')) {
+    // Check for GroundX documents with a groundx:// prefix or metadata
+    if (citation.startsWith('groundx://') || citation.includes('groundx:')) {
+      // Extract document ID from the citation
+      const documentId = citation.match(/groundx:\/\/([^\/]+)/)?.[1] || 
+                          citation.match(/groundx:([^:]+)/)?.[1];
+      
+      if (documentId) {
+        return `/api/groundx/proxy/${documentId}/view`;
+      }
+    }
+  }
+  
+  // Default case: use the existing proxy-content endpoint
   return `/api/proxy-content?filename=${encodeURIComponent(citation)}`;
 }
 
-  
-  export async function uploadFileApi(request: FormData): Promise<SimpleAPIResponse> {
-    const response = await fetch("/upload", {
-      method: "POST",
-      body: request
-    });
-  
-    if (!response.ok) {
-      throw new Error(`Uploading files failed: ${response.statusText}`);
-    }
-  
-    const dataResponse: SimpleAPIResponse = await response.json();
-    return dataResponse;
-  }
   
   export async function deleteUploadedFileApi(filename: string): Promise<SimpleAPIResponse> {
     const response = await fetch("/delete_uploaded", {

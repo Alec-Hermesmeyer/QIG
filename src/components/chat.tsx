@@ -11,6 +11,7 @@ import {
 import { Send, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useRAG } from './RagChatProvider';
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -39,7 +40,10 @@ interface ChatProps {
   onConversationStart?: () => void;
   onStreamingChange?: (isStreaming: boolean) => void;
   isDisabled?: boolean;
-
+  useRAG?: boolean;
+  ragBucketId?: number | null;
+  isRAGEnabled?: boolean;
+  selectedBucketId?: string | null;
   // Configuration props
   temperature?: number;
   seed?: string;
@@ -94,22 +98,28 @@ interface DeepgramResponse {
 }
 
 export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function ImprovedChat(
-  {
+  props,
+  ref
+) {
+  // Extract all the props you need
+  const {
     onUserMessage,
     onAssistantMessage,
     onConversationStart,
     onStreamingChange,
     isDisabled = false,
-    // Configuration props with defaults
     temperature = 0,
     seed,
     streamResponses = true,
     suggestFollowUpQuestions = false,
     promptTemplate,
+    useRAG = false,
+    ragBucketId = null,
+    isRAGEnabled,
+    selectedBucketId,
     searchConfig
-  },
-  ref
-) {
+  } = props;
+ 
   // Original state
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -692,6 +702,12 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       setIsPlaying(true);
     }
   };
+  const ragContext = { isRAGEnabled: useRAG, selectedBucket: null }; // Add selectedBucket with a default value
+  
+  // Determine if RAG should be used (from props or context)
+  const shouldUseRAG = useRAG || ragContext.isRAGEnabled;
+  const activeBucketId = ragBucketId || ragContext.selectedBucket || null; // Ensure fallback if selectedBucket is undefined
+
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -723,7 +739,6 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       localStorage.setItem('chat_session_id', sessionId);
   
       // Include all previous messages for context, plus the new message
-      // This is the key change to maintain conversation context
       const formattedMessages = allMessages.map(msg => ({
         role: msg.role,
         content: msg.content
@@ -735,72 +750,84 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         content: userMessage
       });
   
-      // Prepare the request body with configuration options matching old UI format
-      const requestBody = {
-        messages: formattedMessages, // Now includes conversation history
-        context: {
-          overrides: {
-            prompt_template: config.promptTemplate,
-            top: 3,
-            temperature: config.temperature || 0,
-            minimum_search_score: config.searchConfig?.minSearchScore || 0,
-            minimum_reranker_score: config.searchConfig?.minRerankerScore || 0,
-            retrieval_mode: config.searchConfig?.retrievalMode || "hybrid",
-            semantic_ranker: config.searchConfig?.useSemanticRanker || true,
-            semantic_captions: config.searchConfig?.useSemanticCaptions || false,
-            query_rewriting: false,
-            suggest_followup_questions: config.suggestFollowUpQuestions || false,
-            use_oid_security_filter: false,
-            use_groups_security_filter: false,
-            vector_fields: ["embedding"],
-            use_gpt4v: false,
-            gpt4v_input: "textAndImages",
-            language: "en"
-          }
-        },
-        session_state: sessionId
-      };
+      // Check if RAG should be used
+      const shouldUseRAG = props.isRAGEnabled && props.selectedBucketId;
+      
+      // Debug for RAG usage
+      console.log('[ImprovedChat] RAG enabled:', props.isRAGEnabled);
+      console.log('[ImprovedChat] Selected bucket ID:', props.selectedBucketId);
+      console.log('[ImprovedChat] Using RAG:', shouldUseRAG);
   
-      console.log("Sending chat request with config:", {
-        temperature: config.temperature,
-        seed: config.seed,
-        stream: config.streamResponse,
-        suggestFollowUp: config.suggestFollowUpQuestions,
-        hasPromptTemplate: !!config.promptTemplate,
-        hasSearchConfig: !!config.searchConfig,
-        messageCount: formattedMessages.length // Log message count for debugging
+      // Determine which API to use
+      let endpoint, requestBody, response;
+      
+      if (shouldUseRAG) {
+        console.log('[ImprovedChat] Using GroundX RAG with bucket:', props.selectedBucketId);
+        
+        // Use the GroundX RAG endpoint
+        endpoint = '/api/groundx/rag';
+        requestBody = {
+          query: userMessage,
+          bucketId: props.selectedBucketId,
+          messages: formattedMessages, // Include conversation history
+          config: {
+            temperature: config.temperature || 0,
+            stream: config.streamResponse
+          }
+        };
+      } else {
+        console.log('[ImprovedChat] Using standard chat API');
+        
+        // Use regular chat API with standard format
+        endpoint = config.streamResponse ? '/api/chat-stream' : '/api/chat';
+        requestBody = {
+          messages: formattedMessages,
+          context: {
+            overrides: {
+              prompt_template: config.promptTemplate,
+              top: 3,
+              temperature: config.temperature || 0,
+              minimum_search_score: config.searchConfig?.minSearchScore || 0,
+              minimum_reranker_score: config.searchConfig?.minRerankerScore || 0,
+              retrieval_mode: config.searchConfig?.retrievalMode || "hybrid",
+              semantic_ranker: config.searchConfig?.useSemanticRanker || true,
+              semantic_captions: config.searchConfig?.useSemanticCaptions || false,
+              query_rewriting: false,
+              suggest_followup_questions: config.suggestFollowUpQuestions || false,
+              use_oid_security_filter: false,
+              use_groups_security_filter: false,
+              vector_fields: ["embedding"],
+              use_gpt4v: false,
+              gpt4v_input: "textAndImages",
+              language: "en"
+            }
+          },
+          session_state: sessionId
+        };
+      }
+  
+      console.log('[ImprovedChat] Sending request to:', endpoint);
+      
+      // Send the request
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
       });
   
-      // Choose endpoint based on stream configuration
-      let endpoint, response;
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
   
-      if (config.streamResponse) {
-        // Use our new stream API route
-        endpoint = '/api/chat-stream';
-        response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
-        });
-  
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-  
+      // For RAG responses, always use the non-streaming handler
+      // since we need to process the search results
+      if (shouldUseRAG) {
+        await handleNonStreamingRAGResponse(response);
+      }
+      // Otherwise use the stream config
+      else if (config.streamResponse) {
         await handleStreamingResponse(response);
       } else {
-        // Use the regular non-streaming endpoint
-        endpoint = '/api/chat';
-        response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
-        });
-  
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-  
         await handleNonStreamingResponse(response);
       }
       
@@ -820,52 +847,83 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       if (onStreamingChange) onStreamingChange(false);
     }
   };
-
+  const handleNonStreamingRAGResponse = async (response: Response) => {
+    const data = await response.json();
+    let content = '';
+    let searchResults = null;
+  
+    if (data && data.success) {
+      content = data.response || "No content received from the RAG API.";
+      searchResults = data.searchResults || null;
+    } else {
+      content = data.error || "Error processing your request with the document search.";
+    }
+  
+    // Update UI with content
+    setAccumulatedContent(content);
+  
+    // Add response to history with search results
+    const messageWithSearchResults = {
+      role: 'assistant', 
+      content,
+      searchResults
+    };
+    
+    setAllMessages(prev => [...prev, messageWithSearchResults]);
+  
+    // Notify parent component with both content and search results
+    if (typeof onAssistantMessage === 'function') {
+      if (onAssistantMessage.length > 1) {
+        // If the function accepts metadata
+        (onAssistantMessage as (content: string, metadata?: any) => void)(
+          content, 
+          { searchResults }
+        );
+      } else {
+        // Basic version that only accepts content
+        onAssistantMessage(content);
+      }
+    }
+    
+    // Generate TTS for the response if available
+    if (content) {
+      generateTTS(content);
+    }
+  };
+  
   // Advanced handler for streaming responses with complete context filtering
   const handleStreamingResponse = async (response: Response) => {
     if (!response.body) {
       throw new Error('No response body available');
     }
-
+  
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
     let receivedFirstContentChunk = false;
     let isFullyGeneratedResponse = false;
-
+    let searchResults = null;
+  
     try {
       // Check if the first chunk is a complete response (non-streaming backend fallback)
       let contentStarted = false;
-
+  
       while (true) {
         const { done, value } = await reader.read();
-
+  
         if (done) {
           break;
         }
-
+  
         if (waitingForFirstChunk) {
           setWaitingForFirstChunk(false);
         }
-
+  
         const text = decoder.decode(value, { stream: true });
-
-        // Detect if we're receiving a fully generated response instead of a stream
-        if (!contentStarted && text.includes('The key differences')) {
-          isFullyGeneratedResponse = true;
-
-          // Extract only the actual response content, skipping metadata
-          const fullResponseMatch = text.match(/The key differences.*?(?=<\/document_content>|$)/s);
-          if (fullResponseMatch) {
-            fullContent = fullResponseMatch[0];
-            setAccumulatedContent(fullContent);
-            break;
-          }
-        }
-
+  
         // Process as normal streaming response
         const lines = text.split('\n').filter(line => line.trim());
-
+  
         for (const line of lines) {
           // Skip document context lines
           if (line.includes('<document') ||
@@ -882,21 +940,28 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             line.includes('</search_reminders>')) {
             continue;
           }
-
+  
           try {
             // Try to parse the line as JSON
             const data = JSON.parse(line);
-
+  
+            // Extract search results if present
+            if (data.search_results) {
+              console.log("Received search results:", data.search_results);
+              searchResults = data.search_results;
+              continue;
+            }
+  
             // Skip message that just sets up the assistant role
             if (data.delta && data.delta.role === 'assistant' && !data.delta.content) {
               continue;
             }
-
+  
             // Skip any line with context data
             if (data.context || data.thoughts || data.search_results) {
               continue;
             }
-
+  
             // Process actual content in delta format
             if (data.delta && data.delta.content) {
               receivedFirstContentChunk = true;
@@ -904,7 +969,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               setAccumulatedContent(fullContent);
               continue;
             }
-
+  
             // Handle regular content format
             if (data.content && typeof data.content === 'string') {
               receivedFirstContentChunk = true;
@@ -912,10 +977,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               setAccumulatedContent(fullContent);
               continue;
             }
-
+  
           } catch (e) {
-            // Not valid JSON, check if it's the start of content (after skipping metadata)
-            if (!receivedFirstContentChunk && line.includes('The key differences')) {
+            // Not valid JSON, check if it's the start of content
+            if (!receivedFirstContentChunk && line.includes('I found information')) {
               receivedFirstContentChunk = true;
               fullContent += line;
               setAccumulatedContent(fullContent);
@@ -928,7 +993,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             // Otherwise, skip the line (likely metadata)
           }
         }
-
+  
         // If we've already processed a complete response, break
         if (isFullyGeneratedResponse) {
           break;
@@ -937,7 +1002,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     } catch (error) {
       console.error('Error processing stream:', error);
     }
-
+  
     // Clean up any remaining document tags or metadata markers
     fullContent = fullContent.replace(/<\/?document.*?>/g, '')
       .replace(/<\/?source>/g, '')
@@ -945,12 +1010,29 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       .replace(/<userStyle>.*?<\/userStyle>/g, '')
       .replace(/<automated_reminder_from_anthropic>.*?<\/automated_reminder_from_anthropic>/g, '')
       .replace(/<search_reminders>.*?<\/search_reminders>/g, '');
-
-    // Add response to history
-    setAllMessages(prev => [...prev, { role: 'assistant', content: fullContent }]);
-
+  
+    // Add response to history with search results if available
+    const newMessage = {
+      role: 'assistant', 
+      content: fullContent,
+      searchResults: searchResults
+    };
+    
+    setAllMessages(prev => [...prev, newMessage]);
+  
     // Notify parent component
-    onAssistantMessage(fullContent);
+    if (typeof onAssistantMessage === 'function') {
+      if (onAssistantMessage.length > 1) {
+        // If the parent component accepts metadata as a second parameter
+        (onAssistantMessage as (content: string, metadata?: any) => void)(
+          fullContent, 
+          { searchResults }
+        );
+      } else {
+        // Basic version that only accepts content
+        onAssistantMessage(fullContent);
+      }
+    }
     
     // Generate TTS for the response
     if (fullContent) {
