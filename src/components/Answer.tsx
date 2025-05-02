@@ -2022,6 +2022,13 @@ ${allSources.length > 0 ? `I found ${allSources.length} documents with informati
         
         return typeCounts;
     };
+    const InsightCard: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+        <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
+          <h4 className="text-sm font-semibold mb-2 text-green-600">{title}</h4>
+          {children}
+        </div>
+      );
+      
 
     // Animations
     const containerVariants = {
@@ -2145,8 +2152,8 @@ ${allSources.length > 0 ? `I found ${allSources.length} documents with informati
                             color: themeStyles.primaryColor 
                         }}
                     >
-                        <Sparkles size={12} className="mr-1" />
-                        GroundX v2
+                        
+                        
                     </motion.span>
                     {metadata?.version && (
                         <motion.span
@@ -3010,8 +3017,7 @@ ${allSources.length > 0 ? `I found ${allSources.length} documents with informati
                                                 color: '#F59E0B' 
                                             }}
                                         >
-                                            <Sparkles size={12} className="mr-1" />
-                                            GroundX Analysis
+                                            
                                         </span>
                                     </div>
                                     
@@ -3139,8 +3145,7 @@ ${allSources.length > 0 ? `I found ${allSources.length} documents with informati
                                                     color: themeStyles.primaryColor 
                                                 }}
                                             >
-                                                <Sparkles size={12} className="mr-1" />
-                                                GroundX
+                                               
                                             </span>
                                         </div>
                                     </div>
@@ -3996,195 +4001,124 @@ ${allSources.length > 0 ? `I found ${allSources.length} documents with informati
                         
                         {/* Insights Tab */}
                         {activeTab === 'insights' && hasSearchInsights && (
-                            <motion.div
-                                key="insights-tab"
-                                variants={tabAnimation}
-                                initial="initial"
-                                animate="animate"
-                                exit="exit"
-                                transition={{ duration: 0.3 }}
-                                className="py-4"
-                            >
-                                <div 
-                                    className="p-4 rounded-lg border"
-                                    style={{ 
-                                        backgroundColor: `rgba(16, 185, 129, 0.05)`, 
-                                        borderColor: `rgba(16, 185, 129, 0.2)` 
-                                    }}
-                                >
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-lg font-medium flex items-center" style={{ color: '#10B981' }}>
-                                            <BarChart size={18} className="mr-2" />
-                                            Search Insights
-                                        </h3>
-                                        
-                                        <span 
-                                            className="px-2 py-1 text-xs rounded-full flex items-center"
-                                            style={{ 
-                                                backgroundColor: 'rgba(16, 185, 129, 0.1)', 
-                                                color: '#10B981' 
-                                            }}
-                                        >
-                                            <Sparkles size={12} className="mr-1" />
-                                            GroundX Analytics
-                                        </span>
-                                    </div>
-                                    
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                        {/* Key Terms */}
-                                        {searchInsights?.keyTerms && searchInsights.keyTerms.length > 0 && (
-                                            <div 
-                                                className="p-3 rounded-md border"
-                                                style={{ 
-                                                    backgroundColor: themeStyles.cardBackgroundColor, 
-                                                    borderColor: 'rgba(16, 185, 129, 0.2)' 
-                                                }}
-                                            >
-                                                <h4 className="text-sm font-medium mb-2" style={{ color: '#10B981' }}>Key Terms</h4>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {searchInsights.keyTerms.map((term, i) => (
-                                                        <span 
-                                                            key={i}
-                                                            className="px-2 py-1 rounded-full text-xs"
-                                                            style={{ 
-                                                                backgroundColor: 'rgba(16, 185, 129, 0.1)', 
-                                                                color: '#10B981' 
-                                                            }}
-                                                        >
-                                                            {term}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* Query Analysis */}
-                                        {searchInsights?.queryAnalysis && (
-                                            <div 
-                                                className="p-3 rounded-md border"
-                                                style={{ 
-                                                    backgroundColor: themeStyles.cardBackgroundColor, 
-                                                    borderColor: 'rgba(16, 185, 129, 0.2)' 
-                                                }}
-                                            >
-                                                <h4 className="text-sm font-medium mb-2" style={{ color: '#10B981' }}>Query Analysis</h4>
-                                                <div className="space-y-1 text-sm">
-                                                    {Object.entries(searchInsights.queryAnalysis).map(([key, value], i) => (
-                                                        <div key={i} className="flex items-start">
-                                                            <span className="font-medium mr-2">{key}:</span>
-                                                            <span className="flex-1">
-                                                                {typeof value === 'string' ? value : JSON.stringify(value)}
-                                                            </span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* Suggested Queries */}
-                                        {searchInsights?.suggestedQueries && searchInsights.suggestedQueries.length > 0 && (
-                                            <div 
-                                                className="p-3 rounded-md border"
-                                                style={{ 
-                                                    backgroundColor: themeStyles.cardBackgroundColor, 
-                                                    borderColor: 'rgba(16, 185, 129, 0.2)' 
-                                                }}
-                                            >
-                                                <h4 className="text-sm font-medium mb-2" style={{ color: '#10B981' }}>Suggested Follow-Up Questions</h4>
-                                                <div className="space-y-1">
-                                                    {searchInsights.suggestedQueries.map((query, i) => (
-                                                        <button 
-                                                            key={i}
-                                                            onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(query)}
-                                                            className="flex items-center text-sm p-1.5 rounded w-full text-left hover:bg-green-50"
-                                                            style={{ color: themeStyles.textColor }}
-                                                        >
-                                                            <ArrowRight size={14} className="mr-2 flex-shrink-0" style={{ color: '#10B981' }} />
-                                                            <span>{query}</span>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* Source Relevance */}
-                                        {searchInsights?.sourceRelevance && searchInsights.sourceRelevance.length > 0 && (
-                                            <div 
-                                                className="p-3 rounded-md border"
-                                                style={{ 
-                                                    backgroundColor: themeStyles.cardBackgroundColor, 
-                                                    borderColor: 'rgba(16, 185, 129, 0.2)' 
-                                                }}
-                                            >
-                                                <h4 className="text-sm font-medium mb-2" style={{ color: '#10B981' }}>Top Source Relevance</h4>
-                                                <div className="space-y-2 text-sm max-h-36 overflow-y-auto">
-                                                    {searchInsights.sourceRelevance.map((source, i) => (
-                                                        <div 
-                                                            key={i} 
-                                                            className="flex items-start p-1.5 rounded"
-                                                            style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)' }}
-                                                        >
-                                                            <span className="font-medium mr-2 text-green-500">{i+1}.</span>
-                                                            <div className="flex-1">
-                                                                <div className="font-medium">{source.fileName}</div>
-                                                                {source.score !== undefined && (
-                                                                    <div className="text-xs mt-1 flex items-center">
-                                                                        <div className="mr-1">Score:</div>
-                                                                        <div 
-                                                                            className="flex-grow h-1.5 rounded-full w-24"
-                                                                            style={{ backgroundColor: 'rgba(16, 185, 129, 0.2)' }}
-                                                                        >
-                                                                            <div 
-                                                                                className="h-1.5 rounded-full"
-                                                                                style={{ 
-                                                                                    width: `${source.score * 100}%`,
-                                                                                    backgroundColor: '#10B981'
-                                                                                }}
-                                                                            />
-                                                                        </div>
-                                                                        <div className="ml-1">{(source.score * 100).toFixed(0)}%</div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                    
-                                    {/* Search Execution Details */}
-                                    {searchInsights?.executionDetails && (
-                                        <div 
-                                            className="p-3 rounded-md border text-xs"
-                                            style={{ 
-                                                backgroundColor: themeStyles.cardBackgroundColor, 
-                                                borderColor: 'rgba(16, 185, 129, 0.2)' 
-                                            }}
-                                        >
-                                            <div className="flex items-center justify-between mb-2">
-                                                <h4 className="font-medium" style={{ color: '#10B981' }}>Execution Details</h4>
-                                                <button
-                                                    onClick={() => {
-                                                        const el = document.getElementById(`execution-details-${index}`);
-                                                        if (el) el.classList.toggle('hidden');
-                                                    }}
-                                                    className="text-xs"
-                                                >
-                                                    Show/Hide
-                                                </button>
-                                            </div>
-                                            <pre 
-                                                id={`execution-details-${index}`}
-                                                className="whitespace-pre-wrap hidden"
-                                            >
-                                                {JSON.stringify(searchInsights.executionDetails, null, 2)}
-                                            </pre>
-                                        </div>
-                                    )}
-                                </div>
-                            </motion.div>
-                        )}
+  <motion.div
+    key="insights-tab"
+    variants={tabAnimation}
+    initial="initial"
+    animate="animate"
+    exit="exit"
+    transition={{ duration: 0.3 }}
+    className="py-4"
+  >
+    <div className="p-4 rounded-lg border border-green-300 bg-green-50/10">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-medium flex items-center text-green-500">
+          <BarChart size={18} className="mr-2" />
+          Search Insights
+        </h3>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+
+        {/* Key Terms */}
+        {searchInsights?.keyTerms?.length > 0 && (
+          <InsightCard title="Key Terms">
+            <div className="flex flex-wrap gap-2">
+              {searchInsights.keyTerms.map((term, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-600"
+                >
+                  {term}
+                </span>
+              ))}
+            </div>
+          </InsightCard>
+        )}
+
+        {/* Query Analysis */}
+        {searchInsights?.queryAnalysis && (
+  <InsightCard title="Query Analysis">
+    <div className="space-y-2 text-sm">
+      {Object.entries(searchInsights.queryAnalysis).map(([key, value], i) => (
+        <div key={i} className="grid grid-cols-3 gap-2 items-start">
+          <div className="font-medium col-span-1 text-green-700">{key}</div>
+          <div className="col-span-2 break-words font-mono text-gray-800">
+            {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+          </div>
+        </div>
+      ))}
+    </div>
+  </InsightCard>
+)}
+        
+
+        {/* Suggested Queries */}
+        {searchInsights?.suggestedQueries?.length > 0 && (
+          <InsightCard title="Suggested Follow-Up Questions">
+            <div className="space-y-1">
+              {searchInsights.suggestedQueries.map((query, i) => (
+                <button
+                  key={i}
+                  onClick={() => onFollowupQuestionClicked?.(query)}
+                  className="flex items-center text-sm p-1.5 rounded w-full text-left hover:bg-green-100 text-green-900"
+                >
+                  <ArrowRight size={14} className="mr-2 flex-shrink-0 text-green-500" />
+                  <span>{query}</span>
+                </button>
+              ))}
+            </div>
+          </InsightCard>
+        )}
+
+        {/* Source Relevance */}
+        {searchInsights?.sourceRelevance?.length > 0 && (
+  <InsightCard title="Top Source Relevance">
+    <div className="space-y-3 text-sm max-h-40 overflow-y-auto pr-1">
+      {searchInsights.sourceRelevance.map((source, i) => {
+        const score = source.score / 10; // Adjust score scale
+        const displayScore = Math.min(score * 100, 100).toFixed(0);
+
+        return (
+          <div
+            key={i}
+            className="flex flex-col bg-green-50 p-2 rounded shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-1">
+              <div className="truncate font-semibold text-green-700">{i + 1}. {source.fileName}</div>
+              <div className="text-xs text-gray-500">{displayScore}%</div>
+            </div>
+            <div className="h-2 bg-green-200 rounded-full overflow-hidden">
+              <div
+                className="h-2 bg-green-500 rounded-full transition-all duration-300"
+                style={{ width: `${displayScore}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </InsightCard>
+)}
+
+      </div>
+
+      {/* Execution Details */}
+      {searchInsights?.executionDetails && (
+        <InsightCard title="Execution Details">
+          <details className="text-xs">
+            <summary className="cursor-pointer text-green-600">Show/Hide Details</summary>
+            <pre className="whitespace-pre-wrap mt-2 bg-green-100 p-2 rounded">
+              {JSON.stringify(searchInsights.executionDetails, null, 2)}
+            </pre>
+          </details>
+        </InsightCard>
+      )}
+    </div>
+  </motion.div>
+)}
+
+                       
                         
                         {/* Analytics Tab */}
                         {activeTab === 'analytics' && enableAdvancedFeatures && (
