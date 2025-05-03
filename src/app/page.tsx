@@ -942,6 +942,7 @@ export default function Page() {
       console.log("Updated chat configuration:", chatConfig);
     }
   }, [chatConfig, chatRef.current]);
+  
 
   // Clear chat functionality
   const clearChat = () => {
@@ -1156,7 +1157,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
         <div className="min-h-screen flex flex-col">
           {/* Top Navigation */}
           <motion.header
-            className="bg-[#1C1C1C] text-white"
+            className="bg-red-500 text-white"
             initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -1164,7 +1165,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
               <Link href="/" className="text-lg font-medium">
               <Image 
-                   src='/SpinakrLogo.png'
+                   src='/austinIndustries.png'
                    alt='Spinakr Logo'
                    height={200}
                    width={200}/>
@@ -1240,7 +1241,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               />
 
               <div className="flex items-center gap-2 cursor-pointer">
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                {/* <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost"
                     size="sm"
                     className="flex items-center gap-2 cursor-pointer"
@@ -1264,7 +1265,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     <File className="h-4 w-4" />
                     File Cabinet
                   </Button>
-                </motion.div>
+                </motion.div> */}
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost" size="sm" className="flex items-center gap-2 cursor-pointer" onClick={clearChat}>
@@ -1273,7 +1274,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </Button>
                 </motion.div>
 
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+               {/*} <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1283,7 +1284,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     <Settings className="h-4 w-4" />
                     Developer settings
                   </Button>
-                </motion.div>
+                </motion.div> */}
               </div>
             </div>
           </motion.div>
@@ -1307,7 +1308,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       animate={{ scale: 1, opacity: 1 }}
                       transition={{ delay: 0.6, duration: 0.5, type: "spring" }}
                     >
-                      Chat with your Spinakr Contracts
+                      Chat with your Contracts
                     </motion.h1>
                     {/* Decorative Stars */}
                     <motion.div
@@ -1361,8 +1362,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 >
                   {[
                     "What contracts are available for review?",
-                    "What is the biggest risk for brand management contracts?",
-                    "What does digital asset management entail?",
+                    "What does a Construction manager at Risk do?",
+                    "What are preconstruction services?",
                   ].map((question, index) => (
                     <motion.button
                       key={question}

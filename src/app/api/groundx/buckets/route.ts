@@ -19,7 +19,7 @@ export async function GET() {
     // Using list method as in your example
     const response = await groundxClient.buckets.list();
     console.log('Raw GroundX response:', JSON.stringify(response));
-    
+
     // Check if response has buckets and it's an array
     if (!response || !response.buckets || !Array.isArray(response.buckets)) {
       console.error('Invalid response structure from GroundX:', response);
@@ -28,36 +28,38 @@ export async function GET() {
         { status: 500 }
       );
     }
-    
-    // Process buckets to ensure they have the required fields
-    // Use type assertion with any to bypass TypeScript errors
-    const processedBuckets: ProcessedBucket[] = response.buckets
-      .filter(bucket => bucket !== null && bucket !== undefined)
-      .map(bucket => {
-        // Access properties safely using optional chaining and type assertion
-        const bucketAny = bucket as any;
-        
-        // Create a properly formatted bucket object with defaults for missing properties
-        return {
-          // Use bucket_id, bId, bucketId, or any property that might represent the ID
-          id: bucketAny.bucket_id || bucketAny.bucketId || bucketAny.id || 
-              bucketAny.bId || `unknown-${Math.random().toString(36).substr(2, 9)}`,
-          
-          // Use name, title, or generate a name if none exists
-          name: bucketAny.name || bucketAny.title || bucketAny.bucketName || 
-                `Bucket ${bucketAny.bucket_id || bucketAny.id || 'Unknown'}`,
-          
-          // Use any property that might represent document count or default to 0
-          documentCount: typeof bucketAny.documentCount === 'number' ? bucketAny.documentCount :
-                         typeof bucketAny.count === 'number' ? bucketAny.count : 
-                         typeof bucketAny.documents === 'number' ? bucketAny.documents : 0
-        };
+
+    // Find only the Austin Industries bucket
+    const austinBucket = response.buckets.find(bucket => {
+      const bucketAny = bucket as any;
+      const name = bucketAny.name || bucketAny.title || bucketAny.bucketName || '';
+      return name.includes('Austin Industries');
+    });
+
+    if (!austinBucket) {
+      return NextResponse.json({
+        success: true,
+        buckets: [],
+        message: 'Austin Industries bucket not found'
       });
-    
-    return NextResponse.json({ 
-      success: true, 
-      buckets: processedBuckets,
-      rawBuckets: response.buckets // Include raw data for debugging
+    }
+
+    // Process the Austin Industries bucket
+    const bucketAny = austinBucket as any;
+    const processedBucket: ProcessedBucket = {
+      id: bucketAny.bucket_id || bucketAny.bucketId || bucketAny.id ||
+          bucketAny.bId || `unknown-${Math.random().toString(36).substr(2, 9)}`,
+      name: bucketAny.name || bucketAny.title || bucketAny.bucketName ||
+          `Bucket ${bucketAny.bucket_id || bucketAny.id || 'Unknown'}`,
+      documentCount: typeof bucketAny.documentCount === 'number' ? bucketAny.documentCount :
+          typeof bucketAny.count === 'number' ? bucketAny.count :
+          typeof bucketAny.documents === 'number' ? bucketAny.documents : 0
+    };
+
+    return NextResponse.json({
+      success: true,
+      buckets: [processedBucket],
+      rawBucket: austinBucket // Include raw data for debugging
     });
   } catch (error: any) {
     console.error('Error listing buckets:', error);

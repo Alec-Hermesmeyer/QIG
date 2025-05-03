@@ -905,35 +905,23 @@ export default function EnhancedAnswer({
         const sources: Source[] = [];
         const sourceMap = new Map<string, number>();
         
-        // Helper to add a source if it's not already in the list
+        // Helper to add a source to our collection
         const addSource = (source: any, index?: number) => {
-            if (!source) {
-                if (debugMode) console.log("Skipping empty source");
-                return;
-            }
+            if (!source) return;
             
-            // Handle different ID formats from GroundX API
-            const sourceId = source.id || source.documentId || source.chunkId || (source.chunk ? `chunk-${source.chunk}` : null);
-            if (!sourceId) {
-                if (debugMode) {
-                    console.log("Creating synthetic ID for source without ID:", source);
-                    // Create an ID based on content hash or index
-                    const syntheticId = `synthetic-${index || Math.floor(Math.random() * 10000)}`;
-                    // Add the source with the synthetic ID
-                    addSourceWithId(source, syntheticId, index);
-                }
-                return;
-            }
+            // Get a valid ID from the source
+            const sourceId = source.id || source.documentId || source.chunkId || 
+                (source.chunk ? `chunk-${source.chunk}` : `source-${index || Math.random().toString(36).substring(2, 9)}`);
             
-            addSourceWithId(source, sourceId, index);
-        };
-        
-        // Helper function to add a source with a specific ID
-        const addSourceWithId = (source: any, sourceId: string | number, index?: number) => {
+            // Skip if no ID could be determined
+            if (!sourceId) return;
+            
             const normalizedId = normalizeDocId(sourceId.toString());
             
-            // Extract searchData which is a common GroundX structure
-            const searchData = source.searchData || {};
+            // Extract file name from various possible locations
+            const fileName = source.fileName || source.name || 
+                            (source.searchData?.fullTitle || source.searchData?.title) || 
+                            `Document ${sourceId}`;
             
             // Check if we already have this source
             if (sourceMap.has(normalizedId)) {
@@ -941,120 +929,86 @@ export default function EnhancedAnswer({
                 if (existingIndex !== undefined) {
                     // Update existing source with additional information
                     const existingSource = sources[existingIndex];
-                    sources[existingIndex] = {
-                        ...existingSource,
-                        excerpts: [...(existingSource.excerpts || []), ...(source.excerpts || [])],
-                        snippets: [...(existingSource.snippets || []), ...(source.snippets || [])],
-                        narrative: [...(existingSource.narrative || []), ...(Array.isArray(source.narrative) ? source.narrative : (source.narrative ? [source.narrative] : []))],
-                        metadata: { 
-                            ...(existingSource.metadata || {}), 
-                            ...(source.metadata || {}), 
-                            ...(source.searchData || {})
-                        },
-                        // Add additional fields if they exist in the new source
-                        url: existingSource.url || source.url || source.sourceUrl,
-                        datePublished: existingSource.datePublished || source.datePublished,
-                        author: existingSource.author || source.author || searchData.author,
-                        type: existingSource.type || source.type || source.contentType,
-                        fileSize: existingSource.fileSize || source.fileSize,
-                        lastModified: existingSource.lastModified || source.lastModified,
-                        version: existingSource.version || source.version,
-                        tags: [...(existingSource.tags || []), ...(source.tags || [])],
-                        // GroundX specific properties
-                        text: existingSource.text || source.text,
-                        suggestedText: existingSource.suggestedText || source.suggestedText,
-                        multimodalUrl: existingSource.multimodalUrl || source.multimodalUrl,
-                        pageNumbers: existingSource.pageNumbers || source.pageNumbers,
-                        boundingBoxes: existingSource.boundingBoxes || source.boundingBoxes,
-                        sectionSummary: existingSource.sectionSummary || source.sectionSummary || searchData.sectionSummary,
-                        json: existingSource.json || source.json,
-                        xrayUrl: existingSource.xrayUrl || source.xrayUrl,
-                        sourceUrl: existingSource.sourceUrl || source.sourceUrl,
-                        pageUrl: existingSource.pageUrl || source.pageUrl,
-                        fileSummary: existingSource.fileSummary || source.fileSummary || searchData.documentSummary,
-                        fileKeywords: existingSource.fileKeywords || source.fileKeywords,
-                        // Add searchData fields directly
-                        searchData: source.searchData
+                    
+                    // Merge snippets - crucial for GroundX responses
+                    if (source.snippets) {
+                        if (!existingSource.snippets) existingSource.snippets = [];
+                        source.snippets.forEach((snippet: string) => {
+                            if (!existingSource.snippets!.includes(snippet)) {
+                                existingSource.snippets!.push(snippet);
+                            }
+                        });
+                    }
+                    
+                    // Merge excerpts
+                    if (source.excerpts) {
+                        if (!existingSource.excerpts) existingSource.excerpts = [];
+                        source.excerpts.forEach((excerpt: string) => {
+                            if (!existingSource.excerpts!.includes(excerpt)) {
+                                existingSource.excerpts!.push(excerpt);
+                            }
+                        });
+                    }
+                    
+                    // Merge narrative
+                    if (Array.isArray(source.narrative)) {
+                        if (!existingSource.narrative) existingSource.narrative = [];
+                        source.narrative.forEach((narr: string) => {
+                            if (!existingSource.narrative!.includes(narr)) {
+                                existingSource.narrative!.push(narr);
+                            }
+                        });
+                    } else if (source.narrative) {
+                        if (!existingSource.narrative) existingSource.narrative = [];
+                        if (!existingSource.narrative.includes(source.narrative)) {
+                            existingSource.narrative.push(source.narrative);
+                        }
+                    }
+                    
+                    // Update other fields if they don't exist in the current source
+                    if (source.text && !existingSource.text) existingSource.text = source.text;
+                    if (source.suggestedText && !existingSource.suggestedText) existingSource.suggestedText = source.suggestedText;
+                    if (source.score !== undefined && existingSource.score === undefined) existingSource.score = source.score;
+                    
+                    // Merge metadata
+                    existingSource.metadata = { 
+                        ...(existingSource.metadata || {}), 
+                        ...(source.metadata || {}), 
+                        ...(source.searchData || {})
                     };
                 }
             } else {
-                // Extract file name from various possible locations
-                const fileName = source.fileName || source.name || 
-                                searchData.fullTitle || searchData.title || 
-                                `Document ${sourceId}`;
-                
                 // Add as new source with all available fields
                 sources.push({
                     id: sourceId,
                     fileName: fileName,
-                    title: source.title || searchData.fullTitle || searchData.title,
-                    excerpts: source.excerpts || [],
+                    title: source.title || (source.searchData?.fullTitle || source.searchData?.title),
                     snippets: source.snippets || [],
+                    excerpts: source.excerpts || [],
                     narrative: Array.isArray(source.narrative) ? source.narrative : (source.narrative ? [source.narrative] : []),
                     metadata: { ...(source.metadata || {}), ...(source.searchData || {}) },
                     score: source.score || source.relevanceScore || (source.metadata?.score),
-                    url: source.url || source.sourceUrl,
-                    datePublished: source.datePublished,
-                    author: source.author || searchData.author || searchData.publisher,
-                    type: source.type || source.contentType,
-                    fileSize: source.fileSize,
-                    lastModified: source.lastModified,
-                    relevanceScore: source.relevanceScore,
-                    confidenceScore: source.confidenceScore,
-                    sections: source.sections,
-                    chunkId: source.chunkId,
-                    pageNumbers: source.pageNumbers,
-                    embedding: source.embedding,
-                    documentContext: source.documentContext,
-                    textContent: source.textContent,
-                    version: source.version,
-                    tags: source.tags,
-                    // GroundX specific properties
                     text: source.text,
                     suggestedText: source.suggestedText,
+                    url: source.url || source.sourceUrl,
+                    sectionSummary: source.sectionSummary || (source.searchData?.sectionSummary),
+                    
+                    // Additional GroundX fields
+                    sourceUrl: source.sourceUrl,
+                    chunkId: source.chunkId,
+                    chunk: source.chunk,
+                    content: source.content,
+                    textContent: source.textContent,
                     multimodalUrl: source.multimodalUrl,
                     boundingBoxes: source.boundingBoxes,
-                    sectionSummary: source.sectionSummary || searchData.sectionSummary,
-                    json: source.json,
                     xrayUrl: source.xrayUrl,
-                    sourceUrl: source.sourceUrl,
-                    pageUrl: source.pageUrl,
-                    fileSummary: source.fileSummary || searchData.documentSummary,
-                    fileKeywords: source.fileKeywords,
-                    // Handle chunk from GroundX
-                    chunk: source.chunk,
-                    // Add searchData directly
-                    searchData: source.searchData,
-                    // GroundX bucket info
-                    bucketId: source.bucketId
+                    pageUrl: source.pageUrl
                 });
                 sourceMap.set(normalizedId, sources.length - 1);
             }
         };
         
-        // Extract sources from GroundX search result format
-        if (answer?.search) {
-            // Extract the search
-            const search = answer.search;
-            
-            // Add the search text as a source if available
-            if (search.text) {
-                addSourceWithId({
-                    text: search.text,
-                    suggestedText: search.text,
-                    fileName: "GroundX Combined Search Results",
-                    score: search.score,
-                    query: search.query
-                }, "groundx-combined-text");
-            }
-            
-            // Add each result
-            if (search.results && Array.isArray(search.results)) {
-                search.results.forEach((result, index) => {
-                    addSource(result, index);
-                });
-            }
-        }
+        // Process documents from different potential locations in order of priority
         
         // First check document excerpts
         if (documentExcerpts?.length) {
@@ -1062,28 +1016,12 @@ export default function EnhancedAnswer({
                 addSource(excerpt);
             });
         }
-
+    
         // Check searchResults in standard format
         if (searchResults?.sources?.length) {
             searchResults.sources.forEach((source, index) => {
                 addSource(source, index);
             });
-        } else if (searchResults?.search?.results?.length) {
-            // GroundX search results format
-            searchResults.search.results.forEach((result: any, index: number) => {
-                addSource(result, index);
-            });
-            
-            // Also add the combined text as a source
-            if (searchResults.search.text) {
-                addSourceWithId({
-                    text: searchResults.search.text,
-                    suggestedText: searchResults.search.text,
-                    fileName: "GroundX Combined Search Results",
-                    score: searchResults.search.score,
-                    query: searchResults.search.query
-                }, "groundx-combined-text");
-            }
         }
         
         // Check in answer.result.documents (GroundX format)
@@ -1108,183 +1046,39 @@ export default function EnhancedAnswer({
             });
         }
         
-        // Check in GroundX search results format directly in the answer
-        if (answer?.search?.results) {
-            const results = Array.isArray(answer.search.results)
-                ? answer.search.results
-                : [answer.search.results];
-                
-            results.forEach((result: any, index: number) => {
-                addSource(result, index);
-            });
-        }
-        
-        // Check for document pages from X-Ray parser
-        if (answer?.documentPages) {
-            const documentPages = Array.isArray(answer.documentPages)
-                ? answer.documentPages
-                : [answer.documentPages];
-            
-            documentPages.forEach((page: any, pageIndex: number) => {
-                // Add the page itself as a source
+        // Check in GroundX search results format
+        if (answer?.search) {
+            // Add the search text as a source if available
+            if (answer.search.text) {
                 addSource({
-                    id: `page-${page.pageNumber || pageIndex}`,
-                    fileName: `Page ${page.pageNumber || pageIndex + 1}`,
-                    pageUrl: page.pageUrl,
-                    pageNumber: page.pageNumber,
-                    width: page.width,
-                    height: page.height
-                });
-                
-                // Add each chunk within the page as a source
-                if (page.chunks && Array.isArray(page.chunks)) {
-                    page.chunks.forEach((chunk: any, chunkIndex: number) => {
-                        addSource({
-                            ...chunk,
-                            id: chunk.chunk || `chunk-${pageIndex}-${chunkIndex}`,
-                            fileName: `Chunk ${chunk.chunk || chunkIndex + 1}`,
-                            pageNumber: page.pageNumber
-                        });
-                    });
-                }
-            });
-        }
-        
-        // Check in various other potential locations
-        if (answer?.citations?.documents) {
-            const documents = Array.isArray(answer.citations.documents)
-                ? answer.citations.documents
-                : [answer.citations.documents];
-                
-            documents.forEach((doc: any, index: number) => {
-                addSource(doc, index);
-            });
-        }
-        
-        if (answer?.citations?.sources) {
-            const documents = Array.isArray(answer.citations.sources)
-                ? answer.citations.sources
-                : [answer.citations.sources];
-                
-            documents.forEach((doc: any, index: number) => {
-                addSource(doc, index);
-            });
-        }
-        
-        if (answer?.sources) {
-            const documents = Array.isArray(answer.sources)
-                ? answer.sources
-                : [answer.sources];
-                
-            documents.forEach((doc: any, index: number) => {
-                addSource(doc, index);
-            });
-        }
-        
-        // Check for X-Ray results format
-        if (answer?.xrayUrl) {
-            addSource({
-                id: 'xray-result',
-                fileName: answer.fileName || 'X-Ray Result',
-                xrayUrl: answer.xrayUrl,
-                fileType: answer.fileType,
-                language: answer.language,
-                fileKeywords: answer.fileKeywords,
-                fileSummary: answer.fileSummary,
-                sourceUrl: answer.sourceUrl
-            });
-        }
-        
-        // If still no sources, try to extract from raw text if available
-        if (sources.length === 0 && typeof answer === 'string') {
-            // Try to extract document references from raw text
-            const docMatches = answer.match(/Document\s+(\S+)|Source:\s+(\S+)|Reference:\s+(\S+)/g);
-            if (docMatches) {
-                docMatches.forEach((match, index) => {
-                    const docName = match.replace(/Document\s+|Source:\s+|Reference:\s+/, '');
-                    addSource({
-                        id: `extracted-${index}`,
-                        fileName: docName,
-                        text: `Referenced from text: ${docName}`
-                    });
+                    id: "groundx-combined-text",
+                    text: answer.search.text,
+                    suggestedText: answer.search.text,
+                    fileName: "GroundX Combined Search Results",
+                    score: answer.search.score,
+                    query: answer.search.query
                 });
             }
             
-            // Also add the raw text as a source
-            if (answer.length > 0) {
-                addSourceWithId({
-                    text: answer.length > 500 ? answer.substring(0, 500) + '...' : answer,
-                    fileName: "Raw Text Response",
-                }, "raw-text");
+            // Add each result
+            if (answer.search.results && Array.isArray(answer.search.results)) {
+                answer.search.results.forEach((result, index) => {
+                    addSource(result, index);
+                });
             }
         }
         
-        if (debugMode && sources.length === 0) {
-            console.warn("No sources found in any format. Response structure:", answer);
-        }
-        
+        // Return all found sources
         return sources;
     };
-
+    
     // Get excerpts from a source specifically for GroundX format
     const getSourceExcerpts = (source: Source | DocumentExcerpt | null | undefined): string[] => {
         if (!source) return [];
         
         const allExcerpts: string[] = [];
         
-        // Direct GroundX fields first, as they are most important for GroundX responses
-        if (source.suggestedText) {
-            allExcerpts.push(source.suggestedText);
-        }
-        
-        if (source.text && !allExcerpts.includes(source.text)) {
-            allExcerpts.push(source.text);
-        }
-        
-        if (source.sectionSummary && !allExcerpts.includes(source.sectionSummary)) {
-            allExcerpts.push(source.sectionSummary);
-        }
-        
-        // Check in metadata for GroundX search data
-        if (source.metadata?.searchData?.sectionSummary) {
-            allExcerpts.push(source.metadata.searchData.sectionSummary);
-        }
-        
-        if (source.metadata?.searchData?.documentSummary) {
-            allExcerpts.push(source.metadata.searchData.documentSummary);
-        }
-        
-        if (source.metadata?.sectionSummary) {
-            allExcerpts.push(source.metadata.sectionSummary);
-        }
-        
-        if (source.metadata?.documentSummary) {
-            allExcerpts.push(source.metadata.documentSummary);
-        }
-        
-        // Handle nested searchData
-        if (source.searchData?.sectionSummary) {
-            allExcerpts.push(source.searchData.sectionSummary);
-        }
-        
-        if (source.searchData?.documentSummary) {
-            allExcerpts.push(source.searchData.documentSummary);
-        }
-        
-        // Then check file-level data
-        if (source.fileSummary && !allExcerpts.includes(source.fileSummary)) {
-            allExcerpts.push(source.fileSummary);
-        }
-        
-        // Check more traditional excerpt formats
-        if (source.excerpts && source.excerpts.length > 0) {
-            source.excerpts.forEach(excerpt => {
-                if (!allExcerpts.includes(excerpt)) {
-                    allExcerpts.push(excerpt);
-                }
-            });
-        }
-        
+        // First check for snippets which are most commonly used in GroundX responses
         if (source.snippets && source.snippets.length > 0) {
             source.snippets.forEach(snippet => {
                 if (!allExcerpts.includes(snippet)) {
@@ -1293,6 +1087,31 @@ export default function EnhancedAnswer({
             });
         }
         
+        // Check for text field which is often used in GroundX
+        if (source.text && !allExcerpts.includes(source.text)) {
+            allExcerpts.push(source.text);
+        }
+        
+        // Check for suggestedText which may contain the rewritten version for LLM
+        if (source.suggestedText && !allExcerpts.includes(source.suggestedText)) {
+            allExcerpts.push(source.suggestedText);
+        }
+        
+        // Check for sectionSummary
+        if (source.sectionSummary && !allExcerpts.includes(source.sectionSummary)) {
+            allExcerpts.push(source.sectionSummary);
+        }
+        
+        // Check in excerpts field
+        if (source.excerpts && source.excerpts.length > 0) {
+            source.excerpts.forEach(excerpt => {
+                if (!allExcerpts.includes(excerpt)) {
+                    allExcerpts.push(excerpt);
+                }
+            });
+        }
+        
+        // Check in narrative field
         if (Array.isArray(source.narrative)) {
             source.narrative.forEach(narr => {
                 if (!allExcerpts.includes(narr)) {
@@ -1322,7 +1141,7 @@ export default function EnhancedAnswer({
         
         return allExcerpts;
     };
-
+    
     // Extract relevance info with enhanced data
     const getSourceRelevanceInfo = (source: Source | DocumentExcerpt): { 
         relevance: string | null; 
