@@ -22,7 +22,7 @@ import { getCitationFilePath } from '@/lib/api';
 import { FileUploadComponent } from './FileUploadComponent'; // Import the new component
 
 const viewIcon: IIconProps = { iconName: 'View' };
-const analyzeIcon: IIconProps = { iconName: 'Insights' };
+const downloadIcon: IIconProps = { iconName: 'Download' }; // Changed from analyzeIcon to downloadIcon
 const refreshIcon: IIconProps = { iconName: 'Refresh' };
 const uploadIcon: IIconProps = { iconName: 'Upload' }; // New upload icon
 
@@ -114,32 +114,17 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
     setError(null);
   };
 
-  // Handle document analysis via chat
-  const handleAnalyzeDocument = (fileName: string) => {
-    // Create a prompt for contract analysis
-    const contractAnalysisPrompt = `Please analyze this document "${fileName}" and provide:
-1. A summary of the key points
-2. The main parties involved
-3. Important dates mentioned
-4. Key obligations and rights
-5. Any potential issues or areas of concern`;
-
-    // Create a dummy analysis result to maintain compatibility
-    const dummyAnalysisResult = {
-      summary: contractAnalysisPrompt,
-      keywords: [],
-      entities: {},
-      metadata: {
-        fileName: fileName
-      }
-    };
-
-    // Call the existing onRunAnalysis function
-    const citationUrl = getCitationFilePath(fileName);
-    onRunAnalysis(fileName, dummyAnalysisResult, citationUrl);
+  // Handle document download
+  const handleDownloadDocument = (fileName: string) => {
+    const downloadUrl = getDocumentUrl(fileName);
     
-    // Close the panel after sending
-    onDismiss();
+    // Create a temporary anchor element
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = fileName; // Set the filename for the download
+    document.body.appendChild(a);
+    a.click(); // Trigger the download
+    document.body.removeChild(a); // Clean up
   };
 
   // Handle upload complete
@@ -187,10 +172,20 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
             styles={{ root: { minWidth: 80 } }}
           />
           <DefaultButton
-            text="Analyze"
-            iconProps={analyzeIcon}
-            onClick={() => handleAnalyzeDocument(item.name)}
-            styles={{ root: { minWidth: 90 } }}
+            text="Download"
+            iconProps={downloadIcon}
+            onClick={() => handleDownloadDocument(item.name)}
+            styles={{ 
+              root: { 
+                minWidth: 90,
+                backgroundColor: '#e6f7ff',
+                borderColor: '#91caff'
+              },
+              rootHovered: {
+                backgroundColor: '#bae0ff',
+                borderColor: '#69b1ff'
+              }
+            }}
           />
         </Stack>
       ),
@@ -303,12 +298,32 @@ export const FileCabinetPanel: React.FC<FileCabinetPanelProps> = ({
               <Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>
                 {viewingFile}
               </Text>
-              <DefaultButton 
-                onClick={closeViewer}
-                styles={{ root: { minWidth: '60px', height: '32px' } }}
-              >
-                Close
-              </DefaultButton>
+              <Stack horizontal tokens={{ childrenGap: 8 }}>
+                {/* Add download button to viewer header */}
+                <DefaultButton 
+                  text="Download"
+                  iconProps={downloadIcon}
+                  onClick={() => viewingFile && handleDownloadDocument(viewingFile)}
+                  styles={{ 
+                    root: { 
+                      minWidth: '100px', 
+                      height: '32px',
+                      backgroundColor: '#e6f7ff',
+                      borderColor: '#91caff'
+                    },
+                    rootHovered: {
+                      backgroundColor: '#bae0ff',
+                      borderColor: '#69b1ff'
+                    }
+                  }}
+                />
+                <DefaultButton 
+                  onClick={closeViewer}
+                  styles={{ root: { minWidth: '60px', height: '32px' } }}
+                >
+                  Close
+                </DefaultButton>
+              </Stack>
             </Stack>
             
             {/* Modal content */}
