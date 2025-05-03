@@ -1255,7 +1255,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     </svg>
                     Analyze Contract
                   </Button>
-                </motion.div>
+                </motion.div>*/}
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost"
@@ -1265,7 +1265,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     <File className="h-4 w-4" />
                     File Cabinet
                   </Button>
-                </motion.div> */}
+                </motion.div> 
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost" size="sm" className="flex items-center gap-2 cursor-pointer" onClick={clearChat}>
