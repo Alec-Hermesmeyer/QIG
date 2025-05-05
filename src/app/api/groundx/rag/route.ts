@@ -1,4 +1,4 @@
-// app/api/groundx/rag/route.ts - Enhanced version
+// app/api/groundx/rag/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { GroundXClient } from "groundx";
 import OpenAI from "openai";
@@ -107,13 +107,12 @@ interface EnhancedSearchResult {
 
 /**
  * Clean response interface with only essential fields
- * Modified to prevent duplicate responses
  */
 interface RagResponse {
   success: boolean;
   timestamp: string;
   query?: string;
-  content: string; // Changed from 'response' to 'content' to avoid confusion
+  response: string;
   searchResults: {
     count: number;
     sources: Array<{
@@ -139,13 +138,11 @@ interface RagResponse {
       };
     }>;
   };
-  documentExcerpts?: any[]; // Added field for direct compatibility with Answer component
-  thoughts?: string; // Added field for thought process
   executionTime?: {
     totalMs: number;
     searchMs: number;
     llmMs: number;
-    xrayMs: number;
+    xrayMs: number; // Added for X-Ray processing time
   };
   error?: string;
 }
@@ -188,7 +185,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'API clients not properly initialized',
-          content: '',
+          response: '',
           searchResults: { count: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
@@ -211,7 +208,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'Invalid JSON in request body',
-          content: '',
+          response: '',
           searchResults: { count: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
@@ -233,8 +230,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       temperature = 0.3,
       model = "gpt-4-0125-preview",
       tryRenderImages = true, // Flag to control whether to try document rendering
-      includeXray = true, // New flag to control whether to include X-Ray data
-      includeThoughts = true // New flag to include reasoning process
+      includeXray = true // New flag to control whether to include X-Ray data
     } = body;
     
     console.log('RAG API request:', { 
@@ -246,8 +242,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       temperature,
       model,
       tryRenderImages,
-      includeXray,
-      includeThoughts
+      includeXray
     });
     
     // Validate required fields
@@ -257,7 +252,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'Query is required',
-          content: '',
+          response: '',
           searchResults: { count: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
@@ -276,7 +271,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'BucketId is required',
-          content: '',
+          response: '',
           searchResults: { count: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
@@ -313,12 +308,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         success: true,
         timestamp: new Date().toISOString(),
         query: query,
-        content: "I couldn't find any relevant information about that in the documents.",
+        response: "I couldn't find any relevant information about that in the documents.",
         searchResults: {
           count: 0,
           sources: []
         },
-        thoughts: includeThoughts ? "I searched for information related to your query but couldn't find any relevant documents in the knowledge base." : undefined,
         executionTime: {
           totalMs: Date.now() - startTime,
           searchMs: searchTime,
@@ -532,22 +526,11 @@ When responding:
 3. If multiple documents provide the same information, cite the most relevant sources
 4. Only discuss information found in the documents
 5. Present information in clear sections with proper formatting
-6. If documents contradict each other, acknowledge the different perspectives
-7. DO NOT include "Response" or "Answer" headers in your reply - simply provide the answer directly
-8. Maintain a formal but friendly tone suitable for business contexts`;
-
-    // Additional prompt for thought process if requested
-    const thoughtsSystemPrompt = includeThoughts ? `
-After analyzing the documents, write a brief thought process explaining your reasoning.
-This should explain how you arrived at your answer based on the documents.
-Format this as "Thought Process: [your reasoning]".
-This will only be shown if the user asks to see your reasoning.` : '';
-
-    const fullSystemPrompt = systemPrompt + thoughtsSystemPrompt;
+6. If documents contradict each other, acknowledge the different perspectives`;
 
     // 6. Prepare conversation history for OpenAI
     const conversationHistory: ChatCompletionMessageParam[] = [
-      { role: 'system', content: fullSystemPrompt } as ChatCompletionSystemMessageParam
+      { role: 'system', content: systemPrompt } as ChatCompletionSystemMessageParam
     ];
     
     // Include recent conversation history if provided
@@ -601,48 +584,17 @@ This will only be shown if the user asks to see your reasoning.` : '';
       throw new Error('Invalid response from OpenAI');
     }
 
-    const responseContent = completion.choices[0].message.content;
-    
-    // Extract thought process if included
-    let responseText = responseContent;
-    let thoughtProcess = undefined;
-    
-    if (includeThoughts && responseContent.includes("Thought Process:")) {
-      const thoughtMatch = responseContent.match(/Thought Process:\s*([\s\S]+)/i);
-      if (thoughtMatch && thoughtMatch[1]) {
-        thoughtProcess = thoughtMatch[1].trim();
-        
-        // Remove the thought process from the main response
-        responseText = responseContent.replace(/\s*Thought Process:\s*[\s\S]+/i, '').trim();
-      }
-    }
+    const response = completion.choices[0].message.content;
     
     // 8. Return clean response
     const totalTime = Date.now() - startTime;
-    
-    // Format document excerpts for direct compatibility with Answer component
-    const documentExcerpts = enhancedResults.map(result => ({
-      id: result.id,
-      documentId: result.id,
-      fileName: result.fileName,
-      score: result.score,
-      text: result.text,
-      excerpts: [result.text],
-      highlights: result.highlights,
-      pageImages: result.pageImages,
-      thumbnails: result.thumbnails,
-      xray: result.xray,
-      metadata: result.metadata
-    }));
     
     // Final response with clearly structured sources
     const finalResponse = {
       success: true,
       timestamp: new Date().toISOString(),
       query: query,
-      content: responseText, // Use cleaned response without thought process
-      thoughts: thoughtProcess, // Include separate thought process if available
-      documentExcerpts: documentExcerpts, // Add formatted document excerpts
+      response: response,
       searchResults: {
         count: enhancedResults.length,
         sources: enhancedResults.map(({ id, fileName, text, metadata, highlights, pageImages, thumbnails, xray }) => {
@@ -692,7 +644,7 @@ This will only be shown if the user asks to see your reasoning.` : '';
         success: false, 
         timestamp: new Date().toISOString(),
         error: error.message || 'RAG processing failed',
-        content: '',
+        response: '',
         searchResults: { count: 0, sources: [] },
         executionTime: {
           totalMs: totalTime,
