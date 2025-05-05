@@ -168,7 +168,7 @@ export function RAGControl({
           onClick={toggleRAG}
         >
           {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-          <span>Knowledge Search</span>
+          <span>Fast</span>
         </Button>
         
         <Skeleton className="h-9 w-[250px]" />
@@ -192,7 +192,7 @@ export function RAGControl({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>Knowledge Search: {enabled ? 'Active' : 'Inactive'}</p>
+            <p>Fast: {enabled ? 'Active' : 'Inactive'}</p>
             {enabled && selectedBucket && (
               <p className="text-xs text-muted-foreground">{selectedBucket.name}</p>
             )}
@@ -221,7 +221,7 @@ export function RAGControl({
                 onClick={toggleRAG}
               >
                 {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                <span>Knowledge Search</span>
+                <span>Fast</span>
               </Button>
             </div>
             
@@ -341,7 +341,7 @@ export function RAGControl({
         onClick={toggleRAG}
       >
         {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-        <span>Knowledge Search</span>
+        <span>Deep</span>
       </Button>
       
       {enabled && (
