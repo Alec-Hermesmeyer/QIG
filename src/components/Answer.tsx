@@ -725,7 +725,7 @@ export default function EnhancedAnswer({
               fill="currentColor"
             />
           </svg>
-          <span className="text-xl font-medium">Response</span>
+          
         </div>
         
         <div className="flex items-center space-x-1">
@@ -1815,17 +1815,7 @@ export default function EnhancedAnswer({
                                 View Details
                               </button>
                               
-                              <button
-                                className="text-xs text-white px-2 py-1 rounded flex items-center"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onCitationClicked(source.id);
-                                }}
-                                style={{ backgroundColor: themeStyles.secondaryColor }}
-                              >
-                                <ExternalLink size={12} className="mr-1" />
-                                Open Document
-                              </button>
+                              
                             </div>
                           </div>
                         )}
