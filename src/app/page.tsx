@@ -1196,7 +1196,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             transition={{ duration: 0.5 }}
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
-              <Link href="/" className="text-lg font-medium">
+              <Link href="/" className="text-lg font-medium cursor-pointer">
                 <Image
                   src='/austinIndustries.png'
                   alt='Spinakr Logo'
@@ -1209,8 +1209,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.5 }}
               >
-                <Link href="/chat" className="hover:text-gray-300">Chat</Link>
-                <Link href="/ask" className="hover:text-gray-300">Ask a question</Link>
+                
 
                 {/* User info and logout */}
                 {user && (
