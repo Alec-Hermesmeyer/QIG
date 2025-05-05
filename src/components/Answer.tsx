@@ -1,156 +1,146 @@
 'use client';
 
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ClipboardCopy,
-  ClipboardCheck,
-  Lightbulb,
-  ClipboardList,
-  Bug,
-  ChevronDown,
-  ChevronUp,
-  Database,
-  FileText,
-  ExternalLink,
-  Search,
-  FileQuestion,
-  BookOpen,
-  AlignJustify,
-  FileDigit,
-  Code,
-  Sparkles,
-  BarChart,
-  Info,
-  ArrowRight,
-  Settings,
-  Filter,
-  Clock,
-  AlertTriangle,
-  MessageSquare,
-  BookMarked,
-  LineChart,
-  Cpu,
-  Share2,
-  RefreshCw
+  ClipboardCopy, ClipboardCheck, Lightbulb, ChevronDown, ChevronUp,
+  Database, FileText, ExternalLink, Search, Code, BarChart, Info,
+  ArrowRight, MessageSquare, BookMarked, Cpu, Image as ImageIcon,
+  FileImage, X, ChevronLeft, ChevronRight, ZoomIn, Download,
+  FileJson, Table, List, PieChart, AlignLeft
 } from "lucide-react";
 
-/**
- * Enhanced Answer Component
- * 
- * A comprehensive display component for AI-powered retrieval-augmented answers
- * that can handle various response formats and extract all available metadata.
- * 
- * Features:
- * - Document citation display and linking
- * - Source relevance analysis
- * - Thought process visualization
- * - Comprehensive metadata extraction
- * - Various view modes for sources
- * - Advanced filtering and sorting
- * - Export capabilities
- * - Debug mode
- */
-
-// Helper utility to format file sizes
-const formatBytes = (bytes, decimals = 2) => {
-  if (!bytes) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
-};
-
-// Helper utility to format dates
-const formatDate = (dateString) => {
+// Helper utilities
+const formatDate = (dateString?: string) => {
   if (!dateString) return '';
   try {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (e) {
-    return dateString;
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch (e) { return dateString; }
+};
+
+const getDocumentName = (path?: string) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
+
+const getDocumentType = (fileName?: string) => {
+  if (!fileName) return 'document';
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  
+  switch (extension) {
+    case 'pdf': return 'pdf';
+    case 'docx': case 'doc': return 'word';
+    case 'xlsx': case 'xls': case 'csv': return 'spreadsheet';
+    case 'txt': return 'text';
+    case 'html': case 'htm': return 'web';
+    case 'json': case 'js': case 'py': return 'code';
+    case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'svg': return 'image';
+    default: return 'document';
   }
 };
 
-// Extract document name from path
-const getDocumentName = (path) => {
-  if (!path) return 'Unknown Document';
-  return path.split('/').pop() || path;
-};
+interface XRayChunk {
+  id: number;
+  contentType?: string[];
+  text?: string;
+  suggestedText?: string;
+  sectionSummary?: string;
+  narrative?: string[];
+  json?: any[];
+  pageNumbers?: number[];
+  boundingBoxes?: Array<{
+    pageNumber: number;
+    topLeftX: number;
+    topLeftY: number;
+    bottomRightX: number;
+    bottomRightY: number;
+  }>;
+  parsedData?: any; // Add support for parsed JSON data
+  originalText?: string; // Store original text when parsed
+}
 
-// Utility to safely parse JSON
-const safeJsonParse = (jsonString) => {
-  if (!jsonString) return null;
-  try {
-    return JSON.parse(jsonString);
-  } catch (e) {
-    return null;
-  }
-};
+interface XRayData {
+  summary?: string;
+  keywords?: string;
+  language?: string;
+  chunks?: XRayChunk[];
+}
 
-// Main component
+interface Source {
+  id: string;
+  fileName: string;
+  score?: number;
+  excerpts: string[];
+  author?: string;
+  datePublished?: string;
+  url?: string;
+  fileSize?: number;
+  type?: string;
+  metadata?: Record<string, any>;
+  pageImages?: string[];
+  thumbnails?: string[];
+  imageLabels?: string[];
+  pageCount?: number;
+  highlights?: string[];
+  xray?: XRayData;
+}
+
+interface EnhancedAnswerProps {
+  answer: any;
+  index?: number;
+  isSelected?: boolean;
+  isStreaming?: boolean;
+  searchResults?: any;
+  documentExcerpts?: any[];
+  onCitationClicked?: (id: string) => void;
+  onThoughtProcessClicked?: () => void;
+  onSupportingContentClicked?: () => void;
+  onFollowupQuestionClicked?: (question: string) => void;
+  onRefreshClicked?: () => void;
+  onImageClicked?: (url: string, sourceId: string, imageIndex: number) => void;
+  showFollowupQuestions?: boolean;
+  enableAdvancedFeatures?: boolean;
+  theme?: string;
+  customStyles?: Record<string, any>;
+}
+
 export default function EnhancedAnswer({
   answer,
   index = 0,
   isSelected = false,
   isStreaming = false,
   searchResults = null,
-  documentExcerpts = null,
+  documentExcerpts = [],
   onCitationClicked = () => {},
   onThoughtProcessClicked = () => {},
   onSupportingContentClicked = () => {},
-  onFollowupQuestionClicked = null,
-  onRefreshClicked = null,
-  onSourceFiltered = null,
-  onExportClicked = null,
+  onFollowupQuestionClicked = () => {},
+  onRefreshClicked = () => {},
+  onImageClicked = () => {},
   showFollowupQuestions = false,
   enableAdvancedFeatures = false,
-  showRawData = false,
-  enableEditing = false,
   theme = 'light',
-  onFeedbackSubmitted = null,
-  maxSourcesDisplayed = 50,
   customStyles = {}
-}) {
+}: EnhancedAnswerProps) {
   // State management
-  const [debugMode, setDebugMode] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [activeTab, setActiveTab] = useState('answer');
   const [isCopied, setIsCopied] = useState(false);
-  const [currentDocumentId, setCurrentDocumentId] = useState(null);
-  const [expandedDocs, setExpandedDocs] = useState(new Set());
-  const [sortOption, setSortOption] = useState('relevance');
-  const [viewMode, setViewMode] = useState('list');
-  const [sourceFilter, setSourceFilter] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showFeedbackForm, setShowFeedbackForm] = useState(false);
-  const [feedbackRating, setFeedbackRating] = useState(null);
-  const [feedbackComment, setFeedbackComment] = useState('');
-  const [showSearchOptions, setShowSearchOptions] = useState(false);
-  const [editedAnswer, setEditedAnswer] = useState('');
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [bookmarks, setBookmarks] = useState(new Set());
-  
-  // Display options
-  const [displayOptions, setDisplayOptions] = useState({
-    showMetadata: true,
-    showScores: true,
-    showExcerpts: true,
-    showRelevance: true
-  });
+  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
+  const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [imageViewMode, setImageViewMode] = useState<'grid' | 'single'>('grid');
+  const [imageSortBy, setImageSortBy] = useState<'document' | 'relevance'>('document');
+  const [activeXrayChunk, setActiveXrayChunk] = useState<XRayChunk | null>(null);
+  const [xrayViewMode, setXrayViewMode] = useState<'summary' | 'detail'>('summary');
+  const [xrayContentFilter, setXrayContentFilter] = useState<string | null>(null);
   
   // References
-  const contentRef = useRef(null);
-  const ITEMS_PER_PAGE = 10;
+  const contentRef = useRef<HTMLDivElement>(null);
+  const imageViewerRef = useRef<HTMLDivElement>(null);
   
   // Theme styling
   const themeStyles = {
@@ -158,32 +148,14 @@ export default function EnhancedAnswer({
     textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
     cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
     borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
-    primaryColor: theme === 'dark' ? '#7f8eff' : '#6366f1',
-    secondaryColor: theme === 'dark' ? '#bd93f9' : '#8b5cf6',
-    highlightColor: theme === 'dark' ? '#44475a' : '#f0f9ff',
+    primaryColor: theme === 'dark' ? '#ff3f3f' : '#e53e3e', // Changed to red
+    secondaryColor: theme === 'dark' ? '#cc0000' : '#b91c1c', // Changed to darker red
+    accentColor: theme === 'dark' ? '#ff4d4d' : '#f87171', // Changed to lighter red
+    xrayColor: theme === 'dark' ? '#e02020' : '#dc2626', // Changed to vibrant red
     ...customStyles
   };
   
-  // Initialize edited answer if editing is enabled
-  useEffect(() => {
-    if (enableEditing) {
-      let content = '';
-      if (typeof answer === 'string') {
-        content = answer;
-      } else if (answer?.content) {
-        content = answer.content;
-      } else if (answer?.answer) {
-        content = typeof answer.answer === 'string' 
-          ? answer.answer 
-          : JSON.stringify(answer.answer, null, 2);
-      } else {
-        content = JSON.stringify(answer, null, 2);
-      }
-      setEditedAnswer(content);
-    }
-  }, [answer, enableEditing]);
-  
-  // Reset clipboard copy state
+  // Effects
   useEffect(() => {
     if (isCopied) {
       const timer = setTimeout(() => setIsCopied(false), 2000);
@@ -191,16 +163,23 @@ export default function EnhancedAnswer({
     }
   }, [isCopied]);
   
-  // Add citation click handler to rendered content
   useEffect(() => {
-    const handleContentClick = (e) => {
-      const target = e.target;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showImageViewer && imageViewerRef.current && !imageViewerRef.current.contains(event.target as Node)) {
+        setShowImageViewer(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [showImageViewer]);
+  
+  useEffect(() => {
+    const handleContentClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
       if (target.classList.contains('citation-link')) {
         e.preventDefault();
         const sourceId = target.getAttribute('data-source-id');
-        if (sourceId) {
-          onCitationClicked(sourceId);
-        }
+        if (sourceId) { onCitationClicked(sourceId); }
       }
     };
     
@@ -216,55 +195,154 @@ export default function EnhancedAnswer({
     };
   }, [onCitationClicked]);
   
-  // Extract all available sources from the answer object
-  const extractAllSources = () => {
-    const allSources = [];
-    const sourceMap = new Map();
+  // Extract sources from answer
+  const extractAllSources = (): Source[] => {
+    const allSources: Source[] = [];
+    const sourceMap = new Map<string, boolean>();
     
-    const processSource = (source, index) => {
+    const processSource = (source: any, index: number) => {
       if (!source) return;
       
-      // Handle case where source.id might be missing but we have document identifiers
       const sourceId = source.id || source.documentId || source.fileId || 
                       (source.fileName ? `file-${source.fileName}` : `source-${index}`);
       
       if (!sourceId) return;
-      
       const strSourceId = String(sourceId);
-      
-      // Skip if we've already processed this source
       if (sourceMap.has(strSourceId)) return;
       
-      // Normalize the source object
-      const normalizedSource = {
+      const normalizedSource: Source = {
         id: strSourceId,
         fileName: source.fileName || source.name || source.title || `Document ${strSourceId}`,
         score: source.score || source.relevanceScore || source.confidenceScore || 0,
         excerpts: []
       };
       
-      // Collect all possible content fields
+      // Handle document images
+      normalizedSource.pageImages = source.pageImages || source.images || source.pages || [];
+      normalizedSource.thumbnails = source.thumbnails || source.pageImages || source.images || [];
+      normalizedSource.imageLabels = source.imageLabels || source.pageLabels || [];
+      normalizedSource.pageCount = source.pageCount || 
+                                  (source.pageImages ? source.pageImages.length : 0) || 
+                                  (source.pages ? source.pages.length : 0);
+      
+      // Extract all types of text content
       if (source.excerpts && Array.isArray(source.excerpts)) {
-        normalizedSource.excerpts.push(...source.excerpts.filter(e => e !== null && e !== undefined));
+        normalizedSource.excerpts.push(...source.excerpts.filter((e: any) => e !== null && e !== undefined));
       }
       
       if (source.snippets && Array.isArray(source.snippets)) {
-        normalizedSource.excerpts.push(...source.snippets.filter(s => s !== null && s !== undefined));
+        normalizedSource.excerpts.push(...source.snippets.filter((s: any) => s !== null && s !== undefined));
       }
       
-      if (source.text) {
-        normalizedSource.excerpts.push(source.text);
+      if (source.text) normalizedSource.excerpts.push(source.text);
+      if (source.content) normalizedSource.excerpts.push(source.content);
+      
+      // Extract X-Ray data with improved JSON parsing
+      if (source.xray) {
+        try {
+          // Handle the case where the entire xray field might be a stringified JSON
+          let xrayData = source.xray;
+          if (typeof source.xray === 'string' && source.xray.trim().startsWith('{')) {
+            try {
+              xrayData = JSON.parse(source.xray);
+            } catch (e) {
+              console.warn('Failed to parse X-Ray data as JSON string', e);
+            }
+          }
+          
+          // Initialize normalized xray data
+          let parsedSummary = xrayData.summary;
+          let parsedKeywords = xrayData.keywords;
+          let parsedChunks = xrayData.chunks || [];
+          
+          // Try to parse summary if it's a JSON string
+          if (typeof parsedSummary === 'string' && parsedSummary.trim().startsWith('{')) {
+            try {
+              const summaryObj = JSON.parse(parsedSummary);
+              parsedSummary = summaryObj.summary || summaryObj.Summary || summaryObj.text || summaryObj.content || parsedSummary;
+              // If keywords weren't already set but are in the JSON, use those
+              if (!parsedKeywords && (summaryObj.keywords || summaryObj.Keywords)) {
+                parsedKeywords = summaryObj.keywords || summaryObj.Keywords;
+              }
+            } catch (e) {
+              console.warn('Failed to parse X-Ray summary as JSON', e);
+            }
+          }
+          
+          // Process chunks - this is where the JSON parsing needs improvement
+          if (parsedChunks && Array.isArray(parsedChunks)) {
+            parsedChunks = parsedChunks.map(chunk => {
+              const processedChunk = { ...chunk };
+              
+              // Parse text field if it looks like JSON
+              if (chunk.text && typeof chunk.text === 'string') {
+                if (chunk.text.trim().startsWith('{')) {
+                  try {
+                    const parsedText = JSON.parse(chunk.text);
+                    
+                    // Store the original text for reference
+                    processedChunk.originalText = chunk.text;
+                    
+                    // Set parsed data for reference
+                    processedChunk.parsedData = parsedText;
+                    
+                    // If we have structured data, use it for display
+                    if (parsedText.summary || parsedText.Summary) {
+                      processedChunk.sectionSummary = processedChunk.sectionSummary || 
+                                                      parsedText.summary || 
+                                                      parsedText.Summary;
+                    }
+                    
+                    // Extract JSON data if present
+                    if (parsedText.data || parsedText.Data) {
+                      processedChunk.json = processedChunk.json || 
+                                            parsedText.data || 
+                                            parsedText.Data;
+                    }
+                    
+                    // Keep original text in text field for compatibility
+                  } catch (e) {
+                    // If parsing fails, keep the original text
+                    console.warn('Failed to parse chunk text as JSON', e);
+                  }
+                }
+              }
+              
+              // Parse JSON field if it's a string
+              if (chunk.json && typeof chunk.json === 'string') {
+                try {
+                  processedChunk.json = JSON.parse(chunk.json);
+                } catch (e) {
+                  console.warn('Failed to parse chunk.json as JSON', e);
+                }
+              }
+              
+              return processedChunk;
+            });
+          }
+          
+          normalizedSource.xray = {
+            summary: parsedSummary,
+            keywords: parsedKeywords,
+            language: xrayData.language,
+            chunks: parsedChunks
+          };
+        } catch (e) {
+          console.error('Error processing X-Ray data', e);
+          // Keep the original data if parsing fails
+          normalizedSource.xray = {
+            summary: source.xray.summary,
+            keywords: source.xray.keywords,
+            language: source.xray.language,
+            chunks: source.xray.chunks
+          };
+        }
       }
       
-      if (source.content) {
-        normalizedSource.excerpts.push(source.content);
-      }
+      // Extract highlights
+      normalizedSource.highlights = source.highlights || [];
       
-      if (source.suggestedText) {
-        normalizedSource.excerpts.push(source.suggestedText);
-      }
-      
-      // Collect additional metadata
+      // Extract metadata
       normalizedSource.author = source.author;
       normalizedSource.datePublished = source.datePublished;
       normalizedSource.url = source.url || source.sourceUrl;
@@ -272,714 +350,105 @@ export default function EnhancedAnswer({
       normalizedSource.type = source.type || getDocumentType(source.fileName);
       normalizedSource.metadata = { ...source.metadata };
       
-      // If we still have no excerpts but have document context, use that
+      // If no excerpts but have context, use that
       if (normalizedSource.excerpts.length === 0 && source.documentContext) {
         normalizedSource.excerpts.push(source.documentContext);
       }
       
-      // Deduplicate excerpts (sometimes the same content appears in multiple fields)
+      // If no excerpts but have X-Ray text chunks, use those
+      if (normalizedSource.excerpts.length === 0 && normalizedSource.xray?.chunks) {
+        const textChunks = normalizedSource.xray.chunks
+          .filter(chunk => chunk.text)
+          .map(chunk => chunk.text);
+          
+        if (textChunks.length > 0) {
+          normalizedSource.excerpts.push(...textChunks);
+        }
+      }
+      
+      // Deduplicate excerpts
       if (normalizedSource.excerpts.length > 0) {
         const uniqueExcerpts = [...new Set(normalizedSource.excerpts)];
         normalizedSource.excerpts = uniqueExcerpts;
       }
       
-      // Add to our collection
       allSources.push(normalizedSource);
       sourceMap.set(strSourceId, true);
     };
     
     // Check different locations where sources might be stored
-    
-    // 1. Handle the case where raw source data was passed in directly
-    // This handles the specific example "Document ID: e5637cae-a4ab-47a0-b937-e4499e2f1afc"
-    if (answer && typeof answer === 'string' && answer.includes('Document ID:')) {
-      try {
-        // Try to parse the document info from the string
-        const lines = answer.split('\n');
-        const idLine = lines.find(line => line.includes('Document ID:'));
-        if (idLine) {
-          const docId = idLine.replace('Document ID:', '').trim();
-          const typeLine = lines.find(line => line.match(/^Type/i));
-          const type = typeLine ? lines[lines.indexOf(typeLine) + 1].trim() : null;
-          
-          // Create a source object from this information
-          const rawSource = {
-            id: docId,
-            fileName: `Document ${docId}`,
-            type: type,
-            score: 1, // Assume high relevance
-            excerpts: []
-          };
-          
-          // Find why it's relevant (if specified)
-          const relevanceStart = answer.indexOf('Why this is relevant:');
-          if (relevanceStart > -1) {
-            const relevanceText = answer.substring(relevanceStart + 'Why this is relevant:'.length).trim();
-            rawSource.metadata = { relevance: relevanceText };
-          }
-          
-          processSource(rawSource);
-        }
-      } catch (err) {
-        console.error('Error parsing document string:', err);
-      }
-    }
-    
-    // 2. documentExcerpts array
     if (documentExcerpts && Array.isArray(documentExcerpts)) {
       documentExcerpts.forEach(processSource);
     }
     
-    // 3. searchResults.sources array
     if (searchResults && searchResults.sources && Array.isArray(searchResults.sources)) {
       searchResults.sources.forEach(processSource);
     }
     
-    // 4. answer.sources array
     if (answer && answer.sources && Array.isArray(answer.sources)) {
       answer.sources.forEach(processSource);
     }
     
-    // 5. answer.result.documents
-    if (answer && answer.result && answer.result.documents) {
-      const documents = Array.isArray(answer.result.documents) 
-        ? answer.result.documents 
-        : [answer.result.documents];
-      documents.forEach(processSource);
-    }
-    
-    // 6. answer.documents
     if (answer && answer.documents) {
-      const documents = Array.isArray(answer.documents) 
-        ? answer.documents 
-        : [answer.documents];
+      const documents = Array.isArray(answer.documents) ? answer.documents : [answer.documents];
       documents.forEach(processSource);
     }
     
-    // 7. answer.search.results (GroundX format)
+    // Handle Ground X format
     if (answer && answer.search && answer.search.results && Array.isArray(answer.search.results)) {
       answer.search.results.forEach(processSource);
     }
     
-    // 8. Handle case where citations are present but not formatted as sources
-    if (answer && answer.citations && Array.isArray(answer.citations)) {
-      answer.citations.forEach((citation, index) => {
-        if (typeof citation === 'string') {
-          // Create a basic source from the citation string
-          processSource({
-            id: citation,
-            fileName: getDocumentName(citation),
-            score: 0.8, // Assume decent relevance
-            excerpts: []
-          }, index);
-        }
-      });
+    // Handle GroundX RAG format
+    if (answer && answer.searchResults && answer.searchResults.sources && 
+        Array.isArray(answer.searchResults.sources)) {
+      answer.searchResults.sources.forEach(processSource);
     }
     
     return allSources;
   };
   
-  // Extract thought process from answer
+  // Utility functions
   const extractThoughtProcess = () => {
-    let thoughtProcess = {
-      reasoning: '',
-      steps: [],
-      confidence: null
-    };
-    
-    // Check various common locations for thought process information
-    if (!answer) return thoughtProcess;
-    
-    // Direct thought process field
+    let reasoning = '';
+    if (!answer) return reasoning;
     if (answer.thoughts) {
-      thoughtProcess.reasoning = typeof answer.thoughts === 'string' 
-        ? answer.thoughts 
-        : JSON.stringify(answer.thoughts, null, 2);
+      reasoning = typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
     } 
-    // Nested in result
     else if (answer.result?.thoughts) {
-      thoughtProcess.reasoning = typeof answer.result.thoughts === 'string' 
-        ? answer.result.thoughts 
-        : JSON.stringify(answer.result.thoughts, null, 2);
+      reasoning = typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
     }
-    // System message
-    else if (answer.systemMessage) {
-      thoughtProcess.reasoning = answer.systemMessage;
-    }
-    // Internal reasoning
-    else if (answer.reasoning) {
-      thoughtProcess.reasoning = answer.reasoning;
-    }
-    // Steps
-    else if (answer.reasoningSteps || answer.steps) {
-      const steps = answer.reasoningSteps || answer.steps;
-      thoughtProcess.steps = steps;
-      thoughtProcess.reasoning = Array.isArray(steps) 
-        ? steps.join('\n\n') 
-        : typeof steps === 'string' ? steps : JSON.stringify(steps, null, 2);
-    }
-    
-    // Extract confidence if available
-    if (answer.confidence) {
-      thoughtProcess.confidence = answer.confidence;
-    } else if (answer.result?.confidence) {
-      thoughtProcess.confidence = answer.result.confidence;
-    }
-    
-    // If we still don't have reasoning but have documents, create a default
-    if (!thoughtProcess.reasoning) {
-      const sources = extractAllSources();
-      if (sources.length > 0) {
-        thoughtProcess.reasoning = `I analyzed ${sources.length} documents to find the information relevant to your query. The documents were evaluated for relevance and the most pertinent information was extracted to formulate a comprehensive answer.`;
-      } else {
-        thoughtProcess.reasoning = "I processed your query based on my knowledge and provided the most relevant information available.";
-      }
-    }
-    
-    return thoughtProcess;
+    else if (answer.systemMessage) { reasoning = answer.systemMessage; }
+    else if (answer.reasoning) { reasoning = answer.reasoning; }
+    return reasoning;
   };
   
-  // Extract all metadata from the answer
-  const extractMetadata = () => {
-    const metadata = {};
-    
-    if (!answer) return metadata;
-    
-    // Direct metadata field
-    if (answer.metadata) {
-      Object.assign(metadata, answer.metadata);
-    }
-    
-    // Nested in result
-    if (answer.result?.metadata) {
-      Object.assign(metadata, answer.result.metadata);
-    }
-    
-    // System info
-    if (answer.system) {
-      metadata.system = answer.system;
-    }
-    
-    // Version info
-    if (answer.version) {
-      metadata.version = answer.version;
-    }
-    
-    // Model info
-    if (answer.model) {
-      metadata.model = answer.model;
-    }
-    
-    // Timing info
-    if (answer.timing || answer.timings) {
-      metadata.timing = answer.timing || answer.timings;
-    }
-    
-    // Token usage
-    if (answer.tokenUsage || answer.result?.tokenUsage) {
-      metadata.tokenUsage = answer.tokenUsage || answer.result.tokenUsage;
-    }
-    
-    return metadata;
-  };
-  
-  // Extract search insights if available
-  const extractSearchInsights = () => {
-    if (!answer) return null;
-    
-    // Look for specific insight fields
-    const insights = answer.searchInsights || 
-                    answer.insights || 
-                    answer.queryAnalysis || 
-                    answer.result?.searchInsights ||
-                    answer.enhancedResults;
-                    
-    if (insights) return insights;
-    
-    // If we didn't find explicit insights, build some from the sources
-    const sources = extractAllSources();
-    if (sources.length > 0) {
-      // Get top sources by score
-      const topSources = [...sources]
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
-        .slice(0, 3);
-      
-      return {
-        sourceAnalysis: {
-          totalSources: sources.length,
-          topSources: topSources.map(s => ({
-            id: s.id,
-            name: s.fileName,
-            score: s.score,
-            relevance: "Contains information relevant to the query"
-          }))
-        },
-        suggestedFollowups: [
-          "Can you provide more details about this topic?",
-          "What are the key challenges in this area?",
-          "How does this compare to alternative approaches?"
-        ]
-      };
-    }
-    
-    return null;
-  };
-  
-  // Extract content from answer
   const extractContent = () => {
     if (!answer) return '';
-    
-    if (typeof answer === 'string') {
-      return answer;
-    }
-    
-    if (answer.content) {
-      return answer.content;
-    }
-    
+    if (typeof answer === 'string') return answer;
+    if (answer.content) return answer.content;
     if (answer.answer) {
-      return typeof answer.answer === 'string' 
-        ? answer.answer
-        : JSON.stringify(answer.answer, null, 2);
+      return typeof answer.answer === 'string' ? answer.answer : JSON.stringify(answer.answer, null, 2);
     }
-    
-    if (answer.result?.answer) {
-      return typeof answer.result.answer === 'string'
-        ? answer.result.answer
-        : JSON.stringify(answer.result.answer, null, 2);
-    }
-    
-    // If nothing else, return the raw JSON
+    if (answer.response) return answer.response;
     return JSON.stringify(answer, null, 2);
   };
   
-  // Extract followup questions
   const extractFollowupQuestions = () => {
     if (!answer) return [];
-    
     if (answer.followupQuestions && Array.isArray(answer.followupQuestions)) {
       return answer.followupQuestions;
     }
-    
     if (answer.suggestedQuestions && Array.isArray(answer.suggestedQuestions)) {
       return answer.suggestedQuestions;
     }
-    
-    if (answer.result?.followupQuestions && Array.isArray(answer.result.followupQuestions)) {
-      return answer.result.followupQuestions;
-    }
-    
     return [];
   };
   
-  // Extract citations
-  const extractCitations = () => {
-    if (!answer) return [];
-    
-    if (answer.citations && Array.isArray(answer.citations)) {
-      return answer.citations;
-    }
-    
-    if (answer.result?.citations && Array.isArray(answer.result.citations)) {
-      return answer.result.citations;
-    }
-    
-    return [];
-  };
-  
-  // Extract token usage information
-  const extractTokenUsage = () => {
-    if (!answer) return null;
-    
-    const tokenUsage = answer.tokenUsage || answer.result?.tokenUsage;
-    if (!tokenUsage) return null;
-    
-    return {
-      total: tokenUsage.total,
-      input: tokenUsage.input || tokenUsage.promptTokens,
-      output: tokenUsage.output || tokenUsage.completionTokens,
-      embedding: tokenUsage.embeddingTokens || 0,
-      totalCost: tokenUsage.totalCost,
-      currency: tokenUsage.currency || 'USD'
-    };
-  };
-  
-  // Guess document type based on filename
-  const getDocumentType = (fileName) => {
-    if (!fileName) return 'document';
-    
-    const extension = fileName.split('.').pop()?.toLowerCase();
-    
-    switch (extension) {
-      case 'pdf': return 'pdf';
-      case 'docx': 
-      case 'doc': return 'word';
-      case 'xlsx': 
-      case 'xls': 
-      case 'csv': return 'spreadsheet';
-      case 'txt': return 'text';
-      case 'html': 
-      case 'htm': return 'web';
-      case 'json': 
-      case 'js': 
-      case 'py': 
-      case 'java': 
-      case 'c': 
-      case 'cpp': return 'code';
-      default: return 'document';
-    }
-  };
-  
-  // Get appropriate icon for document type
-  const getDocumentIcon = (fileName, type) => {
-    const docType = type || getDocumentType(fileName);
-    
-    switch (docType.toLowerCase()) {
-      case 'pdf': return <FileText size={16} className="text-red-600" />;
-      case 'word': return <FileText size={16} className="text-blue-600" />;
-      case 'spreadsheet': 
-      case 'csv': 
-      case 'excel': return <FileDigit size={16} className="text-green-600" />;
-      case 'code': 
-      case 'json': return <Code size={16} className="text-yellow-600" />;
-      case 'text': 
-      case 'txt': return <AlignJustify size={16} className="text-gray-600" />;
-      case 'web': 
-      case 'html': return <Search size={16} className="text-purple-600" />;
-      case 'book': return <BookOpen size={16} className="text-blue-700" />;
-      default: return <FileText size={16} className="text-gray-600" />;
-    }
-  };
-  
-  // Toggle document expansion
-  const toggleDocExpansion = (docId) => {
-    setExpandedDocs(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(docId)) {
-        newSet.delete(docId);
-      } else {
-        newSet.add(docId);
-      }
-      return newSet;
-    });
-  };
-  
-  // Toggle bookmark status
-  const toggleBookmark = (docId, event) => {
-    if (event) event.stopPropagation();
-    
-    setBookmarks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(docId)) {
-        newSet.delete(docId);
-      } else {
-        newSet.add(docId);
-      }
-      return newSet;
-    });
-  };
-  
-  // Handle document click
-  const handleDocumentClick = (source) => {
-    if (!source || !source.id) return;
-    
-    // Toggle expansion state
-    toggleDocExpansion(source.id);
-    
-    // Set as current document for detail view
-    setCurrentDocumentId(source.id);
-  };
-  
-  // Handle filter change
-  const handleFilterChange = (e) => {
-    setSourceFilter(e.target.value);
-    setCurrentPage(1); // Reset to first page when filter changes
-  };
-  
-  // Handle sort change
-  const handleSortChange = (option) => {
-    setSortOption(option);
-  };
-  
-  // Handle view mode change
-  const handleViewModeChange = (mode) => {
-    setViewMode(mode);
-  };
-  
-  // Toggle display option
-  const toggleDisplayOption = (option) => {
-    setDisplayOptions(prev => ({
-      ...prev,
-      [option]: !prev[option]
-    }));
-  };
-  
-  // Submit feedback
-  const handleSubmitFeedback = () => {
-    if (onFeedbackSubmitted && feedbackRating !== null) {
-      onFeedbackSubmitted({
-        rating: feedbackRating,
-        comment: feedbackComment,
-        answerIndex: index,
-        timestamp: new Date().toISOString()
-      });
-      setShowFeedbackForm(false);
-      setFeedbackRating(null);
-      setFeedbackComment('');
-    }
-  };
-  
-  // Handle clipboard copy
-  const handleCopyToClipboard = () => {
-    let contentToCopy = isEditMode ? editedAnswer : extractContent();
-    
-    try {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(contentToCopy)
-          .then(() => setIsCopied(true))
-          .catch(err => {
-            console.error("Clipboard write failed:", err);
-            fallbackCopyToClipboard(contentToCopy);
-          });
-      } else {
-        fallbackCopyToClipboard(contentToCopy);
-      }
-    } catch (err) {
-      console.error("Copy failed:", err);
-    }
-  };
-  
-  // Fallback for clipboard copy (for older browsers)
-  const fallbackCopyToClipboard = (text) => {
-    try {
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      textArea.style.position = 'fixed';
-      textArea.style.left = '-999999px';
-      textArea.style.top = '-999999px';
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      
-      const success = document.execCommand('copy');
-      document.body.removeChild(textArea);
-      
-      if (success) {
-        setIsCopied(true);
-      }
-    } catch (err) {
-      console.error("Fallback copy failed:", err);
-    }
-  };
-  
-  // Handle export
-  const handleExport = (format) => {
-    if (onExportClicked) {
-      onExportClicked(format);
-    } else {
-      // Default export implementation
-      let exportData;
-      let fileName;
-      let mimeType;
-      
-      switch (format) {
-        case 'json':
-          exportData = JSON.stringify(answer, null, 2);
-          fileName = 'answer-export.json';
-          mimeType = 'application/json';
-          break;
-        case 'csv':
-          const sources = extractAllSources();
-          const headers = ["id", "fileName", "score", "excerpt"];
-          const rows = sources.map(s => [
-            s.id,
-            s.fileName || '',
-            s.score || '',
-            s.excerpts[0] || ''
-          ]);
-          exportData = [headers, ...rows].map(row => 
-            row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
-          ).join('\n');
-          fileName = 'sources-export.csv';
-          mimeType = 'text/csv';
-          break;
-        case 'md':
-          const content = extractContent();
-          const sourcesList = extractAllSources()
-            .map(s => 
-              `## ${s.fileName}\n\n` +
-              `- **ID**: ${s.id}\n` +
-              `- **Score**: ${s.score || 'N/A'}\n\n` +
-              (s.excerpts.length > 0 ? s.excerpts.map(e => `> ${e}\n`).join('\n') : '')
-            ).join('\n\n');
-          
-          exportData = `# Answer\n\n${content}\n\n# Sources\n\n${sourcesList}`;
-          fileName = 'answer-export.md';
-          mimeType = 'text/markdown';
-          break;
-        default:
-          return;
-      }
-      
-      // Create download link
-      const blob = new Blob([exportData], { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  };
-  
-  // Apply filtering and sorting to sources
-  const getProcessedSources = () => {
-    const allSources = extractAllSources();
-    
-    // Apply filter
-    const filteredSources = sourceFilter
-      ? allSources.filter(source => {
-          const searchText = [
-            source.fileName,
-            source.author || '',
-            ...source.excerpts
-          ].join(' ').toLowerCase();
-          
-          return searchText.includes(sourceFilter.toLowerCase());
-        })
-      : allSources;
-    
-    // Apply sorting
-    const sortedSources = [...filteredSources].sort((a, b) => {
-      switch (sortOption) {
-        case 'relevance':
-          return (b.score || 0) - (a.score || 0);
-        case 'date':
-          const dateA = a.datePublished ? new Date(a.datePublished).getTime() : 0;
-          const dateB = b.datePublished ? new Date(b.datePublished).getTime() : 0;
-          return dateB - dateA;
-        case 'name':
-          return (a.fileName || '').localeCompare(b.fileName || '');
-        default:
-          return 0;
-      }
-    });
-    
-    return sortedSources;
-  };
-  
-  // Get current page of sources
-  const getCurrentPageSources = () => {
-    const processed = getProcessedSources();
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    return processed.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  };
-  
-  // Calculate total pages
-  const getTotalPages = () => {
-    const processed = getProcessedSources();
-    return Math.ceil(processed.length / ITEMS_PER_PAGE);
-  };
-  
-  // Get document statistics
-  const getDocumentStats = () => {
-    const sources = extractAllSources();
-    if (!sources || sources.length === 0) return null;
-    
-    // Count document types
-    const typeCount = {};
-    sources.forEach(source => {
-      const type = source.type || getDocumentType(source.fileName);
-      typeCount[type] = (typeCount[type] || 0) + 1;
-    });
-    
-    // Calculate average score
-    let totalScore = 0;
-    let scoreCount = 0;
-    sources.forEach(source => {
-      if (source.score !== undefined) {
-        totalScore += source.score;
-        scoreCount++;
-      }
-    });
-    
-    const avgScore = scoreCount > 0 ? totalScore / scoreCount : 0;
-    
-    // Count by relevance ranges
-    const relevanceCounts = {
-      high: sources.filter(s => (s.score || 0) > 0.8).length,
-      medium: sources.filter(s => (s.score || 0) >= 0.5 && (s.score || 0) <= 0.8).length,
-      low: sources.filter(s => (s.score || 0) < 0.5).length
-    };
-    
-    return {
-      total: sources.length,
-      types: typeCount,
-      avgScore,
-      relevanceCounts
-    };
-  };
-  
-  // Get current document detail
-  const getCurrentDocument = () => {
-    if (!currentDocumentId) return null;
-    
-    const sources = extractAllSources();
-    const document = sources.find(s => s.id === currentDocumentId);
-    
-    // If we found the document but it has no excerpts, attempt to fetch from the full document
-    if (document && (!document.excerpts || document.excerpts.length === 0)) {
-      // Try to get content from documentExcerpts if available
-      if (documentExcerpts && Array.isArray(documentExcerpts)) {
-        const fullDoc = documentExcerpts.find(d => d.id === currentDocumentId);
-        if (fullDoc) {
-          // Copy any missing content fields
-          if (fullDoc.excerpts && fullDoc.excerpts.length > 0) {
-            document.excerpts = [...fullDoc.excerpts];
-          } else if (fullDoc.content) {
-            document.excerpts = [fullDoc.content];
-          } else if (fullDoc.text) {
-            document.excerpts = [fullDoc.text];
-          }
-        }
-      }
-      
-      // If still no excerpts, try to use the document ID to fetch the full document
-      if ((!document.excerpts || document.excerpts.length === 0) && onCitationClicked) {
-        // We'll add a placeholder so the UI doesn't show "no excerpts"
-        document.excerpts = ["Loading document content..."];
-        
-        // In a real implementation, here you would trigger a document fetch,
-        // but for this implementation, we'll leave this as a placeholder
-      }
-    }
-    
-    return document;
-  };
-  
-  // Generate document relevance explanation
-  const getRelevanceExplanation = (source) => {
+  const getRelevanceExplanation = (source: Source) => {
     if (!source) return '';
+    if (source.metadata?.relevance) return source.metadata.relevance;
     
-    const sourceName = source.fileName || `Document ${source.id}`;
-    const sourceType = source.type || getDocumentType(source.fileName);
-    
-    // Check if we already have a relevance explanation
-    if (source.metadata?.relevance) {
-      return source.metadata.relevance;
-    }
-    
-    if (source.metadata?.explanation) {
-      return source.metadata.explanation;
-    }
-    
-    if (source.metadata?.reasoning) {
-      return source.metadata.reasoning;
-    }
-    
-    // Calculate confidence level
     const confidence = source.score || 0.6;
     const confidencePercent = Math.min(100, Math.round(confidence * 100));
     
@@ -987,43 +456,210 @@ export default function EnhancedAnswer({
     if (confidencePercent > 80) confidenceLevel = 'high confidence';
     if (confidencePercent < 50) confidenceLevel = 'some relevance';
     
-    // Generate a more descriptive explanation based on document type
-    let explanation = `This ${sourceType} contains information relevant to your query. `;
-    
-    // Add confidence assessment
-    explanation += `The system has ${confidenceLevel} (${confidencePercent}%) that this source contributes valuable information to the answer.`;
-    
-    // Add metadata if available
-    if (source.author) {
-      explanation += ` Author: ${source.author}.`;
-    }
-    
-    if (source.datePublished) {
-      explanation += ` Published on ${formatDate(source.datePublished)}.`;
-    }
-    
-    return explanation;
+    return `This ${source.type} contains information relevant to your query. The system has ${confidenceLevel} (${confidencePercent}%) that this source contributes valuable information to the answer.`;
   };
   
-  // Animation variants for motion components
+  // Enhanced JSON display function
+  const renderJsonData = (jsonData: any) => {
+    if (!jsonData) return null;
+    
+    // Handle array data
+    if (Array.isArray(jsonData)) {
+      return (
+        <div className="space-y-2">
+          {jsonData.map((item, index) => (
+            <div key={index} className="border-b pb-2" style={{ borderColor: `${themeStyles.borderColor}30` }}>
+              {typeof item === 'object' ? (
+                <div>
+                  {Object.entries(item).map(([key, value]) => (
+                    <div key={key} className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="font-medium">{key}:</div>
+                      <div className="col-span-2">
+                        {typeof value === 'object' 
+                          ? JSON.stringify(value) 
+                          : String(value)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs">{String(item)}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    
+    // Handle object data
+    if (typeof jsonData === 'object' && jsonData !== null) {
+      return (
+        <div className="space-y-1">
+          {Object.entries(jsonData).map(([key, value]) => (
+            <div key={key} className="grid grid-cols-3 gap-2 text-xs">
+              <div className="font-medium">{key}:</div>
+              <div className="col-span-2">
+                {typeof value === 'object' 
+                  ? JSON.stringify(value)
+                  : String(value)}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    
+    // Handle primitive values
+    return <div className="text-xs">{String(jsonData)}</div>;
+  };
+  
+  // Handlers
+  const toggleDocExpansion = (docId: string) => {
+    setExpandedDocs(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(docId)) { newSet.delete(docId); } 
+      else { newSet.add(docId); }
+      return newSet;
+    });
+  };
+  
+  const handleDocumentClick = (source: Source) => {
+    if (!source || !source.id) return;
+    toggleDocExpansion(source.id);
+    setCurrentDocumentId(source.id);
+  };
+  
+  const handleImageClick = (source: Source, imageIndex: number) => {
+    if (!source || !source.pageImages || !source.pageImages.length) return;
+    setSelectedSourceId(source.id);
+    setSelectedImageIndex(imageIndex);
+    setShowImageViewer(true);
+    if (onImageClicked) {
+      onImageClicked(source.pageImages[imageIndex], source.id, imageIndex);
+    }
+  };
+  
+  const navigateImage = (direction: 'prev' | 'next') => {
+    if (!selectedSourceId) return;
+    const sources = extractAllSources();
+    const currentSource = sources.find(s => s.id === selectedSourceId);
+    if (!currentSource || !currentSource.pageImages || !currentSource.pageImages.length) return;
+    const totalImages = currentSource.pageImages.length;
+    
+    if (direction === 'prev') {
+      setSelectedImageIndex(prev => (prev > 0 ? prev - 1 : totalImages - 1));
+    } else {
+      setSelectedImageIndex(prev => (prev < totalImages - 1 ? prev + 1 : 0));
+    }
+  };
+  
+  const getAllImages = () => {
+    const sources = extractAllSources();
+    const allImages: {url: string, sourceId: string, index: number, source: Source}[] = [];
+    
+    sources.forEach(source => {
+      if (source.pageImages && source.pageImages.length) {
+        source.pageImages.forEach((url, index) => {
+          allImages.push({
+            url, sourceId: source.id, index, source
+          });
+        });
+      }
+    });
+    
+    if (imageSortBy === 'relevance') {
+      return allImages.sort((a, b) => (b.source.score || 0) - (a.source.score || 0));
+    }
+    return allImages;
+  };
+  
+  const getAllXrayChunks = () => {
+    const sources = extractAllSources();
+    let allChunks: {chunk: XRayChunk, sourceId: string, source: Source}[] = [];
+    
+    sources.forEach(source => {
+      if (source.xray?.chunks && source.xray.chunks.length) {
+        source.xray.chunks.forEach(chunk => {
+          allChunks.push({
+            chunk, sourceId: source.id, source
+          });
+        });
+      }
+    });
+    
+    if (xrayContentFilter) {
+      allChunks = allChunks.filter(item => 
+        item.chunk.contentType?.includes(xrayContentFilter)
+      );
+    }
+    
+    return allChunks;
+  };
+  
+  const hasXrayData = () => {
+    const sources = extractAllSources();
+    return sources.some(source => source.xray && (
+      source.xray.summary || 
+      source.xray.keywords || 
+      (source.xray.chunks && source.xray.chunks.length > 0)
+    ));
+  };
+  
+  const handleCopyToClipboard = () => {
+    const contentToCopy = extractContent();
+    try {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(contentToCopy)
+          .then(() => setIsCopied(true))
+          .catch(err => {
+            console.error("Copy failed:", err);
+          });
+      }
+    } catch (err) {
+      console.error("Copy failed:", err);
+    }
+  };
+  
+  const getCurrentDocument = () => {
+    if (!currentDocumentId) return null;
+    const sources = extractAllSources();
+    return sources.find(s => s.id === currentDocumentId);
+  };
+  
+  // UI Components
+  const getDocumentIcon = (fileName?: string, type?: string) => {
+    const docType = type || getDocumentType(fileName);
+    switch (docType.toLowerCase()) {
+      case 'pdf': return <FileText size={16} className="text-red-600" />;
+      case 'word': return <FileText size={16} className="text-blue-600" />;
+      case 'spreadsheet': case 'csv': return <Code size={16} className="text-green-600" />;
+      case 'code': case 'json': return <Code size={16} className="text-yellow-600" />;
+      case 'text': case 'txt': return <FileText size={16} className="text-gray-600" />;
+      case 'web': case 'html': return <Search size={16} className="text-purple-600" />;
+      case 'image': return <FileImage size={16} className="text-pink-600" />;
+      default: return <FileText size={16} className="text-gray-600" />;
+    }
+  };
+  
+  const getContentTypeIcon = (contentType?: string[]) => {
+    if (!contentType || contentType.length === 0) return <AlignLeft size={16} />;
+    if (contentType.includes('table')) return <Table size={16} />;
+    if (contentType.includes('figure')) return <PieChart size={16} />;
+    if (contentType.includes('list')) return <List size={16} />;
+    if (contentType.includes('code')) return <Code size={16} />;
+    if (contentType.includes('json')) return <FileJson size={16} />;
+    return <AlignLeft size={16} />;
+  };
+  
+  // Animation variants
   const containerVariants = {
     hidden: { opacity: 0, y: 20 },
-    visible: { 
-      opacity: 1, 
-      y: 0,
-      transition: { duration: 0.3 }
-    },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
     selected: {
       scale: 1.005,
       boxShadow: "0 4px 20px rgba(99, 102, 241, 0.15)",
       transition: { duration: 0.2 }
     }
-  };
-  
-  const buttonVariants = {
-    initial: { scale: 1 },
-    hover: { scale: 1.05 },
-    tap: { scale: 0.95 }
   };
   
   const tabAnimation = {
@@ -1032,23 +668,40 @@ export default function EnhancedAnswer({
     exit: { opacity: 0, y: -10 }
   };
   
+  const modalAnimation = {
+    hidden: { opacity: 0, scale: 0.95 },
+    visible: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 0.95 }
+  };
+  
   // Get extracted data
   const content = extractContent();
   const thoughtProcess = extractThoughtProcess();
-  const metadata = extractMetadata();
-  const tokenUsage = extractTokenUsage();
   const followupQuestions = extractFollowupQuestions();
-  const citations = extractCitations();
-  const searchInsights = extractSearchInsights();
-  const sources = getProcessedSources();
-  const currentPageSources = getCurrentPageSources();
-  const totalPages = getTotalPages();
-  const documentStats = getDocumentStats();
+  const sources = extractAllSources();
   const currentDocument = getCurrentDocument();
+  const allImages = getAllImages();
+  const allXrayChunks = getAllXrayChunks();
   
-  const hasThoughts = thoughtProcess && thoughtProcess.reasoning && thoughtProcess.reasoning.length > 0;
+  const hasThoughts = thoughtProcess && thoughtProcess.length > 0;
   const hasSources = sources && sources.length > 0;
-  const hasInsights = searchInsights !== null;
+  const hasImages = allImages.length > 0;
+  const hasXray = hasXrayData();
+  
+  // Get current image for image viewer
+  const currentImage = () => {
+    if (!selectedSourceId || selectedImageIndex === undefined) return null;
+    const source = sources.find(s => s.id === selectedSourceId);
+    if (!source || !source.pageImages || !source.pageImages.length) return null;
+    
+    return {
+      url: source.pageImages[selectedImageIndex],
+      label: source.imageLabels && source.imageLabels[selectedImageIndex] 
+          ? source.imageLabels[selectedImageIndex] 
+          : `Page ${selectedImageIndex + 1}`,
+      source
+    };
+  };
   
   return (
     <motion.div
@@ -1073,125 +726,33 @@ export default function EnhancedAnswer({
             />
           </svg>
           <span className="text-xl font-medium">Response</span>
-          {metadata.version && (
-            <span className="ml-2 text-xs opacity-70">{metadata.version}</span>
-          )}
         </div>
         
         <div className="flex items-center space-x-1">
-          {/* Export button */}
-          {enableAdvancedFeatures && (
-            <div className="relative">
-              <motion.button
-                variants={buttonVariants}
-                initial="initial"
-                whileHover="hover"
-                whileTap="tap"
-                onClick={() => document.getElementById(`export-dropdown-${index}`)?.classList.toggle('hidden')}
-                className="p-2 rounded-full transition-colors hover:bg-indigo-50"
-                title="Export Results"
-              >
-                <Share2 size={18} />
-              </motion.button>
-              <div 
-                id={`export-dropdown-${index}`} 
-                className="absolute right-0 mt-2 w-48 rounded-md shadow-lg hidden z-10"
-                style={{ backgroundColor: themeStyles.cardBackground }}
-              >
-                <div className="py-1">
-                  <button
-                    className="block w-full text-left px-4 py-2 text-sm hover:bg-indigo-50"
-                    onClick={() => handleExport('json')}
-                  >
-                    Export as JSON
-                  </button>
-                  <button
-                    className="block w-full text-left px-4 py-2 text-sm hover:bg-indigo-50"
-                    onClick={() => handleExport('csv')}
-                  >
-                    Export Sources as CSV
-                  </button>
-                  <button
-                    className="block w-full text-left px-4 py-2 text-sm hover:bg-indigo-50"
-                    onClick={() => handleExport('md')}
-                  >
-                    Export as Markdown
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {/* Refresh button */}
           {onRefreshClicked && (
-            <motion.button
-              variants={buttonVariants}
-              initial="initial"
-              whileHover="hover"
-              whileTap="tap"
+            <button
               onClick={onRefreshClicked}
               className="p-2 rounded-full transition-colors hover:bg-indigo-50"
               title="Refresh Response"
             >
-              <RefreshCw size={18} />
-            </motion.button>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 2v6h-6"></path>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                <path d="M3 22v-6h6"></path>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+            </button>
           )}
           
-          {/* Copy button */}
-          <motion.button
-            variants={buttonVariants}
-            initial="initial"
-            whileHover="hover"
-            whileTap="tap"
+          <button
             onClick={handleCopyToClipboard}
             className="p-2 rounded-full transition-colors hover:bg-indigo-50 relative"
             title={isCopied ? "Copied!" : "Copy to clipboard"}
           >
-            <AnimatePresence mode="wait">
-              {isCopied ? (
-                <motion.div
-                  key="check"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <ClipboardCheck size={18} />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="copy"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <ClipboardCopy size={18} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-            
-            {/* Copy confirmation tooltip */}
-            <AnimatePresence>
-              {isCopied && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute -top-8 left-1/2 transform -translate-x-1/2 text-white text-xs py-1 px-2 rounded whitespace-nowrap bg-gray-800"
-                >
-                  Copied to clipboard
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.button>
+            {isCopied ? <ClipboardCheck size={18} /> : <ClipboardCopy size={18} />}
+          </button>
           
-          {/* Thought process button */}
-          <motion.button
-            variants={buttonVariants}
-            initial="initial"
-            whileHover="hover"
-            whileTap="tap"
+          <button
             onClick={() => {
               setActiveTab('thought-process');
               onThoughtProcessClicked();
@@ -1201,14 +762,9 @@ export default function EnhancedAnswer({
             disabled={!hasThoughts}
           >
             <Lightbulb size={18} />
-          </motion.button>
+          </button>
           
-          {/* Sources button */}
-          <motion.button
-            variants={buttonVariants}
-            initial="initial"
-            whileHover="hover"
-            whileTap="tap"
+          <button
             onClick={() => {
               setActiveTab('sources');
               onSupportingContentClicked();
@@ -1218,350 +774,535 @@ export default function EnhancedAnswer({
             disabled={!hasSources}
           >
             <Database size={18} />
-          </motion.button>
+          </button>
           
-          {/* Debug button */}
-          <motion.button
-            variants={buttonVariants}
-            initial="initial"
-            whileHover="hover"
-            whileTap="tap"
-            onClick={() => setDebugMode(!debugMode)}
-            className={`p-2 rounded-full transition-colors ${debugMode ? 'text-red-500 hover:bg-red-50' : 'hover:bg-gray-100'}`}
-            title="Toggle Debug Mode"
-          >
-            <Bug size={18} />
-          </motion.button>
+          {hasXray && (
+            <button
+              onClick={() => setActiveTab('xray')}
+              className="p-2 rounded-full transition-colors hover:bg-blue-50 text-blue-500"
+              title="X-Ray Document Analysis"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                <path d="M12 12 6 6"/>
+                <path d="M12 6v6"/>
+                <path d="M21 9V3h-6"/>
+              </svg>
+            </button>
+          )}
           
-          {/* Expand/collapse button */}
-          <motion.button
-            variants={buttonVariants}
-            initial="initial"
-            whileHover="hover"
-            whileTap="tap"
+          {hasImages && (
+            <button
+              onClick={() => setActiveTab('images')}
+              className="p-2 rounded-full transition-colors hover:bg-pink-50 text-pink-500"
+              title="Document Images"
+            >
+              <ImageIcon size={18} />
+            </button>
+          )}
+          
+          <button
             onClick={() => setExpanded(!expanded)}
             className="p-2 rounded-full transition-colors hover:bg-gray-100"
             title={expanded ? "Collapse" : "Expand"}
           >
             {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </motion.button>
+          </button>
         </div>
       </div>
       
-      {/* Debug panel */}
-      <AnimatePresence>
-        {debugMode && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="border-b p-4"
-            style={{ borderColor: themeStyles.borderColor, backgroundColor: `${themeStyles.primaryColor}10` }}
-          >
-            <div className="flex justify-between items-center mb-2">
-              <span className="font-semibold">Debug Mode</span>
-              <span className="text-sm" style={{ color: themeStyles.primaryColor }}>Response Structure</span>
-            </div>
-            
-            <div className="grid grid-cols-3 gap-2 mb-3 text-xs p-2 rounded" style={{ backgroundColor: `${themeStyles.primaryColor}20` }}>
-              <div>
-                <span className="font-semibold">Sources:</span> {sources.length}
-              </div>
-              <div>
-                <span className="font-semibold">Has Thoughts:</span> {hasThoughts ? 'Yes' : 'No'}
-              </div>
-              <div>
-                <span className="font-semibold">Has Insights:</span> {hasInsights ? 'Yes' : 'No'}
-              </div>
-              {tokenUsage && (
-                <>
-                  <div>
-                    <span className="font-semibold">Total Tokens:</span> {tokenUsage.total || 'N/A'}
-                  </div>
-                  <div>
-                    <span className="font-semibold">Input Tokens:</span> {tokenUsage.input || 'N/A'}
-                  </div>
-                  <div>
-                    <span className="font-semibold">Output Tokens:</span> {tokenUsage.output || 'N/A'}
-                  </div>
-                </>
+      {/* Document detail view */}
+      {currentDocument && (
+        <div
+          className="border-b p-4"
+          style={{ 
+            borderColor: themeStyles.borderColor,
+            backgroundColor: `${themeStyles.secondaryColor}10`
+          }}
+        >
+          <div className="flex justify-between items-start mb-3">
+            <div className="flex items-center">
+              {getDocumentIcon(currentDocument.fileName, currentDocument.type)}
+              <h3 className="ml-2 font-medium">{currentDocument.fileName}</h3>
+              {currentDocument.score !== undefined && (
+                <span 
+                  className="ml-2 px-2 py-0.5 text-xs rounded-full"
+                  style={{ 
+                    backgroundColor: `${themeStyles.secondaryColor}20`,
+                    color: themeStyles.secondaryColor
+                  }}
+                >
+                  Score: {(currentDocument.score * 100).toFixed(1)}%
+                </span>
+              )}
+              
+              {currentDocument.xray && (
+                <span 
+                  className="ml-2 px-2 py-0.5 text-xs rounded-full"
+                  style={{ 
+                    backgroundColor: `${themeStyles.xrayColor}20`,
+                    color: themeStyles.xrayColor
+                  }}
+                >
+                  X-Ray Analysis
+                </span>
               )}
             </div>
-            
-            <div className="mb-2 font-semibold">Raw Response:</div>
-            <pre className="text-xs whitespace-pre-wrap mb-3 p-2 rounded border max-h-40 overflow-auto"
+            <button onClick={() => setCurrentDocumentId(null)} className="p-1">
+              <X size={16} />
+            </button>
+          </div>
+          
+          <div className="mb-3 text-xs opacity-70">
+            Document ID: {currentDocument.id}
+          </div>
+          
+          {/* X-Ray Summary */}
+          {currentDocument.xray?.summary && (
+            <div 
+              className="mb-4 p-3 rounded-lg border"
               style={{ 
-                backgroundColor: themeStyles.cardBackground,
-                borderColor: themeStyles.borderColor
+                backgroundColor: `${themeStyles.xrayColor}05`,
+                borderColor: `${themeStyles.xrayColor}30`
               }}
             >
-              {JSON.stringify(answer, null, 2)}
-            </pre>
-            
-            {hasSources && (
-              <>
-                <div className="font-semibold mt-2">Extracted Sources:</div>
-                <pre className="text-xs whitespace-pre-wrap p-2 rounded border max-h-40 overflow-auto"
-                  style={{ 
-                    backgroundColor: themeStyles.cardBackground,
-                    borderColor: themeStyles.borderColor
-                  }}
-                >
-                  {JSON.stringify(sources, null, 2)}
-                </pre>
-              </>
-            )}
-            
-            {Object.keys(metadata).length > 0 && (
-              <>
-                <div className="font-semibold mt-2">Metadata:</div>
-                <pre className="text-xs whitespace-pre-wrap p-2 rounded border max-h-40 overflow-auto"
-                  style={{ 
-                    backgroundColor: themeStyles.cardBackground,
-                    borderColor: themeStyles.borderColor
-                  }}
-                >
-                  {JSON.stringify(metadata, null, 2)}
-                </pre>
-              </>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-      
-      {/* Document detail view */}
-      <AnimatePresence>
-        {currentDocument && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="border-b p-4"
-            style={{ 
-              borderColor: themeStyles.borderColor,
-              backgroundColor: `${themeStyles.secondaryColor}10`
-            }}
-          >
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex items-center">
-                {getDocumentIcon(currentDocument.fileName, currentDocument.type)}
-                <h3 className="ml-2 font-medium">{currentDocument.fileName}</h3>
-                {currentDocument.score !== undefined && (
-                  <span 
-                    className="ml-2 px-2 py-0.5 text-xs rounded-full"
-                    style={{ 
-                      backgroundColor: `${themeStyles.secondaryColor}20`,
-                      color: themeStyles.secondaryColor
-                    }}
-                  >
-                    Score: {(currentDocument.score * 100).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-              <motion.button
-                variants={buttonVariants}
-                initial="initial"
-                whileHover="hover"
-                whileTap="tap"
-                onClick={() => setCurrentDocumentId(null)}
-                className="p-1"
+              <h4 
+                className="text-sm font-medium mb-2 flex items-center"
+                style={{ color: themeStyles.xrayColor }}
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  <path d="M12 12 6 6"/>
+                  <path d="M12 6v6"/>
+                  <path d="M21 9V3h-6"/>
                 </svg>
-              </motion.button>
-            </div>
-            
-            {/* Document ID */}
-            <div className="mb-3 text-xs opacity-70">
-              Document ID: {currentDocument.id}
-            </div>
-            
-            {/* Document metadata */}
-            <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              {currentDocument.type && (
-                <div className="p-2 rounded" style={{ backgroundColor: `${themeStyles.secondaryColor}10` }}>
-                  <div className="font-medium opacity-70">Type</div>
-                  <div>{currentDocument.type}</div>
-                </div>
-              )}
+                X-Ray Document Summary
+              </h4>
+              <p className="text-sm">{currentDocument.xray.summary}</p>
               
-              {currentDocument.author && (
-                <div className="p-2 rounded" style={{ backgroundColor: `${themeStyles.secondaryColor}10` }}>
-                  <div className="font-medium opacity-70">Author</div>
-                  <div>{currentDocument.author}</div>
-                </div>
-              )}
-              
-              {currentDocument.datePublished && (
-                <div className="p-2 rounded" style={{ backgroundColor: `${themeStyles.secondaryColor}10` }}>
-                  <div className="font-medium opacity-70">Date</div>
-                  <div>{formatDate(currentDocument.datePublished)}</div>
-                </div>
-              )}
-              
-              {currentDocument.fileSize && (
-                <div className="p-2 rounded" style={{ backgroundColor: `${themeStyles.secondaryColor}10` }}>
-                  <div className="font-medium opacity-70">Size</div>
-                  <div>{formatBytes(currentDocument.fileSize)}</div>
-                </div>
-              )}
-            </div>
-            
-            {/* Document excerpts */}
-            {currentDocument.excerpts.length > 0 ? (
-              <div>
-                <h4 className="text-sm font-medium mb-2">Excerpts:</h4>
-                <div className="space-y-2">
-                  {currentDocument.excerpts.map((excerpt, i) => (
-                    <div 
+              {currentDocument.xray.keywords && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {currentDocument.xray.keywords.split(',').map((keyword, i) => (
+                    <span 
                       key={i}
-                      className="rounded border p-3 text-sm"
+                      className="px-2 py-0.5 text-xs rounded-full"
                       style={{ 
-                        backgroundColor: themeStyles.cardBackground,
-                        borderColor: `${themeStyles.secondaryColor}30`
+                        backgroundColor: `${themeStyles.xrayColor}15`,
+                        color: themeStyles.xrayColor
                       }}
                     >
-                      <div className="text-xs mb-1 opacity-70">Excerpt {i+1}</div>
-                      <p>{excerpt}</p>
-                    </div>
+                      {keyword.trim()}
+                    </span>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div className="text-sm italic opacity-70">No excerpts available for this document.</div>
-            )}
-            
-            {/* Relevance explanation */}
-            <div className="mt-3 p-3 rounded border text-sm"
-              style={{ 
-                backgroundColor: `${themeStyles.primaryColor}10`,
-                borderColor: `${themeStyles.primaryColor}30`
-              }}
-            >
-              <div className="font-medium mb-1">Why this is relevant:</div>
-              <p>{getRelevanceExplanation(currentDocument)}</p>
+              )}
             </div>
-            
-            {/* URL if available */}
-            {currentDocument.url && (
-              <div className="mt-3">
-                <h4 className="text-sm font-medium mb-1">Source URL:</h4>
-                <a
-                  href={currentDocument.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm break-all flex items-center"
-                  style={{ color: themeStyles.primaryColor }}
-                >
-                  {currentDocument.url}
-                  <ExternalLink size={12} className="ml-1 flex-shrink-0" />
-                </a>
+          )}
+          
+          {/* Document images if available */}
+          {currentDocument.pageImages && currentDocument.pageImages.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-sm font-medium mb-2">Document Pages:</h4>
+              <div className="flex flex-wrap gap-2">
+                {currentDocument.pageImages.slice(0, 6).map((imageUrl, index) => (
+                  <div 
+                    key={index}
+                    onClick={() => handleImageClick(currentDocument, index)}
+                    className="relative border rounded overflow-hidden cursor-pointer group"
+                    style={{
+                      width: '100px', 
+                      height: '120px',
+                      borderColor: themeStyles.borderColor
+                    }}
+                  >
+                    <img 
+                      src={imageUrl} 
+                      alt={currentDocument.imageLabels?.[index] || `Page ${index + 1}`}
+                      className="w-full h-full object-cover object-top"
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200" />
+                    <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
+                      {currentDocument.imageLabels?.[index] || `Page ${index + 1}`}
+                    </div>
+                  </div>
+                ))}
+                
+                {currentDocument.pageImages.length > 6 && (
+                  <div 
+                    className="relative border rounded overflow-hidden cursor-pointer flex items-center justify-center"
+                    onClick={() => setActiveTab('images')}
+                    style={{
+                      width: '100px', 
+                      height: '120px',
+                      backgroundColor: `${themeStyles.accentColor}10`,
+                      borderColor: themeStyles.borderColor
+                    }}
+                  >
+                    <div className="text-center">
+                      <span className="block font-medium" style={{ color: themeStyles.accentColor }}>
+                        +{currentDocument.pageImages.length - 6}
+                      </span>
+                      <span className="text-xs opacity-70">more pages</span>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-            
-            <div className="mt-3 flex justify-end">
-              <motion.button
-                variants={buttonVariants}
-                initial="initial"
-                whileHover="hover"
-                whileTap="tap"
-                onClick={() => {
-                  setCurrentDocumentId(null);
-                  onCitationClicked(currentDocument.id);
-                }}
-                className="text-white text-sm px-3 py-1.5 rounded flex items-center"
-                style={{ backgroundColor: themeStyles.secondaryColor }}
+            </div>
+          )}
+          
+          {/* X-Ray chunks if available */}
+          {currentDocument.xray?.chunks && currentDocument.xray.chunks.length > 0 && (
+            <div className="mb-4">
+              <h4 
+                className="text-sm font-medium mb-2 flex items-center"
+                style={{ color: themeStyles.xrayColor }}
               >
-                <ExternalLink size={14} className="mr-1.5" />
-                View Full Document
-              </motion.button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      
-      {/* Feedback form */}
-      <AnimatePresence>
-        {showFeedbackForm && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="border-b p-4"
-            style={{ 
-              borderColor: themeStyles.borderColor,
-              backgroundColor: `${themeStyles.primaryColor}10`
-            }}
-          >
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="font-medium">Rate this answer</h3>
-              <button onClick={() => setShowFeedbackForm(false)}>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M9 3v18" />
+                  <path d="M15 3v18" />
+                  <path d="M3 9h18" />
+                  <path d="M3 15h18" />
                 </svg>
-              </button>
-            </div>
-            
-            <div className="mb-3 flex justify-center space-x-3">
-              {[1, 2, 3, 4, 5].map(rating => (
+                X-Ray Content Chunks
+              </h4>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                {currentDocument.xray.chunks.slice(0, 4).map((chunk, index) => (
+                  <div 
+                    key={index}
+                    className="p-2 border rounded cursor-pointer hover:shadow-sm transition-shadow"
+                    onClick={() => {
+                      setActiveTab('xray');
+                      setActiveXrayChunk(chunk);
+                    }}
+                    style={{ 
+                      borderColor: themeStyles.borderColor,
+                      backgroundColor: `${themeStyles.cardBackground}`
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center">
+                        {getContentTypeIcon(chunk.contentType)}
+                        <span 
+                          className="ml-1.5 text-xs font-medium"
+                          style={{ color: themeStyles.xrayColor }}
+                        >
+                          {chunk.contentType?.join(', ') || 'Text'} 
+                        </span>
+                      </div>
+                      <span className="text-xs opacity-60">#{chunk.id}</span>
+                    </div>
+                    
+                    <div className="text-xs line-clamp-2 mt-1">
+                      {/* Display parsed summary if available */}
+                      {chunk.parsedData?.summary || chunk.parsedData?.Summary || 
+                       chunk.sectionSummary || chunk.text?.substring(0, 100) || 'No preview available'}
+                      {(!chunk.parsedData?.summary && !chunk.parsedData?.Summary && 
+                        !chunk.sectionSummary && chunk.text && chunk.text.length > 100) ? '...' : ''}
+                    </div>
+                    
+                    {chunk.pageNumbers && chunk.pageNumbers.length > 0 && (
+                      <div className="mt-1 text-xs opacity-60">
+                        Page{chunk.pageNumbers.length > 1 ? 's' : ''}: {chunk.pageNumbers.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {currentDocument.xray.chunks.length > 4 && (
                 <button
-                  key={rating}
-                  onClick={() => setFeedbackRating(rating)}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
-                    feedbackRating === rating ? 'border-2' : 'border'
-                  }`}
-                  style={{
-                    backgroundColor: feedbackRating === rating ? `${themeStyles.primaryColor}20` : 'transparent',
-                    borderColor: feedbackRating === rating ? themeStyles.primaryColor : themeStyles.borderColor,
-                    color: feedbackRating === rating ? themeStyles.primaryColor : themeStyles.textColor
+                  onClick={() => {
+                    setActiveTab('xray');
+                    setSelectedSourceId(currentDocument.id);
+                  }}
+                  className="text-xs px-2 py-1 rounded"
+                  style={{ 
+                    backgroundColor: `${themeStyles.xrayColor}10`,
+                    color: themeStyles.xrayColor
                   }}
                 >
-                  {rating}
+                  View all {currentDocument.xray.chunks.length} content chunks
                 </button>
-              ))}
+              )}
             </div>
-            
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-1">Comments (optional)</label>
-              <textarea
-                value={feedbackComment}
-                onChange={(e) => setFeedbackComment(e.target.value)}
-                rows={3}
-                className="w-full p-2 rounded border"
-                style={{
-                  backgroundColor: themeStyles.cardBackground,
-                  borderColor: themeStyles.borderColor,
-                  color: themeStyles.textColor
-                }}
-                placeholder="What did you like or dislike about this answer?"
-              />
+          )}
+          
+          {/* Document excerpts */}
+          {currentDocument.excerpts.length > 0 ? (
+            <div>
+              <h4 className="text-sm font-medium mb-3 flex items-center">
+                <span className="mr-2">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </span>
+                Excerpts from {currentDocument.fileName}
+              </h4>
+              
+              <div className="space-y-4">
+                {currentDocument.excerpts.map((excerpt, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg border-l-4 shadow-sm p-4 text-sm relative overflow-hidden transition-all duration-150 hover:shadow-md"
+                    style={{
+                      backgroundColor: themeStyles.cardBackground,
+                      borderLeftColor: themeStyles.secondaryColor,
+                      borderTop: `1px solid ${themeStyles.borderColor}`,
+                      borderRight: `1px solid ${themeStyles.borderColor}`,
+                      borderBottom: `1px solid ${themeStyles.borderColor}`
+                    }}
+                  >
+                    <div 
+                      className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full"
+                      style={{ 
+                        backgroundColor: `${themeStyles.secondaryColor}15`,
+                        color: themeStyles.secondaryColor
+                      }}
+                    >
+                      Excerpt {i+1}
+                    </div>
+                    
+                    <div className="prose prose-sm max-w-none mt-1" style={{ color: themeStyles.textColor }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{excerpt}</ReactMarkdown>
+                    </div>
+                    
+                    {currentDocument.highlights && currentDocument.highlights[i] && (
+                      <div 
+                        className="mt-3 pt-3 text-sm rounded-md p-2" 
+                        style={{ 
+                          backgroundColor: `${themeStyles.primaryColor}08`,
+                          borderTop: `1px dashed ${themeStyles.borderColor}`
+                        }}
+                      >
+                        <div className="flex items-center mb-1 text-xs font-medium" style={{ color: themeStyles.primaryColor }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <path d="M11.467 11.467 3.799 19.135a2.5 2.5 0 0 0 3.536 3.536l7.668-7.668"></path>
+                            <path d="M18.006 4.828 3.799 19.035"></path>
+                            <path d="m23 4-6 2 2-6"></path>
+                            <path d="m13 19 8-8"></path>
+                          </svg>
+                          Highlighted Match
+                        </div>
+                        <div className="text-sm italic ml-4" style={{ color: `${themeStyles.primaryColor}` }}>
+                          "{currentDocument.highlights[i]}"
+                        </div>
+                      </div>
+                    )}
+                    
+                    {currentDocument.metadata && Object.keys(currentDocument.metadata).length > 0 && (
+                      <div 
+                        className="mt-3 pt-2 flex flex-wrap gap-2 text-xs" 
+                        style={{ borderTop: `1px dashed ${themeStyles.borderColor}` }}
+                      >
+                        {currentDocument.score !== undefined && (
+                          <span 
+                            className="px-2 py-1 rounded-full flex items-center"
+                            style={{ 
+                              backgroundColor: `${themeStyles.secondaryColor}15`, 
+                              color: themeStyles.secondaryColor
+                            }}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                              <path d="M12 2v20"></path>
+                              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                            </svg>
+                            Relevance: {(currentDocument.score * 100).toFixed(1)}%
+                          </span>
+                        )}
+                        
+                        {currentDocument.metadata.page && (
+                          <span 
+                            className="px-2 py-1 rounded-full flex items-center"
+                            style={{ 
+                              backgroundColor: `${themeStyles.primaryColor}15`, 
+                              color: themeStyles.primaryColor
+                            }}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path>
+                            </svg>
+                            Page {currentDocument.metadata.page}
+                          </span>
+                        )}
+                        
+                        {currentDocument.datePublished && (
+                          <span 
+                            className="px-2 py-1 rounded-full flex items-center"
+                            style={{ 
+                              backgroundColor: `${themeStyles.textColor}10`, 
+                              color: themeStyles.textColor
+                            }}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                              <rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect>
+                              <line x1="16" x2="16" y1="2" y2="6"></line>
+                              <line x1="8" x2="8" y1="2" y2="6"></line>
+                              <line x1="3" x2="21" y1="10" y2="10"></line>
+                            </svg>
+                            {formatDate(currentDocument.datePublished)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        onClick={() => onCitationClicked && onCitationClicked(currentDocument.id)}
+                        className="text-xs px-2 py-1 rounded flex items-center"
+                        style={{ 
+                          backgroundColor: `${themeStyles.primaryColor}10`,
+                          color: themeStyles.primaryColor
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                          <polyline points="15 3 21 3 21 9"></polyline>
+                          <line x1="10" x2="21" y1="14" y2="3"></line>
+                        </svg>
+                        View in Document
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            
-            <div className="flex justify-end">
-              <button
-                onClick={handleSubmitFeedback}
-                disabled={feedbackRating === null}
-                className="px-4 py-2 rounded text-white text-sm font-medium"
-                style={{
-                  backgroundColor: feedbackRating !== null ? themeStyles.primaryColor : `${themeStyles.primaryColor}50`,
-                  cursor: feedbackRating !== null ? 'pointer' : 'not-allowed'
-                }}
-              >
-                Submit Feedback
-              </button>
+          ) : (
+            <div className="flex items-center justify-center p-6 rounded-lg border border-dashed text-sm italic" style={{ borderColor: themeStyles.borderColor, color: `${themeStyles.textColor}70` }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 opacity-70">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              No excerpts available for this document
             </div>
-          </motion.div>
+          )}
+          
+          {/* Relevance explanation */}
+          <div className="mt-3 p-3 rounded border text-sm"
+            style={{ 
+              backgroundColor: `${themeStyles.primaryColor}10`,
+              borderColor: `${themeStyles.primaryColor}30`
+            }}
+          >
+            <div className="font-medium mb-1">Why this is relevant:</div>
+            <p>{getRelevanceExplanation(currentDocument)}</p>
+          </div>
+          
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => {
+                setCurrentDocumentId(null);
+                onCitationClicked(currentDocument.id);
+              }}
+              className="text-white text-sm px-3 py-1.5 rounded flex items-center"
+              style={{ backgroundColor: themeStyles.secondaryColor }}
+            >
+              <ExternalLink size={14} className="mr-1.5" />
+              View Full Document
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Image Viewer Modal */}
+      <AnimatePresence>
+        {showImageViewer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
+            <motion.div 
+              ref={imageViewerRef}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              variants={modalAnimation}
+              className="relative max-w-4xl max-h-[90vh] flex flex-col rounded-lg overflow-hidden"
+              style={{ 
+                backgroundColor: themeStyles.cardBackground,
+                color: themeStyles.textColor
+              }}
+            >
+              {/* Image viewer header */}
+              <div className="p-3 flex justify-between items-center border-b" style={{ borderColor: themeStyles.borderColor }}>
+                <div className="flex items-center">
+                  <ImageIcon size={18} style={{ color: themeStyles.accentColor }} className="mr-2" />
+                  <h3 className="font-medium">
+                    {currentImage()?.source.fileName || 'Document Image'}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowImageViewer(false)}
+                  className="p-1 rounded-full hover:bg-gray-100"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              
+              {/* Image display */}
+              <div className="relative flex-1 overflow-auto bg-gray-900 flex items-center justify-center">
+                {currentImage()?.url && (
+                  <img 
+                    src={currentImage()?.url} 
+                    alt={currentImage()?.label}
+                    className="max-w-full max-h-[70vh] object-contain"
+                  />
+                )}
+                
+                {/* Navigation controls */}
+                <button
+                  onClick={() => navigateImage('prev')}
+                  className="absolute left-2 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70"
+                >
+                  <ChevronLeft size={24} />
+                </button>
+                <button
+                  onClick={() => navigateImage('next')}
+                  className="absolute right-2 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70"
+                >
+                  <ChevronRight size={24} />
+                </button>
+              </div>
+              
+              {/* Footer with metadata */}
+              <div className="p-3 border-t" style={{ borderColor: themeStyles.borderColor }}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <span className="text-sm font-medium">
+                      {currentImage()?.label} 
+                      {currentImage()?.source.pageImages && (
+                        <span className="ml-2 opacity-70">
+                          ({selectedImageIndex + 1} of {currentImage()?.source.pageImages.length})
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <a 
+                      href={currentImage()?.url} 
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm px-3 py-1 rounded flex items-center"
+                      style={{ 
+                        backgroundColor: `${themeStyles.accentColor}10`,
+                        color: themeStyles.accentColor
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Download size={14} className="mr-1.5" />
+                      Download Image
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
       
       {/* Tab navigation */}
       {expanded && (
         <div className="border-b" style={{ borderColor: themeStyles.borderColor }}>
-          <div className="flex space-x-2 overflow-x-auto scrollbar-thin">
+          <div className="flex space-x-2 overflow-x-auto">
             <button 
               className={`px-3 py-2 text-sm font-medium ${
                 activeTab === 'answer' 
@@ -1613,39 +1354,47 @@ export default function EnhancedAnswer({
               </button>
             )}
             
-            {hasInsights && (
+            {/* X-Ray Tab */}
+            {hasXray && (
               <button 
                 className={`px-3 py-2 text-sm font-medium flex items-center ${
-                  activeTab === 'insights' 
+                  activeTab === 'xray' 
                     ? 'border-b-2' 
                     : 'hover:border-gray-300'
                 }`}
-                onClick={() => setActiveTab('insights')}
+                onClick={() => setActiveTab('xray')}
                 style={{ 
-                  color: activeTab === 'insights' ? '#10B981' : themeStyles.textColor,
-                  borderColor: activeTab === 'insights' ? '#10B981' : 'transparent'
+                  color: activeTab === 'xray' ? themeStyles.xrayColor : themeStyles.textColor,
+                  borderColor: activeTab === 'xray' ? themeStyles.xrayColor : 'transparent'
                 }}
               >
-                <BarChart size={14} className="mr-1" />
-                Insights
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  <path d="M12 12 6 6"/>
+                  <path d="M12 6v6"/>
+                  <path d="M21 9V3h-6"/>
+                </svg>
+                X-Ray Analysis
               </button>
             )}
             
-            <button 
-              className={`px-3 py-2 text-sm font-medium flex items-center ${
-                activeTab === 'raw' 
-                  ? 'border-b-2' 
-                  : 'hover:border-gray-300'
-              }`}
-              onClick={() => setActiveTab('raw')}
-              style={{ 
-                color: activeTab === 'raw' ? themeStyles.textColor : `${themeStyles.textColor}80`,
-                borderColor: activeTab === 'raw' ? themeStyles.textColor : 'transparent'
-              }}
-            >
-              <Code size={14} className="mr-1" />
-              Raw Response
-            </button>
+            {hasImages && (
+              <button 
+                className={`px-3 py-2 text-sm font-medium flex items-center ${
+                  activeTab === 'images' 
+                    ? 'border-b-2' 
+                    : 'hover:border-gray-300'
+                }`}
+                onClick={() => setActiveTab('images')}
+                style={{ 
+                  color: activeTab === 'images' ? themeStyles.accentColor : themeStyles.textColor,
+                  borderColor: activeTab === 'images' ? themeStyles.accentColor : 'transparent'
+                }}
+              >
+                <ImageIcon size={14} className="mr-1" />
+                Images ({allImages.length})
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1665,137 +1414,47 @@ export default function EnhancedAnswer({
                 transition={{ duration: 0.3 }}
                 className="p-4"
               >
-                {enableEditing && isEditMode ? (
-                  <div className="mb-4">
-                    <textarea
-                      value={editedAnswer}
-                      onChange={(e) => setEditedAnswer(e.target.value)}
-                      rows={10}
-                      className="w-full p-3 rounded border"
-                      style={{
-                        backgroundColor: themeStyles.cardBackground,
-                        borderColor: themeStyles.borderColor,
-                        color: themeStyles.textColor
-                      }}
-                    />
-                    <div className="flex justify-end mt-2 space-x-2">
-                      <button
-                        onClick={() => setIsEditMode(false)}
-                        className="px-3 py-1 text-sm rounded border"
-                        style={{
-                          borderColor: themeStyles.borderColor,
-                          color: themeStyles.textColor
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => setIsEditMode(false)}
-                        className="px-3 py-1 text-sm rounded text-white"
-                        style={{ backgroundColor: themeStyles.primaryColor }}
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    {enableEditing && (
-                      <div className="flex justify-end mb-2">
+                <div ref={contentRef} className="prose max-w-none" style={{ color: themeStyles.textColor }}>
+                  <ReactMarkdown rehypePlugins={[rehypeRaw]} remarkPlugins={[remarkGfm]}>
+                    {content}
+                  </ReactMarkdown>
+                  
+                  {isStreaming && (
+                    <motion.span 
+                      className="inline-block"
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                    >
+                      <span>...</span>
+                    </motion.span>
+                  )}
+                </div>
+                
+                {/* Follow-up questions */}
+                {showFollowupQuestions && followupQuestions.length > 0 && (
+                  <div className="mt-6">
+                    <h4 
+                      className="text-sm font-medium mb-2"
+                      style={{ color: themeStyles.primaryColor }}
+                    >
+                      Follow-up Questions:
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {followupQuestions.map((question, i) => (
                         <button
-                          onClick={() => setIsEditMode(true)}
-                          className="px-2 py-1 text-xs rounded flex items-center"
+                          key={i}
+                          onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(question)}
+                          className="px-3 py-1.5 text-sm rounded-full flex items-center"
                           style={{
                             backgroundColor: `${themeStyles.primaryColor}10`,
                             color: themeStyles.primaryColor
                           }}
                         >
-                          <Settings size={12} className="mr-1" />
-                          Edit Answer
+                          <MessageSquare size={12} className="mr-1.5" />
+                          {question}
                         </button>
-                      </div>
-                    )}
-                    
-                    <div ref={contentRef} className="prose max-w-none" style={{ color: themeStyles.textColor }}>
-                      <ReactMarkdown rehypePlugins={[rehypeRaw]} remarkPlugins={[remarkGfm]}>
-                        {content}
-                      </ReactMarkdown>
-                      
-                      {isStreaming && (
-                        <motion.span 
-                          className="inline-block"
-                          animate={{ opacity: [0.5, 1, 0.5] }}
-                          transition={{ duration: 1.5, repeat: Infinity }}
-                        >
-                          <span>...</span>
-                        </motion.span>
-                      )}
+                      ))}
                     </div>
-                    
-                    {/* Follow-up questions */}
-                    {showFollowupQuestions && followupQuestions.length > 0 && (
-                      <div className="mt-6">
-                        <h4 
-                          className="text-sm font-medium mb-2"
-                          style={{ color: themeStyles.primaryColor }}
-                        >
-                          Follow-up Questions:
-                        </h4>
-                        <div className="flex flex-wrap gap-2">
-                          {followupQuestions.map((question, i) => (
-                            <button
-                              key={i}
-                              onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(question)}
-                              className="px-3 py-1.5 text-sm rounded-full flex items-center"
-                              style={{
-                                backgroundColor: `${themeStyles.primaryColor}10`,
-                                color: themeStyles.primaryColor
-                              }}
-                            >
-                              <MessageSquare size={12} className="mr-1.5" />
-                              {question}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Feedback button */}
-                    {onFeedbackSubmitted && (
-                      <div className="mt-6 flex justify-end">
-                        <button
-                          onClick={() => setShowFeedbackForm(true)}
-                          className="px-3 py-1.5 text-xs rounded flex items-center"
-                          style={{
-                            backgroundColor: `${themeStyles.primaryColor}10`,
-                            color: themeStyles.primaryColor
-                          }}
-                        >
-                          Rate this answer
-                        </button>
-                      </div>
-                    )}
-                    
-                    {/* Token usage summary */}
-                    {tokenUsage && (
-                      <div 
-                        className="mt-6 text-xs p-2 rounded flex items-center justify-between"
-                        style={{
-                          backgroundColor: `${themeStyles.primaryColor}05`,
-                          color: `${themeStyles.textColor}80`
-                        }}
-                      >
-                        <span className="flex items-center">
-                          <Cpu size={12} className="mr-1" />
-                          Tokens: {tokenUsage.total || 'N/A'}
-                        </span>
-                        {tokenUsage.totalCost !== undefined && (
-                          <span>
-                            Cost: {tokenUsage.totalCost.toFixed(5)} {tokenUsage.currency}
-                          </span>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
               </motion.div>
@@ -1834,53 +1493,9 @@ export default function EnhancedAnswer({
                     }}
                   >
                     <pre className="whitespace-pre-wrap">
-                      <ReactMarkdown>{thoughtProcess.reasoning}</ReactMarkdown>
+                      <ReactMarkdown>{thoughtProcess}</ReactMarkdown>
                     </pre>
                   </div>
-                  
-                  {/* Confidence indicator */}
-                  {thoughtProcess.confidence !== undefined && (
-                    <div className="mt-3 flex items-center">
-                      <div className="text-sm font-medium mr-2">System Confidence:</div>
-                      <div 
-                        className="h-2 flex-grow rounded-full"
-                        style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)' }}
-                      >
-                        <div 
-                          className="h-2 rounded-full"
-                          style={{ 
-                            width: `${Math.min(100, Math.max(0, thoughtProcess.confidence * 100))}%`,
-                            backgroundColor: '#F59E0B'
-                          }}
-                        />
-                      </div>
-                      <div className="ml-2 text-sm font-medium">
-                        {(thoughtProcess.confidence * 100).toFixed(0)}%
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Steps if available */}
-                  {thoughtProcess.steps && thoughtProcess.steps.length > 0 && (
-                    <div className="mt-3">
-                      <h4 className="text-sm font-medium mb-2">Reasoning Steps:</h4>
-                      <div className="space-y-2">
-                        {thoughtProcess.steps.map((step, i) => (
-                          <div
-                            key={i}
-                            className="p-2 rounded border text-sm"
-                            style={{ 
-                              backgroundColor: 'rgba(245, 158, 11, 0.05)', 
-                              borderColor: 'rgba(245, 158, 11, 0.2)' 
-                            }}
-                          >
-                            <div className="font-medium text-xs mb-1">Step {i+1}</div>
-                            <div>{typeof step === 'string' ? step : JSON.stringify(step, null, 2)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </motion.div>
             )}
@@ -1926,918 +1541,305 @@ export default function EnhancedAnswer({
                     </div>
                   </div>
                   
-                  {/* Filter and view controls */}
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center">
-                      <div 
-                        className="relative flex items-center border rounded-md overflow-hidden"
-                        style={{
-                          backgroundColor: themeStyles.cardBackground,
+                  <div className="mt-2 space-y-2">
+                    {sources.map((source, index) => (
+                      <div
+                        key={`${source.id}-${index}`}
+                        className="rounded-md border overflow-hidden"
+                        style={{ 
+                          backgroundColor: themeStyles.cardBackground, 
                           borderColor: themeStyles.borderColor
                         }}
                       >
-                        <Search size={16} className="mx-2 opacity-70" />
-                        <input
-                          type="text"
-                          value={sourceFilter}
-                          onChange={handleFilterChange}
-                          placeholder="Filter sources..."
-                          className="py-1.5 pr-2 bg-transparent border-none outline-none text-sm w-40 sm:w-auto"
-                          style={{ color: themeStyles.textColor }}
-                        />
-                      </div>
-                      
-                      <div className="flex ml-2">
-                        <button
-                          onClick={() => handleSortChange('relevance')}
-                          className={`px-2 py-1 text-xs rounded-l-md border-y border-l ${
-                            sortOption === 'relevance' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: sortOption === 'relevance' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: sortOption === 'relevance' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          Score
-                        </button>
-                        <button
-                          onClick={() => handleSortChange('date')}
-                          className={`px-2 py-1 text-xs border ${
-                            sortOption === 'date' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: sortOption === 'date' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: sortOption === 'date' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          Date
-                        </button>
-                        <button
-                          onClick={() => handleSortChange('name')}
-                          className={`px-2 py-1 text-xs rounded-r-md border-y border-r ${
-                            sortOption === 'name' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: sortOption === 'name' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: sortOption === 'name' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          Name
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center">
-                      <div className="flex">
-                        <button
-                          onClick={() => handleViewModeChange('list')}
-                          className={`p-1.5 rounded-l-md border-y border-l ${
-                            viewMode === 'list' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: viewMode === 'list' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: viewMode === 'list' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          <AlignJustify size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleViewModeChange('grid')}
-                          className={`p-1.5 border ${
-                            viewMode === 'grid' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: viewMode === 'grid' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: viewMode === 'grid' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          <Database size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleViewModeChange('detail')}
-                          className={`p-1.5 rounded-r-md border-y border-r ${
-                            viewMode === 'detail' ? 'font-medium' : ''
-                          }`}
-                          style={{
-                            backgroundColor: viewMode === 'detail' 
-                              ? `${themeStyles.secondaryColor}20` 
-                              : themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor,
-                            color: viewMode === 'detail' 
-                              ? themeStyles.secondaryColor 
-                              : themeStyles.textColor
-                          }}
-                        >
-                          <BookMarked size={16} />
-                        </button>
-                      </div>
-                      
-                      <div className="ml-2 relative">
-                        <button
-                          onClick={() => setShowSearchOptions(!showSearchOptions)}
-                          className="p-1.5 rounded-md border"
-                          style={{
-                            backgroundColor: themeStyles.cardBackground,
-                            borderColor: themeStyles.borderColor
-                          }}
-                        >
-                          <Filter size={16} />
-                        </button>
-                        {showSearchOptions && (
-                          <div 
-                            className="absolute right-0 mt-1 w-48 rounded-md shadow-lg z-10"
-                            style={{ backgroundColor: themeStyles.cardBackground }}
-                          >
-                            <div className="py-1">
-                              <div 
-                                className="px-4 py-2 text-xs font-medium border-b"
-                                style={{ borderColor: themeStyles.borderColor }}
-                              >
-                                Display Options
-                              </div>
-                              
-                              {Object.entries(displayOptions).map(([key, value]) => (
-                                <label key={key} className="flex items-center px-4 py-2 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={value}
-                                    onChange={() => toggleDisplayOption(key)}
-                                    className="mr-2"
-                                  />
-                                  {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Document stats */}
-                  {documentStats && (
-                    <div 
-                      className="mb-4 p-3 rounded-md text-xs grid grid-cols-2 md:grid-cols-4 gap-2"
-                      style={{ backgroundColor: `${themeStyles.secondaryColor}05` }}
-                    >
-                      <div className="flex flex-col">
-                        <span className="opacity-70">Total Documents</span>
-                        <span className="font-medium text-sm">{documentStats.total}</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="opacity-70">Avg. Relevance</span>
-                        <span className="font-medium text-sm">{(documentStats.avgScore * 100).toFixed(1)}%</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="opacity-70">High Relevance</span>
-                        <span className="font-medium text-sm">{documentStats.relevanceCounts.high} docs</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="opacity-70">Document Types</span>
-                        <span className="font-medium text-sm">{Object.keys(documentStats.types).length} types</span>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Empty state */}
-                  {currentPageSources.length === 0 && (
-                    <div 
-                      className="my-4 p-4 rounded-md flex items-center justify-center text-sm"
-                      style={{ 
-                        backgroundColor: `${themeStyles.secondaryColor}05`,
-                        borderColor: `${themeStyles.secondaryColor}30`,
-                        color: themeStyles.textColor
-                      }}
-                    >
-                      <AlertTriangle size={16} className="mr-2" style={{ color: themeStyles.secondaryColor }} />
-                      No documents match your filter criteria. Try adjusting your search.
-                    </div>
-                  )}
-                  
-                  {/* List View */}
-                  {viewMode === 'list' && currentPageSources.length > 0 && (
-                    <div className="mt-2 space-y-2">
-                      {currentPageSources.map((source, index) => (
-                        <motion.div
-                          key={`${source.id}-${index}`}
-                          className="rounded-md border overflow-hidden"
-                          initial={{ x: -10, opacity: 0 }}
-                          animate={{ x: 0, opacity: 1 }}
-                          transition={{ delay: index * 0.05 }}
-                          style={{ 
-                            backgroundColor: themeStyles.cardBackground, 
-                            borderColor: themeStyles.borderColor,
-                            boxShadow: bookmarks.has(source.id) 
-                              ? `0 0 0 2px ${themeStyles.secondaryColor}50` 
-                              : 'none'
-                          }}
-                        >
-                          <div 
-                            className="flex items-center justify-between gap-2 text-sm p-3 cursor-pointer"
-                            onClick={() => handleDocumentClick(source)}
-                            style={{ 
-                              color: themeStyles.textColor
-                            }}
-                          >
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              {getDocumentIcon(source.fileName, source.type)}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center">
-                                  <span className="truncate font-medium" title={source.fileName}>
-                                    {source.fileName}
-                                  </span>
-                                  {bookmarks.has(source.id) && (
-                                    <span 
-                                      className="ml-1 text-yellow-500"
-                                      title="Bookmarked"
-                                    >
-                                      ★
-                                    </span>
-                                  )}
-                                </div>
-                                
-                                {displayOptions.showMetadata && (
-                                  <div className="flex items-center text-xs opacity-70 mt-0.5 space-x-2">
-                                    {source.author && (
-                                      <span className="truncate" title={`Author: ${source.author}`}>
-                                        {source.author}
-                                      </span>
-                                    )}
-                                    {source.datePublished && (
-                                      <span title={`Date: ${formatDate(source.datePublished)}`}>
-                                        {formatDate(source.datePublished)}
-                                      </span>
-                                    )}
-                                    {source.type && (
-                                      <span title={`Type: ${source.type}`}>
-                                        {source.type}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              {/* Show score if available */}
-                              {displayOptions.showScores && source.score !== undefined && (
-                                <span 
-                                  className="px-1.5 py-0.5 rounded-full text-xs font-medium"
-                                  title={`Relevance score: ${source.score}`}
-                                  style={{ 
-                                    backgroundColor: `${themeStyles.secondaryColor}20`, 
-                                    color: themeStyles.secondaryColor 
-                                  }}
-                                >
-                                  {(source.score * 100).toFixed(1)}%
-                                </span>
-                              )}
-                              
-                              {/* Bookmark button */}
-                              <button
-                                onClick={(e) => toggleBookmark(source.id, e)}
-                                className="opacity-60 hover:opacity-100"
-                                title={bookmarks.has(source.id) ? "Remove bookmark" : "Bookmark this source"}
-                              >
-                                {bookmarks.has(source.id) ? "★" : "☆"}
-                              </button>
-                              
-                              {/* Expand/collapse control */}
-                              {expandedDocs.has(source.id) ? (
-                                <ChevronUp size={14} className="opacity-70" />
-                              ) : (
-                                <ChevronDown size={14} className="opacity-70" />
-                              )}
-                            </div>
-                          </div>
-                          
-                          {/* Expanded document preview */}
-                          <AnimatePresence>
-                            {displayOptions.showExcerpts && expandedDocs.has(source.id) && (
-                              <motion.div
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: "auto" }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="border-t p-3"
-                                style={{ 
-                                  backgroundColor: `${themeStyles.secondaryColor}05`,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {source.excerpts && source.excerpts.length > 0 ? (
-                                  <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                                    {source.excerpts.slice(0, 3).map((excerpt, i) => (
-                                      <div 
-                                        key={i} 
-                                        className="p-2 text-sm rounded border"
-                                        style={{ 
-                                          backgroundColor: themeStyles.cardBackground,
-                                          borderColor: `${themeStyles.secondaryColor}30`
-                                        }}
-                                      >
-                                        <p>{excerpt}</p>
-                                        
-                                        {displayOptions.showRelevance && (
-                                          <div 
-                                            className="mt-2 p-2 rounded text-xs border"
-                                            style={{ 
-                                              backgroundColor: `${themeStyles.primaryColor}05`,
-                                              borderColor: `${themeStyles.primaryColor}30`
-                                            }}
-                                          >
-                                            <div className="font-medium opacity-70 mb-1">Why this is relevant:</div>
-                                            <p>{getRelevanceExplanation(source)}</p>
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="p-3 rounded border bg-blue-50 text-blue-700 text-sm flex items-center">
-                                    <Info size={16} className="mr-2 flex-shrink-0" />
-                                    <div>
-                                      <p className="font-medium">Document identified but no excerpts available</p>
-                                      <p className="text-xs mt-1">Use the "Open Document" button to view the full content</p>
-                                    </div>
-                                  </div>
-                                )}
-                                
-                                <div className="flex justify-end mt-3 space-x-2">
-                                  <motion.button
-                                    variants={buttonVariants}
-                                    initial="initial"
-                                    whileHover="hover"
-                                    whileTap="tap"
-                                    className="text-xs px-2 py-1 rounded flex items-center"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setCurrentDocumentId(source.id);
-                                    }}
-                                    style={{ 
-                                      backgroundColor: `${themeStyles.secondaryColor}20`,
-                                      color: themeStyles.secondaryColor
-                                    }}
-                                  >
-                                    <FileQuestion size={12} className="mr-1" />
-                                    View Details
-                                  </motion.button>
-                                  
-                                  <motion.button
-                                    variants={buttonVariants}
-                                    initial="initial"
-                                    whileHover="hover"
-                                    whileTap="tap"
-                                    className="text-xs text-white px-2 py-1 rounded flex items-center"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onCitationClicked(source.id);
-                                    }}
-                                    style={{ backgroundColor: themeStyles.secondaryColor }}
-                                  >
-                                    <ExternalLink size={12} className="mr-1" />
-                                    Open Document
-                                  </motion.button>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Grid View */}
-                  {viewMode === 'grid' && currentPageSources.length > 0 && (
-                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {currentPageSources.map((source, index) => (
-                        <motion.div
-                          key={`${source.id}-${index}`}
-                          className="rounded-md border p-3 flex flex-col"
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{ delay: index * 0.05 }}
+                        <div 
+                          className="flex items-center justify-between gap-2 text-sm p-3 cursor-pointer"
                           onClick={() => handleDocumentClick(source)}
-                          style={{ 
-                            backgroundColor: themeStyles.cardBackground, 
-                            borderColor: themeStyles.borderColor,
-                            boxShadow: bookmarks.has(source.id) 
-                              ? `0 0 0 2px ${themeStyles.secondaryColor}50` 
-                              : 'none',
-                            cursor: 'pointer'
-                          }}
+                          style={{ color: themeStyles.textColor }}
                         >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center">
-                              {getDocumentIcon(source.fileName, source.type)}
-                              <h4 className="ml-2 font-medium text-sm truncate" 
-                                title={source.fileName}
-                              >
-                                {source.fileName}
-                              </h4>
-                              {bookmarks.has(source.id) && (
-                                <span 
-                                  className="ml-1 text-yellow-500"
-                                  title="Bookmarked"
-                                >
-                                  ★
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {getDocumentIcon(source.fileName, source.type)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center">
+                                <span className="truncate font-medium" title={source.fileName}>
+                                  {source.fileName}
                                 </span>
-                              )}
-                            </div>
-                            
-                            <button
-                              onClick={(e) => toggleBookmark(source.id, e)}
-                              className="opacity-60 hover:opacity-100"
-                              title={bookmarks.has(source.id) ? "Remove bookmark" : "Bookmark this source"}
-                            >
-                              {bookmarks.has(source.id) ? "★" : "☆"}
-                            </button>
-                          </div>
-                          
-                          {displayOptions.showMetadata && (
-                            <div className="grid grid-cols-2 gap-1 mb-2 text-xs opacity-70">
-                              {source.type && (
-                                <div className="flex items-center">
-                                  <span className="font-medium mr-1">Type:</span>
-                                  <span className="truncate">{source.type}</span>
-                                </div>
-                              )}
-                              {source.author && (
-                                <div className="flex items-center">
-                                  <span className="font-medium mr-1">Author:</span>
-                                  <span className="truncate">{source.author}</span>
-                                </div>
-                              )}
-                              {source.datePublished && (
-                                <div className="flex items-center col-span-2">
-                                  <span className="font-medium mr-1">Date:</span>
-                                  <span>{formatDate(source.datePublished)}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          
-                          {displayOptions.showExcerpts && source.excerpts.length > 0 && (
-                            <div className="flex-grow">
-                              <div 
-                                className="p-2 rounded text-xs border overflow-hidden"
-                                style={{ 
-                                  backgroundColor: `${themeStyles.secondaryColor}05`,
-                                  borderColor: `${themeStyles.secondaryColor}30`,
-                                  maxHeight: '4.5rem',
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: 'vertical'
-                                }}
-                              >
-                                {source.excerpts[0]}
+                                
+                                {source.pageImages && source.pageImages.length > 0 && (
+                                  <span 
+                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
+                                    style={{ 
+                                      backgroundColor: `${themeStyles.accentColor}20`,
+                                      color: themeStyles.accentColor
+                                    }}
+                                  >
+                                    {source.pageImages.length} {source.pageImages.length === 1 ? 'page' : 'pages'}
+                                  </span>
+                                )}
+                                
+                                {source.xray && (
+                                  <span 
+                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
+                                    style={{ 
+                                      backgroundColor: `${themeStyles.xrayColor}20`,
+                                      color: themeStyles.xrayColor
+                                    }}
+                                  >
+                                    X-Ray
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center text-xs opacity-70 mt-0.5 space-x-2">
+                                {source.author && (
+                                  <span className="truncate" title={`Author: ${source.author}`}>
+                                    {source.author}
+                                  </span>
+                                )}
+                                {source.datePublished && (
+                                  <span title={`Date: ${formatDate(source.datePublished)}`}>
+                                    {formatDate(source.datePublished)}
+                                  </span>
+                                )}
                               </div>
                             </div>
-                          )}
+                          </div>
                           
-                          <div className="mt-2 flex items-center justify-between">
-                            {displayOptions.showScores && source.score !== undefined ? (
+                          <div className="flex items-center gap-2">
+                            {source.score !== undefined && (
                               <span 
-                                className="text-xs px-1.5 py-0.5 rounded-full"
+                                className="px-1.5 py-0.5 rounded-full text-xs font-medium"
+                                title={`Relevance score: ${source.score}`}
                                 style={{ 
                                   backgroundColor: `${themeStyles.secondaryColor}20`, 
                                   color: themeStyles.secondaryColor 
                                 }}
                               >
-                                Score: {(source.score * 100).toFixed(1)}%
+                                {(source.score * 100).toFixed(1)}%
                               </span>
-                            ) : (
-                              <span></span>
                             )}
                             
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onCitationClicked(source.id);
-                              }}
-                              className="text-xs p-1 rounded flex items-center opacity-70 hover:opacity-100"
-                              style={{ color: themeStyles.secondaryColor }}
-                            >
-                              <ExternalLink size={12} />
-                            </button>
+                            {expandedDocs.has(source.id) ? (
+                              <ChevronUp size={14} className="opacity-70" />
+                            ) : (
+                              <ChevronDown size={14} className="opacity-70" />
+                            )}
                           </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Detail View */}
-                  {viewMode === 'detail' && currentPageSources.length > 0 && (
-                    <div className="mt-2 space-y-4">
-                      {currentPageSources.map((source, index) => (
-                        <motion.div
-                          key={`${source.id}-${index}`}
-                          className="rounded-md border overflow-hidden"
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: index * 0.05 }}
-                          style={{ 
-                            backgroundColor: themeStyles.cardBackground, 
-                            borderColor: themeStyles.borderColor,
-                            boxShadow: bookmarks.has(source.id) 
-                              ? `0 0 0 2px ${themeStyles.secondaryColor}50` 
-                              : 'none'
-                          }}
-                        >
-                          <div 
-                            className="p-3 border-b flex items-center justify-between"
-                            style={{ borderColor: themeStyles.borderColor }}
+                        </div>
+                        
+                        {/* Expanded document preview */}
+                        {expandedDocs.has(source.id) && (
+                          <div
+                            className="border-t p-3"
+                            style={{ 
+                              backgroundColor: `${themeStyles.secondaryColor}05`,
+                              borderColor: themeStyles.borderColor
+                            }}
                           >
-                            <div className="flex items-center">
-                              {getDocumentIcon(source.fileName, source.type)}
-                              <h4 className="ml-2 font-medium">
-                                {source.fileName}
-                              </h4>
-                              {bookmarks.has(source.id) && (
-                                <span 
-                                  className="ml-1 text-yellow-500"
-                                  title="Bookmarked"
-                                >
-                                  ★
-                                </span>
-                              )}
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => toggleBookmark(source.id)}
-                                className="opacity-70 hover:opacity-100"
-                                title={bookmarks.has(source.id) ? "Remove bookmark" : "Bookmark this source"}
-                              >
-                                {bookmarks.has(source.id) ? "★" : "☆"}
-                              </button>
-                              
-                              <button
-                                onClick={() => onCitationClicked(source.id)}
-                                className="text-xs px-2 py-1 rounded flex items-center"
+                            {/* X-Ray summary if available */}
+                            {source.xray?.summary && (
+                              <div 
+                                className="mb-3 p-2 rounded border text-sm"
                                 style={{ 
-                                  backgroundColor: `${themeStyles.secondaryColor}20`,
-                                  color: themeStyles.secondaryColor
+                                  backgroundColor: `${themeStyles.xrayColor}05`,
+                                  borderColor: `${themeStyles.xrayColor}30`
                                 }}
                               >
-                                <ExternalLink size={12} className="mr-1" />
-                                Open
-                              </button>
-                            </div>
-                          </div>
-                          
-                          <div className="p-3">
-                            {/* Metadata */}
-                            {displayOptions.showMetadata && (
-                              <div 
-                                className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs p-2 rounded"
-                                style={{ backgroundColor: `${themeStyles.secondaryColor}05` }}
-                              >
-                                {source.type && (
-                                  <div>
-                                    <div className="opacity-70">Type</div>
-                                    <div className="font-medium">{source.type}</div>
-                                  </div>
-                                )}
-                                {source.author && (
-                                  <div>
-                                    <div className="opacity-70">Author</div>
-                                    <div className="font-medium truncate">{source.author}</div>
-                                  </div>
-                                )}
-                                {source.datePublished && (
-                                  <div>
-                                    <div className="opacity-70">Date</div>
-                                    <div className="font-medium">{formatDate(source.datePublished)}</div>
-                                  </div>
-                                )}
-                                {displayOptions.showScores && source.score !== undefined && (
-                                  <div>
-                                    <div className="opacity-70">Relevance</div>
-                                    <div 
-                                      className="font-medium"
-                                      style={{ color: themeStyles.secondaryColor }}
-                                    >
-                                      {(source.score * 100).toFixed(1)}%
-                                    </div>
+                                <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                                    <path d="M12 12 6 6"/>
+                                    <path d="M12 6v6"/>
+                                    <path d="M21 9V3h-6"/>
+                                  </svg>
+                                  X-Ray Summary
+                                </div>
+                                <div className="text-sm">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {source.xray.summary}
+                                  </ReactMarkdown>
+                                </div>
+                                
+                                {source.xray.keywords && (
+                                  <div className="mt-1.5 flex flex-wrap gap-1">
+                                    {source.xray.keywords.split(',').slice(0, 5).map((keyword, i) => (
+                                      <span 
+                                        key={i}
+                                        className="px-1.5 py-0.5 text-xs rounded-full"
+                                        style={{ 
+                                          backgroundColor: `${themeStyles.xrayColor}15`,
+                                          color: themeStyles.xrayColor
+                                        }}
+                                      >
+                                        {keyword.trim()}
+                                      </span>
+                                    ))}
+                                    {source.xray.keywords.split(',').length > 5 && (
+                                      <span className="text-xs opacity-70">+{source.xray.keywords.split(',').length - 5} more</span>
+                                    )}
                                   </div>
                                 )}
                               </div>
                             )}
                             
-                            {/* Excerpts */}
-                            {displayOptions.showExcerpts && source.excerpts.length > 0 && (
-                              <div>
-                                <h5 className="text-sm font-medium mb-2">Excerpts:</h5>
-                                <div className="space-y-2">
-                                  {source.excerpts.map((excerpt, i) => (
+                            {/* Document images if available */}
+                            {source.pageImages && source.pageImages.length > 0 && (
+                              <div className="mb-3">
+                                <h5 className="text-xs font-medium mb-2">Document Pages:</h5>
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {source.pageImages.slice(0, 4).map((imageUrl, imgIndex) => (
                                     <div 
-                                      key={i} 
-                                      className="p-2 text-sm rounded border"
-                                      style={{ 
-                                        backgroundColor: `${themeStyles.secondaryColor}05`, 
-                                        borderColor: `${themeStyles.secondaryColor}30` 
+                                      key={imgIndex}
+                                      onClick={() => handleImageClick(source, imgIndex)}
+                                      className="relative border rounded overflow-hidden cursor-pointer"
+                                      style={{
+                                        width: '60px', 
+                                        height: '80px',
+                                        borderColor: themeStyles.borderColor
                                       }}
                                     >
-                                      <p>{excerpt}</p>
+                                      <img 
+                                        src={imageUrl} 
+                                        alt={`Page ${imgIndex + 1} of ${source.fileName}`}
+                                        className="w-full h-full object-cover object-top"
+                                      />
+                                      <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-0.5">
+                                        {imgIndex + 1}
+                                      </div>
                                     </div>
                                   ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Relevance */}
-                            {displayOptions.showRelevance && (
-                              <div className="mt-3">
-                                <h5 className="text-sm font-medium mb-2">Relevance:</h5>
-                                <div 
-                                  className="p-2 rounded text-sm border"
-                                  style={{ 
-                                    backgroundColor: `${themeStyles.primaryColor}05`,
-                                    borderColor: `${themeStyles.primaryColor}30`
-                                  }}
-                                >
-                                  <p>{getRelevanceExplanation(source)}</p>
                                   
-                                  {/* Show confidence bar */}
-                                  {source.score !== undefined && (
-                                    <div className="mt-2 flex items-center">
-                                      <div className="text-xs mr-2">Confidence:</div>
-                                      <div 
-                                        className="flex-grow h-2 rounded-full"
-                                        style={{ backgroundColor: `${themeStyles.secondaryColor}20` }}
-                                      >
-                                        <div 
-                                          className="h-2 rounded-full"
-                                          style={{ 
-                                            width: `${source.score * 100}%`,
-                                            backgroundColor: themeStyles.secondaryColor
-                                          }}
-                                        />
-                                      </div>
-                                      <div className="text-xs ml-2">{(source.score * 100).toFixed(1)}%</div>
-                                    </div>
+                                  {source.pageImages.length > 4 && (
+                                    <button
+                                      onClick={() => {
+                                        setActiveTab('images');
+                                        setSelectedSourceId(source.id);
+                                      }}
+                                      className="text-xs px-2 py-1 rounded"
+                                      style={{ 
+                                        backgroundColor: `${themeStyles.accentColor}10`,
+                                        color: themeStyles.accentColor
+                                      }}
+                                    >
+                                      View all {source.pageImages.length} pages
+                                    </button>
                                   )}
                                 </div>
                               </div>
                             )}
                             
-                            {/* URL if available */}
-                            {source.url && (
-                              <div className="mt-3 text-sm">
-                                <span className="font-medium">Source URL: </span>
-                                <a 
-                                  href={source.url} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="break-all flex items-center"
-                                  style={{ color: themeStyles.primaryColor }}
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {source.url}
-                                  <ExternalLink size={12} className="ml-1 flex-shrink-0" />
-                                </a>
+                            {/* X-Ray chunks preview if available */}
+                            {source.xray?.chunks && source.xray.chunks.length > 0 && (
+                              <div className="mb-3">
+                                <h5 className="text-xs font-medium mb-2">
+                                  X-Ray Content Chunks ({source.xray.chunks.length}):
+                                </h5>
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {source.xray.chunks.slice(0, 3).map((chunk, chunkIndex) => (
+                                    <button
+                                      key={chunkIndex}
+                                      onClick={() => {
+                                        setActiveTab('xray');
+                                        setActiveXrayChunk(chunk);
+                                        setSelectedSourceId(source.id);
+                                      }}
+                                      className="text-xs px-2 py-1 rounded flex items-center"
+                                      style={{ 
+                                        backgroundColor: `${themeStyles.xrayColor}10`,
+                                        color: themeStyles.xrayColor
+                                      }}
+                                    >
+                                      {getContentTypeIcon(chunk.contentType)}
+                                      <span className="ml-1">
+                                        {chunk.contentType?.join(', ') || 'Text'} #{chunk.id}
+                                      </span>
+                                    </button>
+                                  ))}
+                                  
+                                  {source.xray.chunks.length > 3 && (
+                                    <button
+                                      onClick={() => {
+                                        setActiveTab('xray');
+                                        setSelectedSourceId(source.id);
+                                      }}
+                                      className="text-xs px-2 py-1 rounded"
+                                      style={{ 
+                                        backgroundColor: `${themeStyles.xrayColor}10`,
+                                        color: themeStyles.xrayColor
+                                      }}
+                                    >
+                                      +{source.xray.chunks.length - 3} more
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             )}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Pagination controls */}
-                  {totalPages > 1 && (
-                    <div className="flex justify-between items-center mt-4">
-                      <div className="text-sm opacity-70">
-                        Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, sources.length)} of {sources.length}
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                          disabled={currentPage === 1}
-                          className="p-1 rounded"
-                          style={{ 
-                            opacity: currentPage === 1 ? 0.5 : 1,
-                            color: themeStyles.secondaryColor
-                          }}
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-                          </svg>
-                        </button>
-                        
-                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                          // Calculate which page numbers to show
-                          let pageNum;
-                          if (totalPages <= 5) {
-                            pageNum = i + 1;
-                          } else if (currentPage <= 3) {
-                            pageNum = i + 1;
-                          } else if (currentPage >= totalPages - 2) {
-                            pageNum = totalPages - 4 + i;
-                          } else {
-                            pageNum = currentPage - 2 + i;
-                          }
-                          
-                          return (
-                            <button
-                              key={i}
-                              onClick={() => setCurrentPage(pageNum)}
-                              className="w-8 h-8 flex items-center justify-center rounded text-sm"
-                              style={{ 
-                                backgroundColor: currentPage === pageNum 
-                                  ? themeStyles.secondaryColor 
-                                  : 'transparent',
-                                color: currentPage === pageNum 
-                                  ? '#FFFFFF' 
-                                  : themeStyles.textColor
-                              }}
-                            >
-                              {pageNum}
-                            </button>
-                          );
-                        })}
-                        
-                        <button
-                          onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                          disabled={currentPage === totalPages}
-                          className="p-1 rounded"
-                          style={{ 
-                            opacity: currentPage === totalPages ? 0.5 : 1,
-                            color: themeStyles.secondaryColor
-                          }}
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-            
-            {/* Insights Tab */}
-            {activeTab === 'insights' && hasInsights && (
-              <motion.div
-                key="insights-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div className="p-4 rounded-lg border border-green-300 bg-green-50/10">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium flex items-center text-green-500">
-                      <BarChart size={18} className="mr-2" />
-                      Search Insights
-                    </h3>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    {/* Key Terms */}
-                    {searchInsights.keyTerms && (
-                      <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
-                        <h4 className="text-sm font-semibold mb-2 text-green-600">Key Terms</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {Array.isArray(searchInsights.keyTerms) ? (
-                            searchInsights.keyTerms.map((term, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-600"
-                              >
-                                {term}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-sm text-gray-600">No key terms available</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Query Analysis */}
-                    {searchInsights.queryAnalysis && (
-                      <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
-                        <h4 className="text-sm font-semibold mb-2 text-green-600">Query Analysis</h4>
-                        <div className="space-y-2 text-sm">
-                          {Object.entries(searchInsights.queryAnalysis).map(([key, value], i) => (
-                            <div key={i} className="grid grid-cols-3 gap-2 items-start">
-                              <div className="font-medium col-span-1 text-green-700">{key}</div>
-                              <div className="col-span-2 break-words text-gray-800">
-                                {typeof value === 'string' ? value : JSON.stringify(value)}
+                            
+                            {/* Document excerpts */}
+                            {source.excerpts && source.excerpts.length > 0 ? (
+                              <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                                {source.excerpts.slice(0, 3).map((excerpt, i) => (
+                                  <div 
+                                    key={i} 
+                                    className="p-2 text-sm rounded border"
+                                    style={{ 
+                                      backgroundColor: themeStyles.cardBackground,
+                                      borderColor: `${themeStyles.secondaryColor}30`
+                                    }}
+                                  >
+                                    <p>{excerpt}</p>
+                                  </div>
+                                ))}
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Suggested Queries */}
-                    {searchInsights.suggestedQueries && (
-                      <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
-                        <h4 className="text-sm font-semibold mb-2 text-green-600">Suggested Follow-Up Questions</h4>
-                        <div className="space-y-1">
-                          {Array.isArray(searchInsights.suggestedQueries) ? (
-                            searchInsights.suggestedQueries.map((query, i) => (
-                              <button
-                                key={i}
-                                onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(query)}
-                                className="flex items-center text-sm p-1.5 rounded w-full text-left hover:bg-green-100 text-green-900"
-                              >
-                                <ArrowRight size={14} className="mr-2 flex-shrink-0 text-green-500" />
-                                <span>{query}</span>
-                              </button>
-                            ))
-                          ) : (
-                            <span className="text-sm text-gray-600">No suggested questions available</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Source Relevance */}
-                    {searchInsights.sourceRelevance && (
-                      <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
-                        <h4 className="text-sm font-semibold mb-2 text-green-600">Top Source Relevance</h4>
-                        <div className="space-y-3 text-sm max-h-40 overflow-y-auto pr-1">
-                          {Array.isArray(searchInsights.sourceRelevance) ? (
-                            searchInsights.sourceRelevance.map((source, i) => {
-                              const score = source.score || source.relevance || 0.6;
-                              const displayScore = Math.min(score * 100, 100).toFixed(0);
-                              
-                              return (
-                                <div
-                                  key={i}
-                                  className="flex flex-col bg-green-50 p-2 rounded shadow-sm"
-                                >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="truncate font-semibold text-green-700">
-                                      {i + 1}. {source.fileName || source.name || `Document ${i+1}`}
-                                    </div>
-                                    <div className="text-xs text-gray-500">{displayScore}%</div>
-                                  </div>
-                                  <div className="h-2 bg-green-200 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-2 bg-green-500 rounded-full transition-all duration-300"
-                                      style={{ width: `${displayScore}%` }}
-                                    />
-                                  </div>
+                            ) : (
+                              <div className="p-3 rounded border bg-blue-50 text-blue-700 text-sm flex items-center">
+                                <Info size={16} className="mr-2 flex-shrink-0" />
+                                <div>
+                                  <p className="font-medium">Document identified but no excerpts available</p>
+                                  <p className="text-xs mt-1">Use the "Open Document" button to view the full content</p>
                                 </div>
-                              );
-                            })
-                          ) : (
-                            <span className="text-sm text-gray-600">No source relevance information available</span>
-                          )}
-                        </div>
+                              </div>
+                            )}
+                            
+                            <div className="flex justify-end mt-3 space-x-2">
+                              <button
+                                className="text-xs px-2 py-1 rounded flex items-center"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCurrentDocumentId(source.id);
+                                }}
+                                style={{ 
+                                  backgroundColor: `${themeStyles.secondaryColor}20`,
+                                  color: themeStyles.secondaryColor
+                                }}
+                              >
+                                View Details
+                              </button>
+                              
+                              <button
+                                className="text-xs text-white px-2 py-1 rounded flex items-center"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onCitationClicked(source.id);
+                                }}
+                                style={{ backgroundColor: themeStyles.secondaryColor }}
+                              >
+                                <ExternalLink size={12} className="mr-1" />
+                                Open Document
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  
-                  {/* Show raw insights data in expanded view */}
-                  <div className="p-3 rounded-md border border-green-300 bg-white shadow-sm">
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-green-600 font-medium">View Raw Insights Data</summary>
-                      <pre className="whitespace-pre-wrap mt-2 bg-green-100 p-2 rounded overflow-auto max-h-60">
-                        {JSON.stringify(searchInsights, null, 2)}
-                      </pre>
-                    </details>
+                    ))}
                   </div>
                 </div>
               </motion.div>
             )}
             
-            {/* Raw Data Tab */}
-            {activeTab === 'raw' && (
+            {/* X-Ray tab */}
+            {activeTab === 'xray' && hasXray && (
               <motion.div
-                key="raw-tab"
+                key="xray-tab"
                 variants={tabAnimation}
                 initial="initial"
                 animate="animate"
@@ -2848,24 +1850,796 @@ export default function EnhancedAnswer({
                 <div 
                   className="p-4 rounded-lg border"
                   style={{ 
-                    backgroundColor: `${themeStyles.textColor}05`, 
-                    borderColor: `${themeStyles.textColor}20` 
+                    backgroundColor: `${themeStyles.xrayColor}05`, 
+                    borderColor: `${themeStyles.xrayColor}30` 
                   }}
                 >
-                  <h3 className="text-lg font-medium mb-3 flex items-center">
-                    <Code size={18} className="mr-2" />
-                    Raw API Response
-                  </h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 
+                      className="text-lg font-medium flex items-center"
+                      style={{ color: themeStyles.xrayColor }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                        <path d="M12 12 6 6"/>
+                        <path d="M12 6v6"/>
+                        <path d="M21 9V3h-6"/>
+                      </svg>
+                      X-Ray Document Analysis
+                    </h3>
+                    
+                    <div className="flex gap-2">
+                      {/* View mode toggle */}
+                      <div className="rounded-md overflow-hidden border flex" 
+                        style={{ borderColor: themeStyles.borderColor }}
+                      >
+                        <button
+                          onClick={() => setXrayViewMode('summary')}
+                          className={`px-3 py-1 text-xs ${xrayViewMode === 'summary' ? 'font-medium' : ''}`}
+                          style={{
+                            backgroundColor: xrayViewMode === 'summary' 
+                              ? `${themeStyles.xrayColor}15` 
+                              : 'transparent',
+                            color: xrayViewMode === 'summary'
+                              ? themeStyles.xrayColor
+                              : themeStyles.textColor
+                          }}
+                        >
+                          Summary
+                        </button>
+                        <button
+                          onClick={() => setXrayViewMode('detail')}
+                          className={`px-3 py-1 text-xs ${xrayViewMode === 'detail' ? 'font-medium' : ''}`}
+                          style={{
+                            backgroundColor: xrayViewMode === 'detail' 
+                              ? `${themeStyles.xrayColor}15` 
+                              : 'transparent',
+                            color: xrayViewMode === 'detail'
+                              ? themeStyles.xrayColor
+                              : themeStyles.textColor
+                          }}
+                        >
+                          Details
+                        </button>
+                      </div>
+                      
+                      {/* Content type filter */}
+                      <select
+                        value={xrayContentFilter || ''}
+                        onChange={(e) => setXrayContentFilter(e.target.value || null)}
+                        className="text-xs rounded border px-2 py-1"
+                        style={{ 
+                          borderColor: themeStyles.borderColor,
+                          backgroundColor: themeStyles.cardBackground,
+                          color: themeStyles.textColor 
+                        }}
+                      >
+                        <option value="">All Content Types</option>
+                        <option value="table">Tables</option>
+                        <option value="figure">Figures</option>
+                        <option value="paragraph">Paragraphs</option>
+                        <option value="list">Lists</option>
+                        <option value="code">Code</option>
+                      </select>
+                    </div>
+                  </div>
                   
-                  <pre 
-                    className="p-3 rounded-md border overflow-auto max-h-96 text-sm font-mono"
-                    style={{ 
-                      backgroundColor: themeStyles.cardBackground, 
-                      borderColor: `${themeStyles.textColor}20` 
-                    }}
-                  >
-                    {JSON.stringify(answer, null, 2)}
-                  </pre>
+                  {/* Summary view */}
+                  {xrayViewMode === 'summary' && (
+                    <div className="space-y-4">
+                      {/* Documents with X-Ray data */}
+                      {sources
+                        .filter(source => source.xray)
+                        .map((source, index) => (
+                          <div 
+                            key={`xray-summary-${index}`}
+                            className="border rounded-lg overflow-hidden"
+                            style={{
+                              borderColor: themeStyles.borderColor,
+                              backgroundColor: themeStyles.cardBackground
+                            }}
+                          >
+                            <div 
+                              className="p-3 border-b flex items-center justify-between"
+                              style={{ borderColor: themeStyles.borderColor }}
+                            >
+                              <div className="flex items-center">
+                                {getDocumentIcon(source.fileName, source.type)}
+                                <h4 className="ml-2 font-medium text-sm">
+                                  {source.fileName}
+                                </h4>
+                              </div>
+                              
+                              {source.score !== undefined && (
+                                <span 
+                                  className="px-2 py-0.5 text-xs rounded-full"
+                                  style={{ 
+                                    backgroundColor: `${themeStyles.secondaryColor}15`, 
+                                    color: themeStyles.secondaryColor 
+                                  }}
+                                >
+                                  Score: {(source.score * 100).toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                            
+                            <div className="p-3">
+                              {/* Document summary */}
+                              {source.xray?.summary && (
+                                <div className="mb-4">
+                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                      <rect width="18" height="14" x="3" y="5" rx="2" />
+                                      <path d="M21 15V19" />
+                                      <path d="M3 15V19" />
+                                      <path d="M12 17h.01" />
+                                    </svg>
+                                    Document Summary
+                                  </div>
+                                  <p className="text-sm">{source.xray.summary}</p>
+                                </div>
+                              )}
+                              
+                              {/* Keywords */}
+                              {source.xray?.keywords && (
+                                <div className="mb-4">
+                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                      <path d="M10 4a2 2 0 1 0-4 0c0 1.1.9 2 2 2a2 2 0 0 0 0-4zm0 12a2 2 0 1 0-4 0 2 2 0 0 0 4 0z" />
+                                      <path d="M4 6v12" />
+                                      <path d="M12 22a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+                                      <path d="M16 6a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+                                      <path d="M16 14a4 4 0 0 0-8 0" />
+                                    </svg>
+                                    Keywords
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {source.xray.keywords.split(',').map((keyword, i) => (
+                                      <span 
+                                        key={i}
+                                        className="px-2 py-0.5 text-xs rounded-full"
+                                        style={{ 
+                                          backgroundColor: `${themeStyles.xrayColor}10`,
+                                          color: themeStyles.xrayColor
+                                        }}
+                                      >
+                                        {keyword.trim()}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Content Statistics */}
+                              {source.xray?.chunks && (
+                                <div className="mb-4">
+                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                      <path d="M3 3v18h18" />
+                                      <path d="M18 12V8" />
+                                      <path d="M12 18v-9" />
+                                      <path d="M7 15v-3" />
+                                    </svg>
+                                    Content Statistics
+                                  </div>
+                                  
+                                  <div className="mt-2 grid grid-cols-3 gap-2">
+                                    {(() => {
+                                      const contentTypes = new Map();
+                                      source.xray.chunks.forEach(chunk => {
+                                        if (chunk.contentType) {
+                                          chunk.contentType.forEach(type => {
+                                            contentTypes.set(type, (contentTypes.get(type) || 0) + 1);
+                                          });
+                                        } else {
+                                          contentTypes.set('text', (contentTypes.get('text') || 0) + 1);
+                                        }
+                                      });
+                                      
+                                      return Array.from(contentTypes.entries()).map(([type, count]) => (
+                                        <div 
+                                          key={type}
+                                          className="border rounded p-2 text-center"
+                                          style={{ 
+                                            borderColor: themeStyles.borderColor,
+                                            backgroundColor: `${themeStyles.xrayColor}05`
+                                          }}
+                                        >
+                                          <div className="text-lg font-semibold" style={{ color: themeStyles.xrayColor }}>
+                                            {count}
+                                          </div>
+                                          <div className="text-xs capitalize opacity-80">
+                                            {type}{count !== 1 ? 's' : ''}
+                                          </div>
+                                        </div>
+                                      ));
+                                    })()}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Buttons for viewing more */}
+                              <div className="flex justify-end space-x-2">
+                                <button
+                                  className="text-xs px-2 py-1 rounded flex items-center"
+                                  onClick={() => {
+                                    setXrayViewMode('detail');
+                                    setSelectedSourceId(source.id);
+                                  }}
+                                  style={{ 
+                                    backgroundColor: `${themeStyles.xrayColor}10`,
+                                    color: themeStyles.xrayColor
+                                  }}
+                                >
+                                  View X-Ray Details
+                                </button>
+                                
+                                <button
+                                  className="text-xs text-white px-2 py-1 rounded flex items-center"
+                                  onClick={() => {
+                                    onCitationClicked(source.id);
+                                  }}
+                                  style={{ backgroundColor: themeStyles.xrayColor }}
+                                >
+                                  <ExternalLink size={12} className="mr-1" />
+                                  Open Document
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                  
+                  {/* Detailed view */}
+                  {xrayViewMode === 'detail' && (
+                    <div>
+                      {/* Content type filter UI */}
+                      <div className="mb-4 flex flex-wrap gap-2">
+                        {(() => {
+                          // Get all unique content types
+                          const allTypes = new Set<string>();
+                          allXrayChunks.forEach(item => {
+                            if (item.chunk.contentType) {
+                              item.chunk.contentType.forEach(type => allTypes.add(type));
+                            }
+                          });
+                          
+                          return Array.from(allTypes).map(type => (
+                            <button
+                              key={type}
+                              onClick={() => setXrayContentFilter(xrayContentFilter === type ? null : type)}
+                              className={`px-2 py-1 text-xs rounded-full flex items-center`}
+                              style={{ 
+                                backgroundColor: xrayContentFilter === type 
+                                  ? themeStyles.xrayColor 
+                                  : `${themeStyles.xrayColor}10`,
+                                color: xrayContentFilter === type 
+                                  ? 'white' 
+                                  : themeStyles.xrayColor
+                              }}
+                            >
+                              {getContentTypeIcon(type ? [type] : [])}
+                              <span className="ml-1 capitalize">{type}s</span>
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                      
+                      {/* Selected chunk detail */}
+                      {activeXrayChunk && (
+                        <div 
+                          className="mb-4 p-3 border rounded-lg"
+                          style={{ 
+                            borderColor: `${themeStyles.xrayColor}50`,
+                            backgroundColor: `${themeStyles.xrayColor}05`
+                          }}
+                        >
+                          <div className="flex justify-between items-start mb-3">
+                            <div className="flex items-center">
+                              {getContentTypeIcon(activeXrayChunk.contentType)}
+                              <h4 
+                                className="ml-2 font-medium"
+                                style={{ color: themeStyles.xrayColor }}
+                              >
+                                {activeXrayChunk.contentType?.join(', ') || 'Text'} Chunk #{activeXrayChunk.id}
+                              </h4>
+                            </div>
+                            <button
+                              onClick={() => setActiveXrayChunk(null)}
+                              className="p-1"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                          
+                          {/* Parsed data summary if available */}
+                          {activeXrayChunk.parsedData && (activeXrayChunk.parsedData.summary || activeXrayChunk.parsedData.Summary) && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Summary from Analysis:</div>
+                              <div 
+                                className="p-2 rounded border text-sm"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {activeXrayChunk.parsedData.summary || activeXrayChunk.parsedData.Summary}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Section summary */}
+                          {activeXrayChunk.sectionSummary && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Section Summary:</div>
+                              <div 
+                                className="p-2 rounded border text-sm"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {activeXrayChunk.sectionSummary}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Original text */}
+                          {activeXrayChunk.text && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>
+                                {activeXrayChunk.originalText ? "Original JSON Data:" : "Original Text:"}
+                              </div>
+                              <div 
+                                className="p-2 rounded border text-sm overflow-auto max-h-40"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {activeXrayChunk.originalText || activeXrayChunk.text}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Suggested text */}
+                          {activeXrayChunk.suggestedText && activeXrayChunk.suggestedText !== activeXrayChunk.text && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Suggested Text:</div>
+                              <div 
+                                className="p-2 rounded border text-sm"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {activeXrayChunk.suggestedText}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Narrative format */}
+                          {activeXrayChunk.narrative && activeXrayChunk.narrative.length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Narrative Format:</div>
+                              <div className="space-y-2">
+                                {activeXrayChunk.narrative.map((narrativeText, index) => (
+                                  <div 
+                                    key={index}
+                                    className="p-2 rounded border text-sm"
+                                    style={{ 
+                                      backgroundColor: themeStyles.cardBackground,
+                                      borderColor: themeStyles.borderColor
+                                    }}
+                                  >
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                      {narrativeText || ''}
+                                    </ReactMarkdown>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* JSON format - Use the enhanced renderJsonData function */}
+                          {(activeXrayChunk.json || activeXrayChunk.parsedData?.data || activeXrayChunk.parsedData?.Data) && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Parsed Data:</div>
+                              <div 
+                                className="p-2 rounded border text-sm"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {renderJsonData(activeXrayChunk.json || activeXrayChunk.parsedData?.data || activeXrayChunk.parsedData?.Data)}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Additional parsed data if available */}
+                          {activeXrayChunk.parsedData && Object.keys(activeXrayChunk.parsedData).length > 0 && 
+                           !['summary', 'Summary', 'data', 'Data'].includes(Object.keys(activeXrayChunk.parsedData)[0]) && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Additional Metadata:</div>
+                              <div 
+                                className="p-2 rounded border text-sm"
+                                style={{ 
+                                  backgroundColor: themeStyles.cardBackground,
+                                  borderColor: themeStyles.borderColor
+                                }}
+                              >
+                                {renderJsonData(activeXrayChunk.parsedData)}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Page references */}
+                          {activeXrayChunk.pageNumbers && activeXrayChunk.pageNumbers.length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>
+                                Pages: {activeXrayChunk.pageNumbers.join(', ')}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Bounding boxes */}
+                          {activeXrayChunk.boundingBoxes && activeXrayChunk.boundingBoxes.length > 0 && (
+                            <div className="text-xs opacity-70">
+                              This content has {activeXrayChunk.boundingBoxes.length} defined region{activeXrayChunk.boundingBoxes.length !== 1 ? 's' : ''} in the document.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Content chunks list */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {allXrayChunks.map((item, index) => (
+                          <div 
+            key={`chunk-${index}`}
+            className={`p-3 border rounded cursor-pointer transition-all ${
+              activeXrayChunk && activeXrayChunk.id === item.chunk.id ? 'ring-2' : 'hover:shadow-sm'
+            }`}
+            onClick={() => setActiveXrayChunk(item.chunk)}
+            style={{ 
+              backgroundColor: themeStyles.cardBackground,
+              borderColor: themeStyles.borderColor,
+              boxShadow: activeXrayChunk && activeXrayChunk.id === item.chunk.id 
+                ? `0 0 0 2px ${themeStyles.xrayColor}` 
+                : 'none'
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center">
+                {getContentTypeIcon(item.chunk.contentType)}
+                <span 
+                  className="ml-1.5 text-sm font-medium"
+                  style={{ color: themeStyles.xrayColor }}
+                >
+                  {item.chunk.contentType?.join(', ') || 'Text'} 
+                </span>
+              </div>
+              <span className="text-xs opacity-60">#{item.chunk.id}</span>
+            </div>
+            
+            {/* Source file */}
+            <div className="text-xs opacity-70 mb-1 flex items-center">
+              {getDocumentIcon(item.source.fileName)}
+              <span className="ml-1 truncate">{item.source.fileName}</span>
+            </div>
+            
+            {/* Display parsed data if available, otherwise show text preview */}
+            {item.chunk.parsedData ? (
+              <div className="text-sm mt-2 mb-1">
+                <strong className="block text-xs text-gray-500 mb-1">Summary:</strong>
+                <div className="line-clamp-3">
+                  {item.chunk.parsedData.summary || item.chunk.parsedData.Summary || 'No summary available'}
+                </div>
+                
+                {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords) && (
+                  <div className="mt-2">
+                    <strong className="block text-xs text-gray-500 mb-1">Keywords:</strong>
+                    <div className="flex flex-wrap gap-1">
+                      {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords || '')
+                        .split(',')
+                        .slice(0, 3)
+                        .map((keyword, i) => (
+                          <span 
+                            key={i}
+                            className="px-1.5 py-0.5 text-xs rounded-full"
+                            style={{ 
+                              backgroundColor: `${themeStyles.xrayColor}15`,
+                              color: themeStyles.xrayColor
+                            }}
+                          >
+                            {keyword.trim()}
+                          </span>
+                        ))
+                      }
+                      {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords || '').split(',').length > 3 && (
+                        <span className="text-xs opacity-70">+{(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords).split(',').length - 3} more</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm line-clamp-3 mt-2 mb-1">
+                {item.chunk.sectionSummary || item.chunk.text?.substring(0, 150) || 'No preview available'}
+                {(item.chunk.text && item.chunk.text.length > 150) ? '...' : ''}
+              </div>
+            )}
+            
+            {/* Data indicator */}
+            {(item.chunk.json || item.chunk.parsedData?.data || item.chunk.parsedData?.Data) && (
+              <div className="mt-2 text-xs" style={{ color: themeStyles.xrayColor }}>
+                <div className="flex items-center">
+                  <FileJson size={12} className="mr-1" />
+                  <span>Contains structured data</span>
+                </div>
+              </div>
+            )}
+            
+            {/* Page numbers */}
+            {item.chunk.pageNumbers && item.chunk.pageNumbers.length > 0 && (
+              <div className="mt-2 text-xs opacity-70">
+                Page{item.chunk.pageNumbers.length > 1 ? 's' : ''}: {item.chunk.pageNumbers.join(', ')}
+              </div>
+            )}
+          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Empty state */}
+                      {allXrayChunks.length === 0 && (
+                        <div className="flex flex-col items-center justify-center p-8 text-center">
+                          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4 opacity-50">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                            <path d="M12 12 6 6"/>
+                            <path d="M12 6v6"/>
+                            <path d="M21 9V3h-6"/>
+                          </svg>
+                          <h4 className="text-lg font-medium mb-2" style={{ color: themeStyles.xrayColor }}>No content chunks found</h4>
+                          <p className="text-sm opacity-70 max-w-md">
+                            {xrayContentFilter 
+                              ? `No ${xrayContentFilter} content was found in the X-Ray analysis. Try selecting a different content type.`
+                              : 'No X-Ray content chunks were found for this document. Try selecting a different document.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+            
+            {/* Images tab */}
+            {activeTab === 'images' && hasImages && (
+              <motion.div
+                key="images-tab"
+                variants={tabAnimation}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.3 }}
+                className="p-4"
+              >
+                <div 
+                  className="p-4 rounded-lg border"
+                  style={{ 
+                    backgroundColor: `${themeStyles.accentColor}10`, 
+                    borderColor: `${themeStyles.accentColor}30` 
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 
+                      className="text-lg font-medium flex items-center"
+                      style={{ color: themeStyles.accentColor }}
+                    >
+                      <ImageIcon size={18} className="mr-2" />
+                      Document Images
+                    </h3>
+                    
+                    <div className="flex gap-2">
+                      <span 
+                        className="px-2 py-1 text-xs rounded-full flex items-center"
+                        style={{ 
+                          backgroundColor: `${themeStyles.accentColor}20`, 
+                          color: themeStyles.accentColor 
+                        }}
+                      >
+                        {allImages.length} {allImages.length === 1 ? 'Image' : 'Images'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* View controls */}
+                  <div className="mb-4 flex gap-2">
+                    <div className="rounded-md overflow-hidden border flex" 
+                      style={{ borderColor: themeStyles.borderColor }}
+                    >
+                      <button
+                        onClick={() => setImageViewMode('grid')}
+                        className={`px-3 py-1 text-sm ${imageViewMode === 'grid' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageViewMode === 'grid' 
+                            ? `${themeStyles.accentColor}20` 
+                            : 'transparent',
+                          color: imageViewMode === 'grid'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Grid View
+                      </button>
+                      <button
+                        onClick={() => setImageViewMode('single')}
+                        className={`px-3 py-1 text-sm ${imageViewMode === 'single' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageViewMode === 'single' 
+                            ? `${themeStyles.accentColor}20` 
+                            : 'transparent',
+                          color: imageViewMode === 'single'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Document View
+                      </button>
+                    </div>
+                    
+                    <div className="rounded-md overflow-hidden border flex" 
+                      style={{ borderColor: themeStyles.borderColor }}
+                    >
+                      <button
+                        onClick={() => setImageSortBy('document')}
+                        className={`px-3 py-1 text-sm ${imageSortBy === 'document' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageSortBy === 'document' 
+                            ? `${themeStyles.accentColor}20` 
+                            : 'transparent',
+                          color: imageSortBy === 'document'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Sort by Document
+                      </button>
+                      <button
+                        onClick={() => setImageSortBy('relevance')}
+                        className={`px-3 py-1 text-sm ${imageSortBy === 'relevance' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageSortBy === 'relevance' 
+                            ? `${themeStyles.accentColor}20` 
+                            : 'transparent',
+                          color: imageSortBy === 'relevance'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Sort by Relevance
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Grid View */}
+                  {imageViewMode === 'grid' && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {allImages.map((image, index) => (
+                        <div 
+                          key={index}
+                          onClick={() => {
+                            setSelectedSourceId(image.sourceId);
+                            setSelectedImageIndex(image.index);
+                            setShowImageViewer(true);
+                          }}
+                          className="relative border rounded overflow-hidden cursor-pointer group"
+                          style={{
+                            aspectRatio: '3/4', 
+                            borderColor: themeStyles.borderColor
+                          }}
+                        >
+                          <img 
+                            src={image.url} 
+                            alt={`Page ${image.index + 1} of ${image.source.fileName}`}
+                            className="w-full h-full object-cover object-top"
+                          />
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200">
+                            <div className="absolute top-2 right-2 p-1 rounded-full bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-200">
+                              <ZoomIn size={16} className="text-white opacity-0 group-hover:opacity-100 transition-all duration-200" />
+                            </div>
+                          </div>
+                          <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-black bg-opacity-40 text-white">
+                            <div className="text-xs font-medium truncate">
+                              {image.source.imageLabels?.[image.index] || `Page ${image.index + 1}`}
+                            </div>
+                            <div className="text-xs opacity-80 truncate">
+                              {image.source.fileName}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Document View */}
+                  {imageViewMode === 'single' && (
+                    <div className="space-y-6">
+                      {sources
+                        .filter(source => source.pageImages && source.pageImages.length > 0)
+                        .sort((a, b) => {
+                          if (imageSortBy === 'relevance') {
+                            return (b.score || 0) - (a.score || 0);
+                          }
+                          return 0;
+                        })
+                        .map((source, sourceIndex) => (
+                          <div 
+                            key={`source-${sourceIndex}`}
+                            className="rounded-md border overflow-hidden"
+                            style={{ 
+                              backgroundColor: themeStyles.cardBackground, 
+                              borderColor: themeStyles.borderColor
+                            }}
+                          >
+                            <div className="p-3 border-b flex items-center justify-between" 
+                              style={{ borderColor: themeStyles.borderColor }}
+                            >
+                              <div className="flex items-center">
+                                {getDocumentIcon(source.fileName, source.type)}
+                                <h4 className="ml-2 font-medium text-sm">
+                                  {source.fileName}
+                                </h4>
+                                {source.score !== undefined && (
+                                  <span 
+                                    className="ml-2 px-1.5 py-0.5 text-xs rounded-full"
+                                    style={{ 
+                                      backgroundColor: `${themeStyles.secondaryColor}20`, 
+                                      color: themeStyles.secondaryColor 
+                                    }}
+                                  >
+                                    Score: {(source.score * 100).toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                              <div 
+                                className="text-xs"
+                                style={{ color: themeStyles.accentColor }}
+                              >
+                                {source.pageImages?.length} {source.pageImages?.length === 1 ? 'page' : 'pages'}
+                              </div>
+                            </div>
+                            
+                            <div className="p-4">
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                {source.pageImages?.map((imageUrl, imgIndex) => (
+                                  <div 
+                                    key={imgIndex}
+                                    onClick={() => handleImageClick(source, imgIndex)}
+                                    className="relative border rounded overflow-hidden cursor-pointer group"
+                                    style={{
+                                      aspectRatio: '3/4', 
+                                      borderColor: themeStyles.borderColor
+                                    }}
+                                  >
+                                    <img 
+                                      src={imageUrl} 
+                                      alt={source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1} of ${source.fileName}`}
+                                      className="w-full h-full object-cover object-top"
+                                    />
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200" />
+                                    <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
+                                      {source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1}`}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}

@@ -18,7 +18,7 @@ import {
     ThemeStyles, 
     DocumentStats, 
     ViewOptions
-} from '../types';
+} from '@/types/types';
 
 interface AnalyticsViewProps {
     allSources: Source[];

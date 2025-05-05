@@ -17,7 +17,7 @@ import {
     Menu,
     AlertTriangle
 } from 'lucide-react';
-import { ThemeStyles } from '../types';
+import { ThemeStyles } from '@/types/types';
 
 interface RawResponseViewProps {
     rawResponse: any;

@@ -1233,7 +1233,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder={isRecording ? "Speak or type your message..." : "Type your message..."}
-          className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white shadow-md"
+          className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white shadow-md"
           disabled={isLoading || isDisabled}
           initial={{ opacity: 0, width: '90%' }}
           animate={{ opacity: 1, width: '100%' }}
@@ -1278,7 +1278,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         >
           <Button
             type="submit"
-            className="h-12 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors text-white shadow-md"
+            className="h-12 px-4 rounded-md bg-red-600 hover:bg-red-700 transition-colors text-white shadow-md"
             disabled={isLoading || !input.trim() || isDisabled}
           >
             <Send className="h-5 w-5 mr-2" />

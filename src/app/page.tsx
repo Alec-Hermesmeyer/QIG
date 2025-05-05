@@ -870,6 +870,34 @@ export default function Page() {
       setSelectedBucketId(savedBucketId);
     }
   }, []);
+  const cleanMessageContent = (content: string | undefined): string => {
+    if (!content) return '';
+    
+    // Check if the content has the specific pattern with "Response" and "Answer"
+    if (content.includes("Response") && content.includes("Answer")) {
+      // Extract just the answer portion
+      const answerMatch = content.match(/Answer\s*\n([\s\S]*?)(?:\n\s*Response\s*\n|\s*$)/i);
+      if (answerMatch && answerMatch[1].trim()) {
+        return answerMatch[1].trim();
+      }
+      
+      // If that doesn't work, try to strip the "Response" section
+      const responseMatch = content.match(/([\s\S]*?)(?:\s*Response\s*\n)/i);
+      if (responseMatch && responseMatch[1].trim()) {
+        return responseMatch[1].trim().replace(/^Answer\s*\n/i, '');
+      }
+    }
+    
+    // If content starts with "AnswerSources" or similar format,
+    // clean it up to just get the main content
+    if (content.startsWith("AnswerSources")) {
+      const cleanedContent = content.replace(/^AnswerSources.*?\n/i, '');
+      return cleanedContent;
+    }
+    
+    // Default case: return the original content
+    return content;
+  };
 
   // Save RAG state when it changes
   useEffect(() => {
@@ -942,7 +970,7 @@ export default function Page() {
       console.log("Updated chat configuration:", chatConfig);
     }
   }, [chatConfig, chatRef.current]);
-  
+
 
   // Clear chat functionality
   const clearChat = () => {
@@ -1032,13 +1060,18 @@ export default function Page() {
     setIsStreaming(true);
   };
 
+  // Modify the handleAssistantMessage function to prevent duplicate responses
+
   const handleAssistantMessage = (content: string, metadata?: any) => {
     console.log("Raw assistant message metadata:", metadata);
+    
+    // Clean the content before storing it
+    const cleanedContent = cleanMessageContent(content);
     
     // Create a message with all available data from the GroundX response
     const newMessage: ChatMessage = {
       role: 'assistant',
-      content,
+      content: cleanedContent, // Use the cleaned content
       timestamp: new Date().toISOString(),
       // Extract fields from metadata or use directly if available
       searchResults: metadata?.searchResults || metadata?.result?.searchResults,
@@ -1058,7 +1091,7 @@ export default function Page() {
       chatHistoryService.addMessage(activeSessionId, newMessage);
     }
   };
-  
+
 
   // Add these helper functions for session management
   const handleSelectSession = (sessionId: string) => {
@@ -1164,11 +1197,11 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
               <Link href="/" className="text-lg font-medium">
-              <Image 
-                   src='/austinIndustries.png'
-                   alt='Spinakr Logo'
-                   height={200}
-                   width={200}/>
+                <Image
+                  src='/austinIndustries.png'
+                  alt='Spinakr Logo'
+                  height={200}
+                  width={200} />
               </Link>
               <motion.div
                 className="flex items-center gap-6"
@@ -1265,7 +1298,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     <File className="h-4 w-4" />
                     File Cabinet
                   </Button>
-                </motion.div> 
+                </motion.div>
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost" size="sm" className="flex items-center gap-2 cursor-pointer" onClick={clearChat}>
@@ -1274,7 +1307,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </Button>
                 </motion.div>
 
-               {/*} <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                {/*} <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1299,9 +1332,9 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.5, duration: 0.5 }}
                 >
-                  
+
                   <div className="relative mb-4">
-                    
+
                     <motion.h1
                       className="text-4xl font-bold mb-2 mt-40"
                       initial={{ scale: 0.8, opacity: 0 }}
@@ -1341,7 +1374,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                         <path d="M12 0L15 9L24 12L15 15L12 24L9 15L0 12L9 9L12 0Z" fill="currentColor" />
                       </motion.svg>
                     </motion.div>
-                   
+
                   </div>
                   <motion.p
                     className="text-gray-600 font-bold"

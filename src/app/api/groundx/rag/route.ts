@@ -1,4 +1,4 @@
-// app/api/groundx/rag/route.ts
+// app/api/groundx/rag/route.ts - Enhanced version
 import { NextRequest, NextResponse } from 'next/server';
 import { GroundXClient } from "groundx";
 import OpenAI from "openai";
@@ -10,125 +10,157 @@ import {
 } from "openai/resources/chat/completions";
 
 /**
- * Enhanced interface definitions to match GroundX API types
+ * Basic interfaces for GroundX API interaction
  */
-interface DocumentPage {
-  pageNumber: number;
-  imageUrl: string;
-}
-
-interface DocumentMetadata {
-  [key: string]: any;
-}
-
-interface DocumentDetail {
-  document?: {
-    pages?: DocumentPage[];
-    metadata?: DocumentMetadata;
-    title?: string;
-    fileName?: string;
-    content?: string; // Added field for document content
-  };
-}
-
 interface SearchResultItem {
   documentId?: string;
   fileName?: string;
   score?: number;
   text?: string;
-  metadata?: {
-    page?: string;
-    section?: string;
-    [key: string]: any;
-  };
-  highlight?: {  // New field for highlighted matches
+  metadata?: Record<string, any>;
+  highlight?: {
     text?: string[];
   };
+  searchData?: Record<string, any>;
+  sourceUrl?: string;
+  suggestedText?: string;
 }
 
-interface EnhancedSource {
-  id?: string;
-  fileName?: string;
-  score?: number;
-  text: string;
-  pageImages: string[];
-  metadata: Record<string, any>;
-  narrative: string[];
-  keyPhrases?: string[];
-  viewUrl?: string;
-  downloadUrl?: string;
-  extractedSections?: string[];
-  fullExcerpt?: string;
-  highlights?: string[]; // New field for search highlights
-  documentContext?: string; // New field for surrounding context
-  relevanceScore?: number; // New field for calculated relevance
-}
-
-interface DocumentExcerpt {
-  id: string;
-  fileName: string;
-  excerpts: string[];
-  narrative: string[];
-  metadata?: Record<string, any>;
-  highlights?: string[]; // New field for highlighted content
-  pageNumber?: number;   // New field for page number
-  contextBeforeAfter?: { // New field for context before/after
-    before: string;
-    after: string;
+interface DocumentDetail {
+  document?: {
+    pages?: Array<{
+      pageNumber: number;
+      imageUrl?: string;
+      thumbnailUrl?: string;
+    }>;
+    metadata?: Record<string, any>;
+    title?: string;
+    fileName?: string;
+    content?: string;
+    mimeType?: string;
+    xrayUrl?: string; // Added for X-Ray support
   };
 }
 
-interface Citation {
-  documentId: string;
-  fileName: string;
-  pageNumber?: number;
-  text: string;
-  relevance: number;
+/**
+ * X-Ray result interface based on GroundX documentation
+ */
+interface XRayResult {
+  fileType?: string;
+  language?: string;
+  fileKeywords?: string;
+  fileName?: string;
+  fileSummary?: string;
+  documentPages?: Array<{
+    chunks?: Array<{
+      boundingBoxes?: Array<{
+        bottomRightX: number;
+        bottomRightY: number;
+        pageNumber: number;
+        topLeftX: number;
+        topLeftY: number;
+      }>;
+      chunk: number;
+      contentType?: string[];
+      json?: any[];
+      multimodalUrl?: string;
+      narrative?: string[];
+      pageNumbers?: number[];
+      sectionSummary?: string;
+      suggestedText?: string;
+      text?: string;
+    }>;
+    height?: number;
+    pageNumber: number;
+    pageUrl?: string;
+    width?: number;
+  }>;
+  sourceUrl?: string;
 }
 
+/**
+ * Enhanced search result with X-Ray data
+ */
+interface EnhancedSearchResult {
+  id: string;
+  fileName: string;
+  score?: number;
+  text: string;
+  metadata: Record<string, any>;
+  highlights: string[];
+  pageImages: string[];
+  thumbnails: string[];
+  xray?: {
+    summary?: string;
+    keywords?: string;
+    language?: string;
+    chunks?: Array<{
+      id: number;
+      contentType?: string[];
+      text?: string;
+      suggestedText?: string;
+      sectionSummary?: string;
+      pageNumbers?: number[];
+    }>;
+  };
+}
+
+/**
+ * Clean response interface with only essential fields
+ * Modified to prevent duplicate responses
+ */
 interface RagResponse {
   success: boolean;
-  timestamp?: string;
+  timestamp: string;
   query?: string;
-  response: string;
+  content: string; // Changed from 'response' to 'content' to avoid confusion
   searchResults: {
     count: number;
     sources: Array<{
       id?: string;
       fileName?: string;
-      score?: number;
+      text?: string;
+      metadata?: Record<string, any>;
+      pageImages?: string[]; // Array of document page image URLs
+      thumbnails?: string[]; // Array of document thumbnail URLs
+      highlights?: string[]; // Highlighted matches from search
+      xray?: {
+        summary?: string;
+        keywords?: string;
+        language?: string;
+        chunks?: Array<{
+          id: number;
+          contentType?: string[];
+          text?: string;
+          suggestedText?: string;
+          sectionSummary?: string;
+          pageNumbers?: number[];
+        }>;
+      };
     }>;
   };
-  thoughts?: string[] | null;
-  supportingContent: {
-    text: string[];
-  };
-  enhancedResults: {
-    totalResults: number;
-    sources: EnhancedSource[];
-  };
-  documentExcerpts?: DocumentExcerpt[];
-  modelUsed?: string;
-  citations?: Citation[]; // New field for citation data
-  executionTime?: {       // New field for performance metrics
+  documentExcerpts?: any[]; // Added field for direct compatibility with Answer component
+  thoughts?: string; // Added field for thought process
+  executionTime?: {
     totalMs: number;
     searchMs: number;
     llmMs: number;
+    xrayMs: number;
   };
   error?: string;
-  errorDetails?: {
-    name: string;
-    stack?: string;
-  };
 }
 
 // Initialize clients with error handling
 let groundxClient: GroundXClient;
 let openai: OpenAI;
 
+// GroundX API base URL for direct URL construction if needed
+const GROUNDX_BASE_URL = process.env.GROUNDX_BASE_URL || 'https://api.groundx.ai';
+
 try {
   groundxClient = new GroundXClient({
     apiKey: process.env.GROUNDX_API_KEY || '',
+    baseUrl: GROUNDX_BASE_URL
   });
 
   openai = new OpenAI({
@@ -139,240 +171,14 @@ try {
 }
 
 /**
- * Advanced key phrase extraction with NLP-inspired techniques
- * Uses frequency analysis, position importance, and keyword matching
- */
-function extractKeyPhrases(text: string, maxPhrases: number = 5): string[] {
-  if (!text || typeof text !== 'string') return [];
-  
-  // Look for phrases that appear to be headings
-  const headings = text.match(/(?:^|\n)([A-Z][A-Za-z\s]{3,}:)/g) || [];
-  
-  // Important business keywords (customize for your domain)
-  const domainKeywords = [
-    'important', 'key', 'significant', 'critical', 'essential', 'primary',
-    'result', 'conclusion', 'finding', 'recommendation', 'analysis',
-    'requirement', 'specification', 'compliance', 'regulation',
-    'austin', 'industries', 'construction', 'safety', 'project', 'management'
-  ];
-  
-  // Find sentences with keywords - more sophisticated pattern matching
-  const keywordRegexes = domainKeywords.map(keyword => 
-    new RegExp(`[^.!?]*(?:\\b${keyword}\\b)[^.!?]*[.!?]`, 'gi')
-  );
-  
-  const sentencesWithKeywords = keywordRegexes.flatMap(regex => 
-    (text.match(regex) || []).map(s => s.trim())
-  );
-  
-  // Find sentences at the beginning and end of paragraphs (often important)
-  const paragraphs = text.split(/\n\s*\n/).filter(Boolean);
-  const importantPositions = paragraphs.flatMap(p => {
-    const sentences = p.split(/(?<=[.!?])\s+/).filter(Boolean);
-    // Return first and last sentence if paragraph has multiple sentences
-    if (sentences.length > 2) {
-      return [sentences[0], sentences[sentences.length - 1]];
-    }
-    return sentences;
-  });
-  
-  // Combine all potential key phrases and remove duplicates
-  const allPhrases = [...new Set([...headings, ...sentencesWithKeywords, ...importantPositions])];
-  
-  // Score phrases by length, keyword presence, and capitalization
-  const scoredPhrases = allPhrases.map(phrase => {
-    // Base score - prefer medium length phrases (not too short, not too long)
-    let score = Math.min(100, phrase.length) / 20;
-    
-    // Bonus for keyword presence
-    domainKeywords.forEach(keyword => {
-      if (phrase.toLowerCase().includes(keyword.toLowerCase())) {
-        score += 0.5;
-      }
-    });
-    
-    // Bonus for capitalized words (often important)
-    const capitalizedWords = (phrase.match(/\b[A-Z][a-z]+/g) || []).length;
-    score += capitalizedWords * 0.3;
-    
-    return { phrase, score };
-  });
-  
-  // Sort by score and take top N
-  return scoredPhrases
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxPhrases)
-    .map(item => item.phrase.trim())
-    .filter(phrase => phrase.length > 10 && phrase.length < 200); // Reasonable length
-}
-
-/**
- * Enhanced text section extraction with intelligent splitting
- * Uses semantic boundaries and structure awareness
- */
-function extractTextSections(text: string, maxSections: number = 5): string[] {
-  if (!text || typeof text !== 'string' || text.length === 0) return [];
-  
-  // First try to identify structural elements like headings
-  const headingPattern = /(?:^|\n)(#{1,3}\s+.+|\b[A-Z][A-Z\s]{2,}:|\d+\.\s+[A-Z])/g;
-  const headingMatches = [...text.matchAll(headingPattern)];
-  
-  if (headingMatches.length >= 2) {
-    // Use headings to split text into logical sections
-    const sections = [];
-    for (let i = 0; i < headingMatches.length - 1; i++) {
-      const start = headingMatches[i].index!;
-      const end = headingMatches[i+1].index!;
-      sections.push(text.substring(start, end).trim());
-    }
-    
-    // Add the last section
-    if (headingMatches.length > 0) {
-      const lastStart = headingMatches[headingMatches.length-1].index!;
-      sections.push(text.substring(lastStart).trim());
-    }
-    
-    if (sections.length > 0) {
-      return sections.slice(0, maxSections);
-    }
-  }
-  
-  // Try to split by paragraphs if no headings found
-  let sections = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-  
-  // If we have very few paragraphs, try to split by newlines
-  if (sections.length <= 1) {
-    sections = text.split(/\n/).filter(p => p.trim().length > 0);
-  }
-  
-  // If we still have minimal sections, split by sentences and group them
-  if (sections.length <= 1) {
-    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
-    sections = [];
-    
-    // Group sentences into logical sections with better content awareness
-    // Group based on semantic cohesion - sentences that likely belong together
-    let currentSection = '';
-    let sentenceCount = 0;
-    const maxSentencesPerSection = 3;
-    
-    sentences.forEach(sentence => {
-      // Start a new section if this would make it too large
-      if (sentenceCount >= maxSentencesPerSection || 
-          (currentSection.length > 0 && currentSection.length + sentence.length > 500)) {
-        if (currentSection.trim()) {
-          sections.push(currentSection.trim());
-        }
-        currentSection = sentence;
-        sentenceCount = 1;
-      } else {
-        currentSection += ' ' + sentence;
-        sentenceCount++;
-      }
-    });
-    
-    // Add the last section if not empty
-    if (currentSection.trim()) {
-      sections.push(currentSection.trim());
-    }
-  }
-  
-  // Ensure sections have a reasonable length
-  const processedSections = sections
-    .filter(section => section.length >= 20) // Minimum meaningful length
-    .map(section => section.length > 1000 ? section.substring(0, 1000) + '...' : section);
-  
-  // Return processed sections, limited to maxSections
-  return processedSections.slice(0, maxSections);
-}
-
-/**
- * New function to extract context around a matched section
- * Provides better context for search matches
- */
-function extractContextAroundMatch(text: string, matchText: string, contextWords: number = 20): { before: string, after: string } {
-  if (!text || !matchText || typeof text !== 'string') {
-    return { before: '', after: '' };
-  }
-  
-  // Find the match position
-  const matchPos = text.indexOf(matchText);
-  if (matchPos === -1) {
-    return { before: '', after: '' };
-  }
-  
-  // Get text before the match
-  const textBefore = text.substring(0, matchPos);
-  const wordsBefore = textBefore.split(/\s+/).filter(Boolean);
-  const before = wordsBefore.slice(-contextWords).join(' ');
-  
-  // Get text after the match
-  const textAfter = text.substring(matchPos + matchText.length);
-  const wordsAfter = textAfter.split(/\s+/).filter(Boolean);
-  const after = wordsAfter.slice(0, contextWords).join(' ');
-  
-  return { before, after };
-}
-
-/**
- * Calculate relevance score based on content match and metadata
- * More sophisticated than raw search score
- */
-function calculateRelevanceScore(result: SearchResultItem, query: string): number {
-  // Start with the base score from search
-  let relevanceScore = result.score || 0;
-  
-  // Boost score if there are highlighted matches
-  if (result.highlight?.text && result.highlight.text.length > 0) {
-    relevanceScore += 0.2 * result.highlight.text.length;
-  }
-  
-  // Boost score if metadata suggests higher relevance
-  if (result.metadata) {
-    // Recent documents may be more relevant
-    if (result.metadata.date) {
-      try {
-        const docDate = new Date(result.metadata.date);
-        const now = new Date();
-        const ageInDays = (now.getTime() - docDate.getTime()) / (1000 * 60 * 60 * 24);
-        // Boost newer documents (within last 30 days)
-        if (ageInDays < 30) {
-          relevanceScore += 0.3 * (1 - ageInDays/30);
-        }
-      } catch (e) {
-        // Ignore date parsing errors
-      }
-    }
-    
-    // Official or final documents may be more relevant
-    if (result.metadata.status === 'final' || result.metadata.status === 'official') {
-      relevanceScore += 0.2;
-    }
-    
-    // Boost if title contains query terms
-    if (result.metadata.title && typeof query === 'string') {
-      const queryTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 3);
-      const titleMatches = queryTerms.filter(term => 
-        result.metadata?.title?.toLowerCase().includes(term)
-      ).length;
-      
-      if (titleMatches > 0) {
-        relevanceScore += 0.1 * titleMatches;
-      }
-    }
-  }
-  
-  return relevanceScore;
-}
-
-/**
- * Enhanced POST handler for RAG API
+ * POST handler for RAG API
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Performance tracking
   const startTime = Date.now();
   let searchTime = 0;
   let llmTime = 0;
+  let xrayTime = 0;
   
   try {
     // Validate API clients
@@ -382,25 +188,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'API clients not properly initialized',
-          errorDetails: {
-            name: 'InitializationError',
-            stack: process.env.NODE_ENV === 'development' ? 'Failed to initialize GroundX or OpenAI client' : undefined
-          },
-          response: '',
+          content: '',
           searchResults: { count: 0, sources: [] },
-          supportingContent: { text: [] },
-          enhancedResults: { totalResults: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
             searchMs: 0,
-            llmMs: 0
+            llmMs: 0,
+            xrayMs: 0
           }
         },
         { status: 500 }
       );
     }
 
-    // Parse and validate request body with improved error handling
+    // Parse and validate request body
     let body;
     try {
       body = await request.json();
@@ -410,14 +211,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'Invalid JSON in request body',
-          response: '',
+          content: '',
           searchResults: { count: 0, sources: [] },
-          supportingContent: { text: [] },
-          enhancedResults: { totalResults: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
             searchMs: 0,
-            llmMs: 0
+            llmMs: 0,
+            xrayMs: 0
           }
         },
         { status: 400 }
@@ -428,47 +228,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       query, 
       bucketId, 
       messages = [], 
-      includeThoughts = false,
       limit = 10,
       maxTokens = 2000,
       temperature = 0.3,
-      // New parameters for enhanced functionality
-      searchType = 'hybrid',       // Options: 'semantic', 'keyword', 'hybrid'
-      includeCitations = true,     // Whether to add citations to the response
-      citationFormat = 'inline',   // Options: 'inline', 'footnote', 'endnote'
-      responseFormat = 'markdown', // Options: 'markdown', 'html', 'text'
-      includeDocumentContext = true, // Whether to fetch additional document context
-      model = "gpt-4-0125-preview" // Configurable model
+      model = "gpt-4-0125-preview",
+      tryRenderImages = true, // Flag to control whether to try document rendering
+      includeXray = true, // New flag to control whether to include X-Ray data
+      includeThoughts = true // New flag to include reasoning process
     } = body;
     
     console.log('RAG API request:', { 
       query, 
       bucketId, 
       messageCount: messages?.length, 
-      includeThoughts,
       limit,
       maxTokens,
       temperature,
-      searchType,
-      includeCitations,
-      responseFormat,
-      model
+      model,
+      tryRenderImages,
+      includeXray,
+      includeThoughts
     });
     
+    // Validate required fields
     if (!query) {
       return NextResponse.json(
         { 
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'Query is required',
-          response: '',
+          content: '',
           searchResults: { count: 0, sources: [] },
-          supportingContent: { text: [] },
-          enhancedResults: { totalResults: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
             searchMs: 0,
-            llmMs: 0
+            llmMs: 0,
+            xrayMs: 0
           }
         },
         { status: 400 }
@@ -481,67 +276,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           success: false, 
           timestamp: new Date().toISOString(),
           error: 'BucketId is required',
-          response: '',
+          content: '',
           searchResults: { count: 0, sources: [] },
-          supportingContent: { text: [] },
-          enhancedResults: { totalResults: 0, sources: [] },
           executionTime: {
             totalMs: Date.now() - startTime,
             searchMs: 0,
-            llmMs: 0
+            llmMs: 0,
+            xrayMs: 0
           }
         },
         { status: 400 }
       );
     }
 
-    // 1. Search for content using GroundX with improved search options
+    // 1. Search for content using GroundX 
     const searchStartTime = Date.now();
-    console.log(`Searching bucket ${bucketId} for: "${query}" with type ${searchType}`);
+    console.log(`Searching bucket ${bucketId} for: "${query}"`);
     
-    // Prepare search options based on searchType
-    const searchOptions: any = {}; // Customize based on GroundX API options
-    
-    // Add search type configurations
-    switch(searchType) {
-      case 'semantic':
-        searchOptions.type = 'semantic';
-        searchOptions.threshold = 0.7; // Minimum semantic similarity
-        break;
-      case 'keyword':
-        searchOptions.type = 'keyword';
-        searchOptions.fuzzyMatch = true; // Enable fuzzy matching
-        break;
-      case 'hybrid':
-      default:
-        searchOptions.type = 'hybrid';
-        searchOptions.semanticWeight = 0.6; // Balance between semantic and keyword
-        searchOptions.keywordWeight = 0.4;
-        break;
-    }
-    
-    // Attempt search with advanced options, fallback to basic search if needed
-    let searchResponse;
-    try {
-      searchResponse = await groundxClient.search.content(
-        Number(bucketId),
-        {
-          query: query,
-          // Advanced options - might need to be adjusted based on actual GroundX API
-          // Note: If these options aren't supported, they'll be ignored
-          ...searchOptions,
-          highlight: true, // Request highlighted matches if supported
-        }
-      );
-    } catch (e) {
-      console.warn('Advanced search failed, falling back to basic search:', e);
-      searchResponse = await groundxClient.search.content(
-        Number(bucketId),
-        {
-          query: query
-        }
-      );
-    }
+    const searchResponse = await groundxClient.search.content(
+      Number(bucketId),
+      {
+        query: query,
+        limit: limit,
+        highlight: true // Request highlighted matches if supported
+      }
+    );
     
     // Track search execution time
     searchTime = Date.now() - searchStartTime;
@@ -554,341 +313,254 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         success: true,
         timestamp: new Date().toISOString(),
         query: query,
-        response: "I couldn't find any relevant information about that in the documents.",
+        content: "I couldn't find any relevant information about that in the documents.",
         searchResults: {
           count: 0,
           sources: []
         },
-        thoughts: includeThoughts ? ["Searched for information but found no relevant results in the documents."] : null,
-        supportingContent: { text: [] },
-        enhancedResults: { totalResults: 0, sources: [] },
+        thoughts: includeThoughts ? "I searched for information related to your query but couldn't find any relevant documents in the knowledge base." : undefined,
         executionTime: {
           totalMs: Date.now() - startTime,
           searchMs: searchTime,
-          llmMs: 0
-        },
-        modelUsed: model
+          llmMs: 0,
+          xrayMs: 0
+        }
       } as RagResponse);
     }
 
     console.log(`Found ${searchResponse.search.results.length} results`);
     
-    // 3. Prepare enhanced results with additional document context and highlights
-    const sources: EnhancedSource[] = await Promise.all(
-      searchResponse.search.results.map(async (result: SearchResultItem) => {
+    // 3. Process search results and fetch additional context including X-Ray data when needed
+    const xrayStartTime = Date.now();
+    const enhancedResults: EnhancedSearchResult[] = await Promise.all(
+      searchResponse.search.results.map(async (result: SearchResultItem, index: number) => {
         // Default values for missing properties
         const documentId = result.documentId || '';
         const fileName = result.fileName || `Document ${documentId}`;
         const score = result.score || 0; 
-        const text = result.text || '';
-        
-        // Calculate enhanced relevance score
-        const relevanceScore = calculateRelevanceScore(result, query);
-        
-        // Initialize empty collections
+        const text = result.text || result.suggestedText || '';
+        let metadata = result.metadata || result.searchData || {};
+        let highlights = result.highlight?.text || [];
         let pageImages: string[] = [];
-        let metadata: Record<string, any> = {};
-        let narrative: string[] = [];
-        let keyPhrases: string[] = [];
-        let extractedSections: string[] = [];
-        let fullExcerpt = text;
-        let documentContext = '';
-        let highlights: string[] = [];
+        let thumbnails: string[] = [];
+        let xrayData = undefined;
         
-        // Extract highlights from search results if available
-        if (result.highlight && result.highlight.text) {
-          highlights = result.highlight.text;
-        }
+        console.log(`Processing search result ${index + 1}/${searchResponse.search.results.length}: ${fileName} (ID: ${documentId})`);
         
         // Only attempt to fetch details if we have a document ID
         if (documentId) {
           try {
-            // Fetch document details with error handling
+            console.log(`Fetching details for document: ${documentId}`);
+            
+            // Try to fetch document details
             const docDetails = await groundxClient.documents.get(documentId) as DocumentDetail;
             
-            // Process page images if available
-            if (docDetails?.document?.pages?.length) {
-              pageImages = docDetails.document.pages
-                .filter((page: DocumentPage) => Boolean(page.imageUrl))
-                .map((page: DocumentPage) => page.imageUrl);
-            }
+            // Log document details for debugging
+            console.log('Document details received for:', documentId, 
+              docDetails ? 'Successfully' : 'Failed - No details returned');
             
-            // Process metadata if available
-            if (docDetails?.document?.metadata) {
-              metadata = { ...docDetails.document.metadata };
-            }
-            
-            // Add document title and filename to metadata if available
+            // Add document title and metadata if available
             if (docDetails?.document?.title) {
               metadata.title = docDetails.document.title;
             }
             
-            if (docDetails?.document?.fileName) {
-              metadata.originalFileName = docDetails.document.fileName;
+            if (docDetails?.document?.metadata) {
+              metadata = { ...metadata, ...docDetails.document.metadata };
             }
             
-            // Fetch additional document context if requested and available
-            if (includeDocumentContext && docDetails?.document?.content) {
-              const fullContent = docDetails.document.content;
-              if (text && fullContent.includes(text)) {
-                // Extract surrounding context from the full document
-                const contextObj = extractContextAroundMatch(fullContent, text, 50);
-                documentContext = `${contextObj.before} [MATCH] ${contextObj.after}`;
-              } else {
-                // If direct match not found, use the beginning of the document
-                documentContext = fullContent.substring(0, 1000) + '...';
-              }
+            // Extract page images if available in response
+            if (tryRenderImages && docDetails?.document?.pages) {
+              pageImages = docDetails.document.pages
+                .filter(page => Boolean(page.imageUrl))
+                .map(page => page.imageUrl as string);
+                
+              thumbnails = docDetails.document.pages
+                .filter(page => Boolean(page.thumbnailUrl))
+                .map(page => page.thumbnailUrl as string);
+                
+              console.log(`Found ${pageImages.length} images and ${thumbnails.length} thumbnails in response`);
             }
             
-            // Generate a narrative summary if we have text content
-            if (text.length > 0) {
-              // Enhanced summary extraction with longer context
-              const summaryLength = Math.min(500, text.length); 
-              const summary = text.substring(0, summaryLength) + (text.length > summaryLength ? '...' : '');
+            // If no images found, try constructing render URLs
+            if (tryRenderImages && pageImages.length === 0 && docDetails?.document?.pages) {
+              const apiKey = process.env.GROUNDX_API_KEY || '';
+              const pageCount = docDetails.document.pages.length;
               
-              // Extract key phrases from the text with improved relevance
-              keyPhrases = extractKeyPhrases(text);
-              
-              // Extract meaningful sections from the text for better excerpts
-              extractedSections = extractTextSections(text, 5);
-              
-              // Create a narrative with document summary and key points
-              narrative = [
-                `Document summary: ${summary}`,
+              // Try constructing direct render URLs as a fallback
+              const possibleRenderUrls = [
+                `${GROUNDX_BASE_URL}/documents/${documentId}/render?apiKey=${apiKey}`,
+                `${GROUNDX_BASE_URL}/documents/${documentId}/pages/1/render?apiKey=${apiKey}`
               ];
               
-              if (keyPhrases.length > 0) {
-                narrative.push(`Key points: ${keyPhrases.join('; ')}`);
-              }
-              
-              // Add location context if available
-              if (metadata.page) {
-                narrative.push(`Page: ${metadata.page}`);
-              }
-              
-              if (metadata.section) {
-                narrative.push(`Section: ${metadata.section}`);
-              }
-              
-              // Add highlight information if available
-              if (highlights.length > 0) {
-                narrative.push(`Matching content: ${highlights[0]}`);
+              console.log(`No image URLs found in response. Trying constructed URLs: ${possibleRenderUrls.join(', ')}`);
+              pageImages = [possibleRenderUrls[0]]; // Add first URL as a test
+            }
+            
+            // If includeXray is true and X-Ray URL is available, fetch X-Ray data
+            if (includeXray && docDetails?.document?.xrayUrl) {
+              try {
+                console.log(`Fetching X-Ray data from: ${docDetails.document.xrayUrl}`);
+                const xrayResponse = await fetch(docDetails.document.xrayUrl);
+                
+                if (xrayResponse.ok) {
+                  const xrayResult: XRayResult = await xrayResponse.json();
+                  
+                  // Transform X-Ray data into a more usable format
+                  xrayData = {
+                    summary: xrayResult.fileSummary,
+                    keywords: xrayResult.fileKeywords,
+                    language: xrayResult.language,
+                    chunks: xrayResult.documentPages?.flatMap(page => 
+                      page.chunks?.map(chunk => ({
+                        id: chunk.chunk,
+                        contentType: chunk.contentType,
+                        text: chunk.text,
+                        suggestedText: chunk.suggestedText,
+                        sectionSummary: chunk.sectionSummary,
+                        pageNumbers: chunk.pageNumbers
+                      }))
+                    ).filter(Boolean)
+                  };
+                  
+                  console.log(`X-Ray data successfully retrieved with ${xrayData.chunks?.length || 0} chunks`);
+                } else {
+                  console.error(`Failed to fetch X-Ray data: ${xrayResponse.status} ${xrayResponse.statusText}`);
+                }
+              } catch (xrayErr) {
+                console.error(`Error processing X-Ray data:`, xrayErr);
               }
             }
           } catch (err) {
-            console.warn(`Error fetching enhanced details for document ${documentId}:`, err);
-            // Add error info to narrative for debugging
-            narrative = [`Could not load enhanced details for this document. ${err instanceof Error ? err.message : ''}`];
+            console.error(`Error fetching document details for ${documentId}:`, err);
           }
         }
         
-        // Add metadata from search result
-        if (result.metadata) {
-          metadata = {
-            ...metadata,
-            page: result.metadata.page,
-            section: result.metadata.section,
-            ...result.metadata
-          };
+        // Extract source URL if available
+        if (result.sourceUrl) {
+          metadata.sourceUrl = result.sourceUrl;
         }
         
-        // Create document viewing and download URLs
-        let viewUrl;
-        let downloadUrl;
-        
-        if (documentId) {
-          // Create URLs for viewing and downloading the document
-          // These URL patterns will depend on your frontend routes
-          viewUrl = `/api/groundx/documents/view/${documentId}`;
-          downloadUrl = `/api/groundx/documents/download/${documentId}`;
-        }
-        
-        // Return complete source object with all enhanced information
         return {
           id: documentId,
           fileName,
           score,
           text,
-          pageImages,
           metadata,
-          narrative,
-          keyPhrases,
-          viewUrl,
-          downloadUrl,
-          extractedSections,
-          fullExcerpt,
           highlights,
-          documentContext,
-          relevanceScore
+          pageImages,
+          thumbnails,
+          xray: xrayData
         };
       })
     );
-
-    // 4. Sort sources by relevance score for better result ordering
-    sources.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
     
-    // 5. Create document excerpts with enhanced context
-    const documentExcerpts: DocumentExcerpt[] = sources.map(source => {
-      // Determine page number
-      const pageNumber = source.metadata?.page 
-        ? parseInt(source.metadata.page as string, 10) 
-        : undefined;
+    // Track X-Ray processing time
+    xrayTime = Date.now() - xrayStartTime;
+    console.log(`X-Ray processing completed in ${xrayTime}ms`);
+
+    // 4. Prepare context for LLM from search results
+    let context = `# Search Results for Query: "${query}"\n\n`;
+    
+    enhancedResults.forEach((result, index) => {
+      context += `## Document ${index + 1}: ${result.fileName}\n`;
       
-      // Get context before/after for the best match
-      let contextBeforeAfter = { before: '', after: '' };
-      if (source.highlights && source.highlights.length > 0 && source.text) {
-        contextBeforeAfter = extractContextAroundMatch(source.text, source.highlights[0], 20);
+      if (result.metadata?.title) {
+        context += `Title: ${result.metadata.title}\n`;
       }
       
-      return {
-        id: source.id || '',
-        fileName: source.fileName || 'Unknown document',
-        excerpts: source.extractedSections || [],
-        narrative: source.narrative || [],
-        metadata: source.metadata,
-        highlights: source.highlights || [],
-        pageNumber,
-        contextBeforeAfter
-      };
+      if (result.metadata?.page) {
+        context += `Page: ${result.metadata.page}\n`;
+      }
+      
+      // Add document ID for reference
+      context += `Document ID: ${result.id}\n\n`;
+      
+      // Add X-Ray summary if available
+      if (result.xray?.summary) {
+        context += `Document Summary: ${result.xray.summary}\n\n`;
+      }
+      
+      // Add X-Ray keywords if available
+      if (result.xray?.keywords) {
+        context += `Keywords: ${result.xray.keywords}\n\n`;
+      }
+      
+      // Add highlighted matches if available
+      if (result.highlights && result.highlights.length > 0) {
+        context += `Highlighted Matches:\n`;
+        result.highlights.slice(0, 3).forEach(highlight => {
+          context += `- ${highlight}\n`;
+        });
+        context += '\n';
+      }
+      
+      // Add content
+      context += `Content:\n${result.text}\n\n`;
+      
+      // Add section summaries from X-Ray if available
+      if (result.xray?.chunks) {
+        const sectionSummaries = result.xray.chunks
+          .filter(chunk => chunk.sectionSummary)
+          .map(chunk => chunk.sectionSummary);
+          
+        if (sectionSummaries.length > 0) {
+          context += `Section Summaries:\n`;
+          sectionSummaries.slice(0, 3).forEach((summary, idx) => {
+            context += `- Section ${idx + 1}: ${summary}\n`;
+          });
+          context += '\n';
+        }
+      }
+      
+      context += '---\n\n';
     });
     
-    // 6. Prepare enhanced context for LLM from search results
-    // Create more structured context with clearer source information
-    let enhancedContext = '';
-    
-    // Generate different context formats based on responseFormat
-    if (responseFormat === 'markdown' || responseFormat === 'html') {
-      enhancedContext = `# Search Context for Query: "${query}"\n\n`;
-      
-      sources.forEach((source, index) => {
-        enhancedContext += `## Document ${index + 1}: ${source.fileName || source.id || 'Unknown'}\n`;
-        
-        if (source.metadata?.title) {
-          enhancedContext += `**Title:** ${source.metadata.title}\n`;
-        }
-        
-        if (source.metadata?.page) {
-          enhancedContext += `**Page:** ${source.metadata.page}\n`;
-        }
-        
-        // Add document ID for citation references
-        enhancedContext += `**Document ID:** ${source.id || 'Unknown'}\n\n`;
-        
-        // Add highlighted matches first if available
-        if (source.highlights && source.highlights.length > 0) {
-          enhancedContext += `**Highlighted Matches:**\n`;
-          source.highlights.slice(0, 3).forEach(highlight => {
-            enhancedContext += `> ${highlight}\n`;
-          });
-          enhancedContext += '\n';
-        }
-        
-        // Add full content
-        enhancedContext += `**Content:**\n${source.text}\n\n`;
-        
-        // Add key phrases if available
-        if (source.keyPhrases && source.keyPhrases.length > 0) {
-          enhancedContext += `**Key Points:** ${source.keyPhrases.join('; ')}\n\n`;
-        }
-        
-        enhancedContext += '---\n\n';
-      });
-    } else {
-      // Plain text format
-      enhancedContext = `Search Context for Query: "${query}"\n\n`;
-      
-      sources.forEach((source, index) => {
-        enhancedContext += `Document ${index + 1}: ${source.fileName || source.id || 'Unknown'}\n`;
-        
-        if (source.metadata?.title) {
-          enhancedContext += `Title: ${source.metadata.title}\n`;
-        }
-        
-        if (source.metadata?.page) {
-          enhancedContext += `Page: ${source.metadata.page}\n`;
-        }
-        
-        enhancedContext += `Document ID: ${source.id || 'Unknown'}\n\n`;
-        
-        // Add highlighted matches
-        if (source.highlights && source.highlights.length > 0) {
-          enhancedContext += `Highlighted Matches:\n`;
-          source.highlights.slice(0, 3).forEach(highlight => {
-            enhancedContext += `* ${highlight}\n`;
-          });
-          enhancedContext += '\n';
-        }
-        
-        // Add content
-        enhancedContext += `Content:\n${source.text}\n\n`;
-        
-        enhancedContext += '----------------\n\n';
-      });
-    }
-    
-    // 7. Create system prompt with improved instructions for different response formats
-    let systemPrompt = `You are an AI assistant answering questions based on retrieved documents.
+    // 5. Create system prompt
+    const systemPrompt = `You are an AI assistant answering questions based on retrieved documents.
 Base your answers only on the content provided below and avoid making assumptions.
 If the documents don't contain relevant information, acknowledge that you don't have enough information.
 
-${includeCitations ? `Use citations when referencing specific information from the documents.
-Citation format: ${citationFormat === 'inline' ? '[Document Name, Page X]' : 
-  citationFormat === 'footnote' ? 'with numbered footnotes¹' : 
-  'with endnote references (1)'}` : ''}
+Use citations when referencing specific information from the documents.
+Citation format: [Document Name, Page X] or simply [Document Name] if page is not available.
 
 CONTEXT FROM DOCUMENTS:
-${enhancedContext}
+${context}
 
 When responding:
-1. Be concise and focus on information from the documents
-2. ${includeCitations ? `Cite your sources using the ${citationFormat} format shown above` : 'Identify which document provides each piece of information'}
-3. If multiple documents provide the same information, cite all relevant sources
+1. Be concise and direct, focusing only on information from the documents
+2. Cite your sources using the format shown above
+3. If multiple documents provide the same information, cite the most relevant sources
 4. Only discuss information found in the documents
-5. Format your response as ${responseFormat === 'markdown' ? 'Markdown' : 
-   responseFormat === 'html' ? 'HTML' : 'plain text'} with clear sections${
-   responseFormat === 'markdown' ? ', **bold** for emphasis, and `code` for any technical terms' : 
-   responseFormat === 'html' ? ', <strong>bold</strong> for emphasis, and <code>code</code> for any technical terms' : 
-   ''}
-6. Present numerical data in ${responseFormat === 'markdown' ? 'Markdown tables' : 
-   responseFormat === 'html' ? 'HTML tables' : 'organized lists'} when appropriate
-7. If documents contradict each other, acknowledge the different perspectives
+5. Present information in clear sections with proper formatting
+6. If documents contradict each other, acknowledge the different perspectives
+7. DO NOT include "Response" or "Answer" headers in your reply - simply provide the answer directly
+8. Maintain a formal but friendly tone suitable for business contexts`;
 
-For each citation, include the document name and page number if available.`;
+    // Additional prompt for thought process if requested
+    const thoughtsSystemPrompt = includeThoughts ? `
+After analyzing the documents, write a brief thought process explaining your reasoning.
+This should explain how you arrived at your answer based on the documents.
+Format this as "Thought Process: [your reasoning]".
+This will only be shown if the user asks to see your reasoning.` : '';
 
-    // Add thought process instructions if requested with improved formatting guidance
-    if (includeThoughts) {
-      systemPrompt += `\n\nAdditionally, explain your thought process in the following format:
-1. First, think about the key aspects of the question
-2. Identify the most relevant information from the documents
-3. Organize the information to formulate a clear response
-4. Provide citations for all facts from the documents
-5. Consider alternative interpretations if the documents contain ambiguous information
+    const fullSystemPrompt = systemPrompt + thoughtsSystemPrompt;
 
-Format your entire response as a JSON object with two fields:
-{
-  "answer": "Your complete answer with citations here",
-  "thoughts": ["Step 1: ...", "Step 2: ...", "Step 3: ..."]
-}`;
-    }
-
-    // 8. Prepare conversation history for OpenAI with type validation
+    // 6. Prepare conversation history for OpenAI
     const conversationHistory: ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt } as ChatCompletionSystemMessageParam
+      { role: 'system', content: fullSystemPrompt } as ChatCompletionSystemMessageParam
     ];
     
-    // Include recent conversation history if provided with validation
+    // Include recent conversation history if provided
     if (Array.isArray(messages) && messages.length > 0) {
-      // Include up to 10 recent messages for more context (increased from 8)
-      const recentMessages = messages.slice(-10, -1);
+      // Include up to 5 recent messages for context
+      const recentMessages = messages.slice(-5);
       
-      // Only keep user, assistant, and system messages to avoid the name/tool_call_id requirements
       const filteredMessages = recentMessages.filter(msg => 
         msg && typeof msg === 'object' && 
         ['user', 'assistant', 'system'].includes(msg.role) &&
         typeof msg.content === 'string'
       );
       
-      // Map messages to their appropriate types
       const typedMessages: ChatCompletionMessageParam[] = filteredMessages.map(msg => {
         if (msg.role === 'user') {
           return { role: 'user', content: msg.content } as ChatCompletionUserMessageParam;
@@ -910,14 +582,13 @@ Format your entire response as a JSON object with two fields:
 
     console.log('Sending to OpenAI with conversation history length:', conversationHistory.length);
     
-    // 9. Generate response using OpenAI with configurable parameters
+    // 7. Generate response using OpenAI
     const llmStartTime = Date.now();
     const completion = await openai.chat.completions.create({
-      model: model, // Use configurable model
+      model: model,
       messages: conversationHistory,
       temperature: temperature,
       max_tokens: maxTokens,
-      top_p: 0.95,
     }).catch(error => {
       console.error('OpenAI API error:', error);
       throw new Error(`Failed to generate response: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -930,134 +601,88 @@ Format your entire response as a JSON object with two fields:
       throw new Error('Invalid response from OpenAI');
     }
 
-    const response = completion.choices[0].message.content;
+    const responseContent = completion.choices[0].message.content;
     
-    // 10. Process the response to extract thoughts and parse citations
-    let finalResponse = response;
-    let thoughts: string[] | null = null;
-    let citations: Citation[] = [];
+    // Extract thought process if included
+    let responseText = responseContent;
+    let thoughtProcess = undefined;
     
-    // Parse the response if it's JSON format with thoughts
-    if (includeThoughts && response) {
-      try {
-        const jsonResponse = JSON.parse(response);
-        if (jsonResponse?.answer && Array.isArray(jsonResponse?.thoughts)) {
-          finalResponse = jsonResponse.answer;
-          thoughts = jsonResponse.thoughts;
-        }
-      } catch (e) {
-        console.warn('Failed to parse JSON response with thoughts', e);
-        // Use the original response, and create a more detailed thought process
-        thoughts = [
-          "Analyzed the search results to find relevant information",
-          "Identified key documents based on relevance scores",
-          "Extracted important context from " + sources.length + " sources",
-          "Recognized key sections and metadata in the documents",
-          "Formulated a response based on document content",
-          "Added citations to reference the source documents"
-        ];
+    if (includeThoughts && responseContent.includes("Thought Process:")) {
+      const thoughtMatch = responseContent.match(/Thought Process:\s*([\s\S]+)/i);
+      if (thoughtMatch && thoughtMatch[1]) {
+        thoughtProcess = thoughtMatch[1].trim();
+        
+        // Remove the thought process from the main response
+        responseText = responseContent.replace(/\s*Thought Process:\s*[\s\S]+/i, '').trim();
       }
     }
     
-    // Extract citations if requested
-    if (includeCitations) {
-      // For inline citations [Document Name, Page X]
-      if (citationFormat === 'inline') {
-        const citationRegex = /\[([\w\s\-]+)(?:,\s*(?:Page|page|p\.)\s*(\d+))?\]/g;
-        let match;
-        while ((match = citationRegex.exec(finalResponse)) !== null) {
-          const docName = match[1].trim();
-          const pageNum = match[2] ? parseInt(match[2], 10) : undefined;
-          
-          // Find the source document
-          const source = sources.find(s => 
-            s.fileName === docName || 
-            (s.metadata?.title && s.metadata.title === docName)
-          );
-          
-          if (source) {
-            citations.push({
-              documentId: source.id || '',
-              fileName: source.fileName || docName,
-              pageNumber: pageNum,
-              text: match[0],
-              relevance: source.relevanceScore || 0
-            });
-          }
-        }
-      }
-      // For footnotes/endnotes with numbers
-      else {
-        const citationRegex = /(?:(?:\[(\d+)\])|(?:\((\d+)\))|(?:(\d+)(?:¹|²|³|⁴|⁵|⁶|⁷|⁸|⁹|⁰|†)))/g;
-        let match;
-        while ((match = citationRegex.exec(finalResponse)) !== null) {
-          const index = (match[1] || match[2] || match[3]) ? 
-            parseInt(match[1] || match[2] || match[3], 10) - 1 : -1;
-          
-          if (index >= 0 && index < sources.length) {
-            const source = sources[index];
-            citations.push({
-              documentId: source.id || '',
-              fileName: source.fileName || `Document ${index + 1}`,
-              pageNumber: source.metadata?.page ? parseInt(source.metadata.page as string, 10) : undefined,
-              text: match[0],
-              relevance: source.relevanceScore || 0
-            });
-          }
-        }
-      }
-    }
-    
-    // 11. Format content for the supporting content component with more detail
-    const supportingContent = {
-      text: sources.map(source => {
-        let content = `${source.fileName || source.id || 'Unknown document'}`;
-        
-        if (source.metadata?.page) {
-          content += ` (Page ${source.metadata.page})`;
-        }
-        
-        if (source.metadata?.title) {
-          content += `: ${source.metadata.title}`;
-        }
-        
-        // Include highlights if available
-        if (source.highlights && source.highlights.length > 0) {
-          content += `\nHighlights: ${source.highlights.join(' ... ')}`;
-        }
-        
-        content += `\n${source.text}`;
-        
-        return content;
-      })
-    };
-    
-    // 12. Return comprehensive response with all enhanced data
+    // 8. Return clean response
     const totalTime = Date.now() - startTime;
-    return NextResponse.json({
+    
+    // Format document excerpts for direct compatibility with Answer component
+    const documentExcerpts = enhancedResults.map(result => ({
+      id: result.id,
+      documentId: result.id,
+      fileName: result.fileName,
+      score: result.score,
+      text: result.text,
+      excerpts: [result.text],
+      highlights: result.highlights,
+      pageImages: result.pageImages,
+      thumbnails: result.thumbnails,
+      xray: result.xray,
+      metadata: result.metadata
+    }));
+    
+    // Final response with clearly structured sources
+    const finalResponse = {
       success: true,
       timestamp: new Date().toISOString(),
       query: query,
-      response: finalResponse,
+      content: responseText, // Use cleaned response without thought process
+      thoughts: thoughtProcess, // Include separate thought process if available
+      documentExcerpts: documentExcerpts, // Add formatted document excerpts
       searchResults: {
-        count: searchResponse.search.results.length,
-        sources: sources.map(({ id, fileName, score }) => ({ id, fileName, score }))
+        count: enhancedResults.length,
+        sources: enhancedResults.map(({ id, fileName, text, metadata, highlights, pageImages, thumbnails, xray }) => {
+          return { 
+            id, 
+            fileName, 
+            text, 
+            metadata: { 
+              ...metadata, 
+              hasImages: pageImages && pageImages.length > 0,
+              pageCount: pageImages?.length || 0
+            },
+            pageImages: pageImages || [], 
+            thumbnails: thumbnails || [],
+            highlights: highlights || [],
+            xray: xray
+          };
+        })
       },
-      thoughts,
-      supportingContent,
-      enhancedResults: {
-        totalResults: sources.length,
-        sources
-      },
-      documentExcerpts,
-      citations: includeCitations ? citations : undefined,
       executionTime: {
         totalMs: totalTime,
         searchMs: searchTime,
-        llmMs: llmTime
-      },
-      modelUsed: model
-    } as RagResponse);
+        llmMs: llmTime,
+        xrayMs: xrayTime
+      }
+    };
+    
+    // Debug logging of final response structure
+    console.log('Final response sources summary:', 
+      finalResponse.searchResults.sources.map(s => ({
+        id: s.id,
+        fileName: s.fileName,
+        pageImagesCount: s.pageImages?.length || 0,
+        hasPageImages: Boolean(s.pageImages?.length),
+        hasXray: Boolean(s.xray),
+        xrayChunks: s.xray?.chunks?.length || 0
+      }))
+    );
+    
+    return NextResponse.json(finalResponse as RagResponse);
     
   } catch (error: any) {
     const totalTime = Date.now() - startTime;
@@ -1066,22 +691,357 @@ Format your entire response as a JSON object with two fields:
       { 
         success: false, 
         timestamp: new Date().toISOString(),
-        query: error.query || '', 
         error: error.message || 'RAG processing failed',
-        errorDetails: error instanceof Error ? {
-          name: error.name,
-          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        } : undefined,
-        response: '',
+        content: '',
         searchResults: { count: 0, sources: [] },
-        supportingContent: { text: [] },
-        enhancedResults: { totalResults: 0, sources: [] },
         executionTime: {
           totalMs: totalTime,
-          searchMs: 0,
-          llmMs: 0
+          searchMs: searchTime,
+          llmMs: 0,
+          xrayMs: xrayTime
         }
       } as RagResponse,
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * GET handler to test document rendering and X-Ray availability
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  try {
+    const { searchParams } = new URL(request.url);
+    const documentId = searchParams.get('documentId');
+    const xray = searchParams.get('xray') === 'true';
+    
+    if (!documentId) {
+      return NextResponse.json({ error: 'documentId is required as a query parameter' }, { status: 400 });
+    }
+    
+    if (!groundxClient) {
+      return NextResponse.json({ error: 'GroundX client not initialized' }, { status: 500 });
+    }
+    
+    console.log(`Testing document retrieval for ${documentId}, include X-Ray: ${xray}`);
+    
+    // Get document details
+    const docDetails = await groundxClient.documents.get(documentId) as DocumentDetail;
+    
+    // Log raw response for debugging
+    console.log('Raw document details:', JSON.stringify(docDetails, null, 2));
+    
+    // Extract any image URLs from response
+    let responseImages: string[] = [];
+    let responseThumbnails: string[] = [];
+    
+    if (docDetails?.document?.pages) {
+      responseImages = docDetails.document.pages
+        .filter(page => Boolean(page.imageUrl))
+        .map(page => page.imageUrl as string);
+        
+      responseThumbnails = docDetails.document.pages
+        .filter(page => Boolean(page.thumbnailUrl))
+        .map(page => page.thumbnailUrl as string);
+    }
+    
+    // Try some potential render URL patterns as a test
+    const apiKey = process.env.GROUNDX_API_KEY || '';
+    const testRenderUrls = [
+      `${GROUNDX_BASE_URL}/documents/${documentId}/render?apiKey=${apiKey}`,
+      `${GROUNDX_BASE_URL}/documents/${documentId}/preview?apiKey=${apiKey}`,
+      `${GROUNDX_BASE_URL}/documents/${documentId}/pages/1/render?apiKey=${apiKey}`,
+      `${GROUNDX_BASE_URL}/documents/${documentId}/pages/1/image?apiKey=${apiKey}`,
+      `${GROUNDX_BASE_URL}/documents/${documentId}/thumbnail?apiKey=${apiKey}`
+    ];
+    
+    // Check if X-Ray data is available and requested
+    let xrayData = null;
+    if (xray && docDetails?.document?.xrayUrl) {
+      try {
+        console.log(`Fetching X-Ray data from: ${docDetails.document.xrayUrl}`);
+        const xrayResponse = await fetch(docDetails.document.xrayUrl);
+        
+        if (xrayResponse.ok) {
+          xrayData = await xrayResponse.json();
+          console.log(`X-Ray data successfully retrieved`);
+        } else {
+          console.error(`Failed to fetch X-Ray data: ${xrayResponse.status} ${xrayResponse.statusText}`);
+        }
+      } catch (err) {
+        console.error(`Error fetching X-Ray data:`, err);
+      }
+    }
+    
+    return NextResponse.json({
+      success: true,
+      documentId,
+      fileName: docDetails?.document?.fileName || 'Unknown',
+      mimeType: docDetails?.document?.mimeType || 'Unknown',
+      pageCount: docDetails?.document?.pages?.length || 0,
+      responseImages: responseImages,
+      responseThumbnails: responseThumbnails,
+      testRenderUrls: testRenderUrls,
+      hasXray: Boolean(docDetails?.document?.xrayUrl),
+      xrayUrl: docDetails?.document?.xrayUrl,
+      xrayData: xrayData ? {
+        summary: xrayData.fileSummary,
+        keywords: xrayData.fileKeywords,
+        language: xrayData.language,
+        chunkCount: xrayData.documentPages?.reduce((acc, page) => acc + (page.chunks?.length || 0), 0) || 0
+      } : null
+    });
+    
+  } catch (error: any) {
+    console.error('Document test error:', error);
+    return NextResponse.json({ 
+      error: error.message || 'Unknown error',
+      success: false
+    }, { status: 500 });
+  }
+}
+
+/**
+ * PUT handler to upload a document and trigger X-Ray processing
+ */
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const startTime = Date.now();
+  
+  try {
+    // Validate API client
+    if (!groundxClient) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          timestamp: new Date().toISOString(),
+          error: 'GroundX client not properly initialized'
+        },
+        { status: 500 }
+      );
+    }
+
+    // Parse and validate request body
+    let body;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          timestamp: new Date().toISOString(),
+          error: 'Invalid JSON in request body'
+        },
+        { status: 400 }
+      );
+    }
+    
+    const { 
+      bucketId,
+      fileName,
+      filePath,
+      fileContent,
+      fileType = 'pdf',
+      waitForCompletion = false,
+      timeoutMs = 60000 // Default timeout of 1 minute if waiting for completion
+    } = body;
+    
+    // Validate request
+    if (!bucketId) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          timestamp: new Date().toISOString(),
+          error: 'bucketId is required'
+        },
+        { status: 400 }
+      );
+    }
+    
+    if (!fileName && !filePath && !fileContent) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          timestamp: new Date().toISOString(),
+          error: 'Either fileName+filePath or fileContent is required for document upload'
+        },
+        { status: 400 }
+      );
+    }
+    
+    try {
+      console.log(`Uploading document to bucket ${bucketId} for X-Ray processing`);
+      
+      let ingestResponse;
+      
+      // Handle file upload based on provided parameters
+      if (filePath && fileName) {
+        // Local file upload
+        ingestResponse = await groundxClient.ingest(
+          [{
+            bucketId: bucketId.toString(),
+            fileName: fileName,
+            filePath: filePath,
+            fileType: fileType
+          }]
+        );
+      } else if (fileContent) {
+        // Base64 or raw content upload
+        ingestResponse = await groundxClient.ingest(
+          [{
+            bucketId: bucketId.toString(),
+            fileName: fileName || 'uploaded_document',
+            fileContent: fileContent,
+            fileType: fileType
+          }]
+        );
+      } else {
+        return NextResponse.json(
+          { 
+            success: false, 
+            timestamp: new Date().toISOString(),
+            error: 'Invalid file upload parameters'
+          },
+          { status: 400 }
+        );
+      }
+      
+      if (!ingestResponse?.ingest?.processId) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            timestamp: new Date().toISOString(),
+            error: 'Failed to initiate document processing'
+          },
+          { status: 500 }
+        );
+      }
+      
+      const processId = ingestResponse.ingest.processId;
+      console.log(`Document upload initiated with process ID: ${processId}`);
+      
+      // If not waiting for completion, return the process ID
+      if (!waitForCompletion) {
+        return NextResponse.json({
+          success: true,
+          timestamp: new Date().toISOString(),
+          status: 'processing',
+          document: {
+            id: ingestResponse.ingest.documentId,
+          },
+          processId: processId,
+          message: 'Document upload initiated. X-Ray processing will be available once complete.'
+        });
+      }
+      
+      // If waiting for completion, poll until complete or timeout
+      console.log(`Waiting for X-Ray processing to complete (timeout: ${timeoutMs}ms)...`);
+      
+      const startWaitTime = Date.now();
+      let documentId = ingestResponse.ingest.documentId;
+      let status = 'processing';
+      
+      while (status === 'processing' && (Date.now() - startWaitTime) < timeoutMs) {
+        // Wait 3 seconds between polls
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Check processing status
+        const statusResponse = await groundxClient.documents.getProcessingStatusById(processId);
+        
+        if (!statusResponse?.ingest?.status) {
+          return NextResponse.json(
+            { 
+              success: false, 
+              timestamp: new Date().toISOString(),
+              error: 'Failed to retrieve processing status'
+            },
+            { status: 500 }
+          );
+        }
+        
+        status = statusResponse.ingest.status;
+        console.log(`Current processing status: ${status}`);
+        
+        // If document ID wasn't provided initially, get it from the status
+        if (!documentId && statusResponse.ingest.documentId) {
+          documentId = statusResponse.ingest.documentId;
+        }
+        
+        if (status === 'complete' || status === 'error') {
+          break;
+        }
+      }
+      
+      // Check if processing timed out
+      if (status === 'processing') {
+        return NextResponse.json({
+          success: true,
+          timestamp: new Date().toISOString(),
+          status: 'processing',
+          document: {
+            id: documentId,
+          },
+          processId: processId,
+          message: 'Processing timeout - X-Ray parsing is still in progress'
+        });
+      }
+      
+      // If processing completed with error
+      if (status === 'error') {
+        return NextResponse.json(
+          { 
+            success: false, 
+            timestamp: new Date().toISOString(),
+            status: 'error',
+            document: {
+              id: documentId,
+            },
+            processId: processId,
+            error: 'X-Ray processing failed'
+          },
+          { status: 500 }
+        );
+      }
+      
+      // If processing completed successfully, get the document details
+      const docDetails = await groundxClient.documents.get(documentId) as DocumentDetail;
+      
+      return NextResponse.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        status: 'complete',
+        document: {
+          id: documentId,
+          fileName: docDetails?.document?.fileName || fileName || 'uploaded_document',
+          fileType: fileType,
+          hasXray: Boolean(docDetails?.document?.xrayUrl),
+          xrayUrl: docDetails?.document?.xrayUrl
+        },
+        processId: processId,
+        message: 'Document uploaded and X-Ray processing completed successfully',
+        executionTime: {
+          totalMs: Date.now() - startTime
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('Error during document upload or processing:', error);
+      return NextResponse.json(
+        { 
+          success: false, 
+          timestamp: new Date().toISOString(),
+          error: `Document processing failed: ${error.message || 'Unknown error'}`
+        },
+        { status: 500 }
+      );
+    }
+  } catch (error: any) {
+    console.error('Unhandled error in PUT handler:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        timestamp: new Date().toISOString(),
+        error: `Unhandled error: ${error.message || 'Unknown error'}`
+      },
       { status: 500 }
     );
   }
