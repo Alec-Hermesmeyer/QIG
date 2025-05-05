@@ -168,7 +168,7 @@ export function RAGControl({
           onClick={toggleRAG}
         >
           {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-          <span>RAG: {enabled ? 'ON' : 'OFF'}</span>
+          <span>Knowledge Search</span>
         </Button>
         
         <Skeleton className="h-9 w-[250px]" />
