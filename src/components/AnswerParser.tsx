@@ -304,7 +304,8 @@ const extractCitationsWithMetadata = (content: string, answer: any): CitationInf
   const seenIds = new Set<string>();
   
   // 1. Extract citations from content with bracket notation [file.pdf]
-  const bracketRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv|json|js|php|html|xml))\]/gi;
+  // Enhanced regex to better handle filenames with spaces and special characters
+  const bracketRegex = /\[([^[\]]+\.(pdf|docx|xlsx|txt|csv|json|js|php|html|xml))\]/gi;
   
   for (const match of [...content.matchAll(bracketRegex)]) {
     const id = match[1];
@@ -320,7 +321,8 @@ const extractCitationsWithMetadata = (content: string, answer: any): CitationInf
   }
   
   // 2. Extract citations with quotation patterns "text" (file.pdf)
-  const parenthesisRegex = /"[^"]+"\s+\(([\w\s-]+\.(pdf|docx|xlsx|txt|csv|json|js|php|html|xml))\)/gi;
+  // Enhanced regex to better handle filenames with spaces and special characters
+  const parenthesisRegex = /"[^"]+"\s+\(([^()]+\.(pdf|docx|xlsx|txt|csv|json|js|php|html|xml))\)/gi;
   
   for (const match of [...content.matchAll(parenthesisRegex)]) {
     const id = match[1];
@@ -387,7 +389,7 @@ const extractCitationsWithMetadata = (content: string, answer: any): CitationInf
  */
 const extractAntmlCitationsWithMetadata = (content: string, answer: any): CitationInfo[] => {
   const citations: CitationInfo[] = [];
-  const regex = /]*index="([^"]+)"[^>]*>(.*?)<\/antml:cite>/gi;
+  const regex = /]*>(.*?)<\/antml:cite>/gi;
   let match;
 
   while ((match = regex.exec(content)) !== null) {
@@ -534,7 +536,7 @@ const formatContentWithEnhancedCitations = (content: string, citations: Citation
 
   // 1. Handle  tags with improved formatting
   formatted = formatted.replace(
-    /]*index="([^"]+)"[^>]*>(.*?)<\/antml:cite>/gi,
+    /]*>(.*?)<\/antml:cite>/gi,
     (_, index, text) => {
       const docIndexStr = index.split("-")[0];
       const docIndex = parseInt(docIndexStr);
@@ -567,7 +569,7 @@ const formatContentWithEnhancedCitations = (content: string, citations: Citation
     
     formatted = formatted.replace(
       regex,
-      `<sup class="text-blue-600 font-bold cursor-pointer citation-number" data-citation-index="${i + 1}" data-document-id="${citation.id}">[${i + 1}]</sup>`
+      `<span class="text-blue-600 cursor-pointer citation-link" data-citation-index="${i + 1}" data-document-id="${citation.id}">[${fileName}]</span>`
     );
     
     // Also match "text" (filename.ext) pattern
@@ -594,15 +596,45 @@ const formatContentWithEnhancedCitations = (content: string, citations: Citation
       return `<sup class="text-blue-600 font-bold cursor-pointer citation-number" data-citation-index="${idx}" data-document-id="${citation.id}">[${idx}]</sup>`;
     }
   );
+  
+  // 4. Extra check: directly handle specific citation patterns
+  // This ensures that files like [MLIT AGJV Fully Executed Contract.pdf] will be formatted correctly
+  const directCitationRegex = /\[(.*?\.(pdf|docx|xlsx|txt|csv|json|js|php|html|xml))\]/gi;
+  formatted = formatted.replace(
+    directCitationRegex,
+    (match, fileName) => {
+      // Check if this citation is already in our list
+      const citationIndex = citations.findIndex(c => c.fileName === fileName);
+      
+      if (citationIndex !== -1) {
+        // If it's already formatted, return as is (to avoid double formatting)
+        if (match.includes('class="text-blue-600')) return match;
+        
+        // Otherwise, format it
+        return `<span class="text-blue-600 cursor-pointer citation-link" data-citation-index="${citationIndex + 1}" data-document-id="${citations[citationIndex].id}">${match}</span>`;
+      }
+      
+      // If not found in citations, add it
+      const newIndex = citations.length + 1;
+      citations.push({
+        id: fileName,
+        fileName,
+        index: newIndex,
+        text: match
+      });
+      
+      return `<span class="text-blue-600 cursor-pointer citation-link" data-citation-index="${newIndex}" data-document-id="${fileName}">${match}</span>`;
+    }
+  );
 
-  // 4. Handle Markdown links
+  // 5. Handle Markdown links
   formatted = formatted.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (_, text, url) =>
       `<a href="${encodeURI(url)}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${text}</a>`
   );
   
-  // 5. Format basic Markdown for better readability
+  // 6. Format basic Markdown for better readability
   formatted = formatMarkdown(formatted);
 
   return formatted;
@@ -691,7 +723,7 @@ export const setupCitationClickHandlers = (
   if (!container) return;
   
   // Find all citation numbers and attach click handlers
-  const citationNumbers = container.querySelectorAll('.citation-number');
+  const citationNumbers = container.querySelectorAll('.citation-number, .citation-link');
   
   citationNumbers.forEach(element => {
     element.addEventListener('click', (e) => {

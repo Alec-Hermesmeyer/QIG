@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, X, FileIcon, FileText, Table, Image, List, Code, Calendar, DollarSign, BookOpen, AlertCircle, Activity, Zap, Loader, Globe } from "lucide-react";
 import { getDocumentType, formatDate } from "./Answer";
 import { Source, XRayChunk } from "@/types/types";
 
@@ -14,44 +14,48 @@ interface DocumentDetailProps {
   themeStyles: any;
   getRelevanceExplanation: (source: Source) => string;
   onCitationClicked: (id: string) => void;
+  // New props for X-Ray functionality
+  onStartXRayAnalysis?: (documentId: string) => Promise<void>;
+  isXRayLoading?: boolean;
+  documentViewerUrl?: string; // Make the URL configurable instead of hardcoded
 }
 
 // Helper function to get document icon
 const getDocumentIcon = (fileName?: string, type?: string) => {
   const docType = type || getDocumentType(fileName);
   switch (docType?.toLowerCase()) {
-    case 'pdf': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>;
-    case 'word': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>;
-    case 'spreadsheet': case 'csv': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="12" x2="16" y2="12"></line><line x1="8" y1="16" x2="16" y2="16"></line></svg>;
-    case 'code': case 'json': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-600"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>;
-    case 'text': case 'txt': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="16" y2="17"></line><line x1="8" y1="9" x2="9" y2="9"></line></svg>;
-    case 'web': case 'html': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-600"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>;
-    case 'image': return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-600"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
-    default: return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>;
+    case 'pdf': return <FileText className="text-red-600" size={16} />;
+    case 'word': return <FileText className="text-blue-600" size={16} />;
+    case 'spreadsheet': case 'csv': return <Table className="text-green-600" size={16} />;
+    case 'code': case 'json': return <Code className="text-yellow-600" size={16} />;
+    case 'text': case 'txt': return <FileText className="text-gray-600" size={16} />;
+    case 'web': case 'html': return <Globe className="text-purple-600" size={16} />;
+    case 'image': return <Image className="text-pink-600" size={16} />;
+    default: return <FileIcon className="text-gray-600" size={16} />;
   }
 };
 
 // Helper function to get content type icon
 const getContentTypeIcon = (contentType?: string[]) => {
   if (!contentType || contentType.length === 0) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="4" x2="3" y2="4"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="20" x2="3" y2="20"></line></svg>;
+    return <FileText size={12} />;
   
   if (contentType.includes('table')) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>;
+    return <Table size={12} />;
   
   if (contentType.includes('figure')) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>;
+    return <Image size={12} />;
   
   if (contentType.includes('list')) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>;
+    return <List size={12} />;
   
   if (contentType.includes('code')) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>;
+    return <Code size={12} />;
   
   if (contentType.includes('json')) 
-    return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M10.3 10.18a1.2 1.2 0 0 0-1.6 1.72L10 13.36a1.2 1.2 0 1 0 2.05-1.23L10.73 11"></path><path d="M15.5 15.18a1.2 1.2 0 1 0-1.6 1.72l1.3 1.46a1.2 1.2 0 0 0 2.05-1.23l-1.32-1.13"></path></svg>;
+    return <FileIcon size={12} />;
   
-  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="4" x2="3" y2="4"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="20" x2="3" y2="20"></line></svg>;
+  return <FileText size={12} />;
 };
 
 const DocumentDetail: React.FC<DocumentDetailProps> = ({
@@ -62,8 +66,15 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   setActiveXrayChunk,
   themeStyles,
   getRelevanceExplanation,
-  onCitationClicked
+  onCitationClicked,
+  onStartXRayAnalysis,
+  isXRayLoading = false,
+  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf" // Default URL if not provided
 }) => {
+  // Local loading state for better UX
+  const [localXRayLoading, setLocalXRayLoading] = useState(false);
+  const isLoading = isXRayLoading || localXRayLoading;
+
   // Handle potentially string or number id types
   const documentId = document.id ? String(document.id) : '';
   // Handle required fileName in case it's undefined in the updated type
@@ -71,14 +82,29 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   // Handle potentially empty excerpts array in the updated type
   const excerpts = document.excerpts || [];
 
-  // HARDCODED URL for document viewing
+  // Function to open document in viewer
   const openDocument = () => {
-    window.open("https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf", "_blank");
+    window.open(documentViewerUrl, "_blank", "noopener,noreferrer");
   };
 
   // Helper function for "View in Document" button - still using onCitationClicked
   const viewInDocument = (id: string) => {
     onCitationClicked(id);
+  };
+
+  // Function to handle X-Ray analysis start
+  const handleStartXRayAnalysis = async () => {
+    if (!onStartXRayAnalysis || !documentId || isLoading) return;
+    
+    try {
+      setLocalXRayLoading(true);
+      await onStartXRayAnalysis(documentId);
+      // The parent component will handle updating the document with new X-Ray data
+    } catch (error) {
+      console.error("Error starting X-Ray analysis:", error);
+    } finally {
+      setLocalXRayLoading(false);
+    }
   };
 
   return (
@@ -117,7 +143,11 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
             </span>
           )}
         </div>
-        <button onClick={() => setCurrentDocumentId(null)} className="p-1">
+        <button 
+          onClick={() => setCurrentDocumentId(null)} 
+          className="p-1"
+          aria-label="Close document details"
+        >
           <X size={16} />
         </button>
       </div>
@@ -125,6 +155,85 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
       <div className="mb-3 text-xs opacity-70">
         Document ID: {documentId}
       </div>
+      
+      {/* X-Ray Analysis Button - show when X-Ray is not available */}
+      {!document.xray && !isLoading && onStartXRayAnalysis && (
+        <div 
+          className="mb-4 p-3 rounded-lg border cursor-pointer hover:shadow-md transition-all"
+          style={{ 
+            backgroundColor: `${themeStyles.xrayColor}05`,
+            borderColor: `${themeStyles.xrayColor}30`
+          }}
+          onClick={handleStartXRayAnalysis}
+          role="button"
+          tabIndex={0}
+          aria-label="Start X-Ray analysis for this document"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <Zap 
+                size={20} 
+                className="mr-2" 
+                style={{ color: themeStyles.xrayColor }}
+              />
+              <div>
+                <h4 
+                  className="text-sm font-medium"
+                  style={{ color: themeStyles.xrayColor }}
+                >
+                  Start X-Ray Analysis
+                </h4>
+                <p className="text-xs opacity-80 mt-1">
+                  Generate advanced document insights with AI, including content summaries, tables, figures, and structured data extraction
+                </p>
+              </div>
+            </div>
+            <div 
+              className="rounded-full p-2"
+              style={{ backgroundColor: `${themeStyles.xrayColor}15` }}
+            >
+              <Activity size={16} style={{ color: themeStyles.xrayColor }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* X-Ray Loading State */}
+      {isLoading && (
+        <div 
+          className="mb-4 p-3 rounded-lg border"
+          style={{ 
+            backgroundColor: `${themeStyles.xrayColor}05`,
+            borderColor: `${themeStyles.xrayColor}30`
+          }}
+        >
+          <div className="flex items-center">
+            <div className="animate-spin mr-3">
+              <Loader size={20} style={{ color: themeStyles.xrayColor }} />
+            </div>
+            <div>
+              <h4 
+                className="text-sm font-medium"
+                style={{ color: themeStyles.xrayColor }}
+              >
+                X-Ray Analysis in Progress
+              </h4>
+              <p className="text-xs opacity-80 mt-1">
+                Analyzing document content and extracting insights. This may take a few moments...
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5 dark:bg-gray-700">
+            <div 
+              className="h-1.5 rounded-full animate-pulse" 
+              style={{ 
+                width: '60%', 
+                backgroundColor: themeStyles.xrayColor 
+              }}
+            ></div>
+          </div>
+        </div>
+      )}
       
       {/* X-Ray Summary */}
       {document.xray?.summary && (
@@ -139,12 +248,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
             className="text-sm font-medium mb-2 flex items-center"
             style={{ color: themeStyles.xrayColor }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-              <path d="M12 12 6 6"/>
-              <path d="M12 6v6"/>
-              <path d="M21 9V3h-6"/>
-            </svg>
+            <Zap size={16} className="mr-2" />
             X-Ray Document Summary
           </h4>
           <p className="text-sm">{document.xray.summary}</p>
@@ -165,13 +269,34 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
               ))}
             </div>
           )}
+
+          {/* View full X-Ray Analysis button */}
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => {
+                setActiveTab('xray');
+                setActiveXrayChunk(null);
+              }}
+              className="text-xs px-2 py-1 rounded flex items-center"
+              style={{ 
+                backgroundColor: `${themeStyles.xrayColor}15`,
+                color: themeStyles.xrayColor
+              }}
+            >
+              <Activity size={12} className="mr-1" />
+              View Full X-Ray Analysis
+            </button>
+          </div>
         </div>
       )}
       
       {/* Document images if available */}
       {document.pageImages && document.pageImages.length > 0 && (
         <div className="mb-4">
-          <h4 className="text-sm font-medium mb-2">Document Pages:</h4>
+          <h4 className="text-sm font-medium mb-2 flex items-center">
+            <Image size={16} className="mr-2" />
+            Document Pages
+          </h4>
           <div className="flex flex-wrap gap-2">
             {document.pageImages.slice(0, 6).map((imageUrl, index) => (
               <div 
@@ -188,6 +313,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                   src={imageUrl} 
                   alt={document.imageLabels?.[index] || `Page ${index + 1}`}
                   className="w-full h-full object-cover object-top"
+                  loading="lazy"
                 />
                 <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200" />
                 <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
@@ -226,13 +352,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
             className="text-sm font-medium mb-2 flex items-center"
             style={{ color: themeStyles.xrayColor }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-              <rect width="18" height="18" x="3" y="3" rx="2" />
-              <path d="M9 3v18" />
-              <path d="M15 3v18" />
-              <path d="M3 9h18" />
-              <path d="M3 15h18" />
-            </svg>
+            <Table size={16} className="mr-2" />
             X-Ray Content Chunks
           </h4>
           
@@ -286,7 +406,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                 setActiveTab('xray');
                 setActiveXrayChunk(null);
               }}
-              className="text-xs px-2 py-1 rounded"
+              className="text-xs px-2 py-1 rounded flex items-center"
               style={{ 
                 backgroundColor: `${themeStyles.xrayColor}10`,
                 color: themeStyles.xrayColor
@@ -302,11 +422,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
       {excerpts.length > 0 ? (
         <div>
           <h4 className="text-sm font-medium mb-3 flex items-center">
-            <span className="mr-2">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-            </span>
+            <BookOpen size={16} className="mr-2" />
             Excerpts from {fileName}
           </h4>
           
@@ -346,12 +462,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                     }}
                   >
                     <div className="flex items-center mb-1 text-xs font-medium" style={{ color: themeStyles.primaryColor }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                        <path d="M11.467 11.467 3.799 19.135a2.5 2.5 0 0 0 3.536 3.536l7.668-7.668"></path>
-                        <path d="M18.006 4.828 3.799 19.035"></path>
-                        <path d="m23 4-6 2 2-6"></path>
-                        <path d="m13 19 8-8"></path>
-                      </svg>
+                      <Activity size={12} className="mr-1" />
                       Highlighted Match
                     </div>
                     <div className="text-sm italic ml-4" style={{ color: `${themeStyles.primaryColor}` }}>
@@ -373,10 +484,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                           color: themeStyles.secondaryColor
                         }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                          <path d="M12 2v20"></path>
-                          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                        </svg>
+                        <DollarSign size={10} className="mr-1" />
                         Relevance: {(document.score * 100).toFixed(1)}%
                       </span>
                     )}
@@ -389,9 +497,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                           color: themeStyles.primaryColor
                         }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path>
-                        </svg>
+                        <BookOpen size={10} className="mr-1" />
                         Page {document.metadata.page}
                       </span>
                     )}
@@ -404,12 +510,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                           color: themeStyles.textColor
                         }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                          <rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect>
-                          <line x1="16" x2="16" y1="2" y2="6"></line>
-                          <line x1="8" x2="8" y1="2" y2="6"></line>
-                          <line x1="3" x2="21" y1="10" y2="10"></line>
-                        </svg>
+                        <Calendar size={10} className="mr-1" />
                         {formatDate(document.datePublished)}
                       </span>
                     )}
@@ -425,11 +526,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                       color: themeStyles.primaryColor
                     }}
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                      <polyline points="15 3 21 3 21 9"></polyline>
-                      <line x1="10" x2="21" y1="14" y2="3"></line>
-                    </svg>
+                    <ExternalLink size={12} className="mr-1" />
                     View in Document
                   </button>
                 </div>
@@ -439,11 +536,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
         </div>
       ) : (
         <div className="flex items-center justify-center p-6 rounded-lg border border-dashed text-sm italic" style={{ borderColor: themeStyles.borderColor, color: `${themeStyles.textColor}70` }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 opacity-70">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
+          <AlertCircle size={18} className="mr-2 opacity-70" />
           No excerpts available for this document
         </div>
       )}
@@ -459,7 +552,22 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
         <p>{getRelevanceExplanation(document)}</p>
       </div>
       
-      <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex justify-end space-x-2">
+        {!document.xray && !isLoading && onStartXRayAnalysis && (
+          <button
+            onClick={handleStartXRayAnalysis}
+            className="text-sm px-3 py-1.5 rounded flex items-center"
+            style={{ 
+              backgroundColor: `${themeStyles.xrayColor}15`,
+              color: themeStyles.xrayColor
+            }}
+            disabled={isLoading}
+          >
+            <Zap size={14} className="mr-1.5" />
+            {isLoading ? 'Analyzing...' : 'Analyze with X-Ray'}
+          </button>
+        )}
+        
         <button
           onClick={() => {
             setCurrentDocumentId(null);

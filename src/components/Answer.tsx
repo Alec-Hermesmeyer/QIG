@@ -7,6 +7,9 @@ import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, ImageIcon } from "lucide-react";
 
+// Import the AnswerParser functionality
+import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, CitationInfo } from "./AnswerParser";
+
 // Import our custom components
 import AnswerHeader from "./AnswerHeader";
 import DocumentDetail from "./DocumentDetail";
@@ -75,10 +78,16 @@ export default function EnhancedAnswer({
   const [activeXrayChunk, setActiveXrayChunk] = useState<XRayChunk | null>(null);
   const [xrayViewMode, setXrayViewMode] = useState<'summary' | 'detail'>('summary');
   const [xrayContentFilter, setXrayContentFilter] = useState<string | null>(null);
+  const [citationInfos, setCitationInfos] = useState<CitationInfo[]>([]);
+  const [parsedAnswerHtml, setParsedAnswerHtml] = useState<string>('');
+  const [isXRayLoading, setIsXRayLoading] = useState(false);
+  // We'll use a ref for documents instead of state to avoid render loops
+  const documentsRef = useRef<Source[]>([]);
   
   // References
   const contentRef = useRef<HTMLDivElement>(null);
   const imageViewerRef = useRef<HTMLDivElement>(null);
+  const answerElementId = `answer-content-${index}`;
   
   // Theme styling
   const themeStyles = {
@@ -92,46 +101,6 @@ export default function EnhancedAnswer({
     xrayColor: theme === 'dark' ? '#e02020' : '#dc2626', // Changed to vibrant red
     ...customStyles
   };
-  
-  // Effects
-  useEffect(() => {
-    if (isCopied) {
-      const timer = setTimeout(() => setIsCopied(false), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [isCopied]);
-  
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showImageViewer && imageViewerRef.current && !imageViewerRef.current.contains(event.target as Node)) {
-        setShowImageViewer(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => { document.removeEventListener('mousedown', handleClickOutside); };
-  }, [showImageViewer]);
-  
-  useEffect(() => {
-    const handleContentClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.classList.contains('citation-link')) {
-        e.preventDefault();
-        const sourceId = target.getAttribute('data-source-id');
-        if (sourceId) { onCitationClicked(sourceId); }
-      }
-    };
-    
-    const element = contentRef.current;
-    if (element) {
-      element.addEventListener('click', handleContentClick);
-    }
-    
-    return () => {
-      if (element) {
-        element.removeEventListener('click', handleContentClick);
-      }
-    };
-  }, [onCitationClicked]);
   
   // Extract sources from answer
   const extractAllSources = (): Source[] => {
@@ -349,6 +318,81 @@ export default function EnhancedAnswer({
     return allSources;
   };
   
+  // Effects
+  useEffect(() => {
+    if (isCopied) {
+      const timer = setTimeout(() => setIsCopied(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isCopied]);
+  
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showImageViewer && imageViewerRef.current && !imageViewerRef.current.contains(event.target as Node)) {
+        setShowImageViewer(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [showImageViewer]);
+  
+  // Initialize documents ref when component mounts or when source data changes
+  useEffect(() => {
+    // Directly set the ref value without causing re-renders
+    documentsRef.current = extractAllSources();
+    
+    // No state updates here, so no risk of infinite loops
+  }, [answer, documentExcerpts, searchResults]);
+  
+  // Parse the answer content using AnswerParser when the component mounts or answer changes
+  useEffect(() => {
+    if (!answer) return;
+    
+    // Parse the answer using the AnswerParser module
+    const parsedAnswer = parseAnswerToHtml(answer, isStreaming, onCitationClicked);
+    setParsedAnswerHtml(parsedAnswer.answerHtml);
+    
+    // Extract citation information
+    const extractedCitations: CitationInfo[] = [];
+    const sources = extractAllSources();
+    
+    // Map the citation IDs to source information from extractAllSources
+    parsedAnswer.citations.forEach((citation, index) => {
+      const matchedSource = sources.find(
+        source => source.id === citation || 
+                 source.fileName === citation || 
+                 source.fileName?.includes(citation)
+      );
+      
+      if (matchedSource) {
+        extractedCitations.push({
+          id: matchedSource.id,
+          fileName: matchedSource.fileName,
+          index: index + 1,
+          text: `[${matchedSource.fileName}]`,
+          relevance: matchedSource.score
+        });
+      } else {
+        // If no matching source found, create a generic citation
+        extractedCitations.push({
+          id: citation,
+          fileName: citation,
+          index: index + 1,
+          text: `[${citation}]`
+        });
+      }
+    });
+    
+    setCitationInfos(extractedCitations);
+    
+    // Setup citation click handlers after render
+    setTimeout(() => {
+      if (contentRef.current) {
+        setupCitationClickHandlers(answerElementId, onCitationClicked);
+      }
+    }, 100);
+  }, [answer, isStreaming, onCitationClicked]);
+  
   // Utility functions
   const extractThoughtProcess = () => {
     let reasoning = '';
@@ -384,6 +428,76 @@ export default function EnhancedAnswer({
       return answer.suggestedQuestions;
     }
     return [];
+  };
+
+  // Fixed fetchUpdatedDocument function that now uses the documents ref
+  const fetchUpdatedDocument = async (documentId) => {
+    try {
+      const response = await fetch(`/api/groundx/xray?documentId=${documentId}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch document: ${response.status}`);
+      }
+      
+      const xrayData = await response.json();
+      console.log("Fetched X-Ray data:", xrayData);
+      
+      // Update the document in our ref without causing state updates or re-renders
+      documentsRef.current = documentsRef.current.map(doc => 
+        doc.id === documentId 
+          ? { 
+              ...doc, 
+              xray: xrayData.xray
+            }
+          : doc
+      );
+      
+      // Force a re-render by updating something trivial
+      // This is a common pattern when using refs that need to trigger UI updates
+      setIsXRayLoading(false);
+      
+    } catch (error) {
+      console.error("Error fetching updated document:", error);
+    }
+  };
+  
+  const handleStartXRayAnalysis = async (documentId) => {
+    console.log("Starting X-Ray analysis for document:", documentId);
+    try {
+      setIsXRayLoading(true);
+      
+      // Call your API to start X-Ray analysis
+      console.log("Making API call to start X-Ray analysis");
+      const response = await fetch('/api/groundx/xray', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId,
+          action: 'refresh'
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("API response not OK:", response.status, errorData);
+        throw new Error(`Failed to start X-Ray analysis: ${response.status}`);
+      }
+      
+      const responseData = await response.json();
+      console.log("X-Ray analysis API response:", responseData);
+      
+      // Fetch updated document with X-Ray data
+      console.log("Fetching updated document");
+      await fetchUpdatedDocument(documentId);
+      
+      console.log("X-Ray analysis completed successfully");
+    } catch (error) {
+      console.error('Error during X-Ray analysis:', error);
+    } finally {
+      setIsXRayLoading(false);
+    }
   };
   
   const getRelevanceExplanation = (source: Source) => {
@@ -428,8 +542,8 @@ export default function EnhancedAnswer({
   
   const navigateImage = (direction: 'prev' | 'next') => {
     if (!selectedSourceId) return;
-    const sources = extractAllSources();
-    const currentSource = sources.find(s => s.id === selectedSourceId);
+    // Use the documents ref instead of calling extractAllSources()
+    const currentSource = documentsRef.current.find(s => s.id === selectedSourceId);
     if (!currentSource || !currentSource.pageImages || !currentSource.pageImages.length) return;
     const totalImages = currentSource.pageImages.length;
     
@@ -441,10 +555,10 @@ export default function EnhancedAnswer({
   };
   
   const getAllImages = () => {
-    const sources = extractAllSources();
+    // Use the documents ref instead of calling extractAllSources()
     const allImages: {url: string, sourceId: string, index: number, source: Source}[] = [];
     
-    sources.forEach(source => {
+    documentsRef.current.forEach(source => {
       if (source.pageImages && source.pageImages.length) {
         source.pageImages.forEach((url, index) => {
           allImages.push({
@@ -461,10 +575,10 @@ export default function EnhancedAnswer({
   };
   
   const getAllXrayChunks = () => {
-    const sources = extractAllSources();
+    // Use the documents ref instead of calling extractAllSources()
     let allChunks: {chunk: XRayChunk, sourceId: string, source: Source}[] = [];
     
-    sources.forEach(source => {
+    documentsRef.current.forEach(source => {
       if (source.xray?.chunks && source.xray.chunks.length) {
         source.xray.chunks.forEach(chunk => {
           allChunks.push({
@@ -484,8 +598,8 @@ export default function EnhancedAnswer({
   };
   
   const hasXrayData = () => {
-    const sources = extractAllSources();
-    return sources.some(source => source.xray && (
+    // Use the documents ref instead of calling extractAllSources()
+    return documentsRef.current.some(source => source.xray && (
       source.xray.summary || 
       source.xray.keywords || 
       (source.xray.chunks && source.xray.chunks.length > 0)
@@ -509,15 +623,16 @@ export default function EnhancedAnswer({
   
   const getCurrentDocument = () => {
     if (!currentDocumentId) return null;
-    const sources = extractAllSources();
-    return sources.find(s => s.id === currentDocumentId);
+    // Use the documents ref instead of calling extractAllSources()
+    return documentsRef.current.find(s => s.id === currentDocumentId);
   };
   
   // Get extracted data
   const content = extractContent();
   const thoughtProcess = extractThoughtProcess();
   const followupQuestions = extractFollowupQuestions();
-  const sources = extractAllSources();
+  // Use the documents ref instead of calling extractAllSources() again
+  const sources = documentsRef.current;
   const currentDocument = getCurrentDocument();
   const allImages = getAllImages();
   const allXrayChunks = getAllXrayChunks();
@@ -586,6 +701,7 @@ export default function EnhancedAnswer({
           themeStyles={themeStyles}
           getRelevanceExplanation={getRelevanceExplanation}
           onCitationClicked={onCitationClicked}
+          onStartXRayAnalysis={handleStartXRayAnalysis}
         />
       )}
       
@@ -716,21 +832,49 @@ export default function EnhancedAnswer({
                 transition={{ duration: 0.3 }}
                 className="p-4"
               >
-                <div ref={contentRef} className="prose max-w-none" style={{ color: themeStyles.textColor }}>
-                  <ReactMarkdown rehypePlugins={[rehypeRaw]} remarkPlugins={[remarkGfm]}>
-                    {content}
-                  </ReactMarkdown>
-                  
-                  {isStreaming && (
-                    <motion.span 
-                      className="inline-block"
-                      animate={{ opacity: [0.5, 1, 0.5] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                    >
-                      <span>...</span>
-                    </motion.span>
-                  )}
-                </div>
+                {/* Use the parsed HTML content with citations */}
+                <div 
+                  id={answerElementId}
+                  ref={contentRef} 
+                  className="prose max-w-none" 
+                  style={{ color: themeStyles.textColor }}
+                  dangerouslySetInnerHTML={{ __html: parsedAnswerHtml }}
+                />
+                
+                {isStreaming && (
+                  <motion.span 
+                    className="inline-block"
+                    animate={{ opacity: [0.5, 1, 0.5] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                  >
+                    <span>...</span>
+                  </motion.span>
+                )}
+                
+                {/* Citation list if we have citations */}
+                {citationInfos.length > 0 && (
+                  <div className="mt-4 pt-4 border-t" style={{ borderColor: themeStyles.borderColor }}>
+                    <h4 className="text-sm font-medium mb-2">Citations</h4>
+                    <ol className="list-decimal pl-5 space-y-1">
+                      {citationInfos.map((citation) => (
+                        <li 
+                          key={`citation-${citation.index}`} 
+                          id={`citation-${citation.index}`}
+                          className="text-sm"
+                        >
+                          <span 
+                            className="cursor-pointer hover:underline"
+                            onClick={() => onCitationClicked(citation.id)}
+                            style={{ color: themeStyles.primaryColor }}
+                          >
+                            {citation.fileName || citation.id}
+                          </span>
+                          {citation.page && <span> (page {citation.page})</span>}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
                 
                 {/* Follow-up questions */}
                 {showFollowupQuestions && followupQuestions.length > 0 && (
