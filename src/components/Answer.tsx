@@ -152,7 +152,7 @@ export default function EnhancedAnswer({
         id: strSourceId,
         fileName: source.fileName || source.name || source.title || `Document ${strSourceId}`,
         score: source.score || source.relevanceScore || source.confidenceScore || 0,
-        excerpts: []
+        excerpts: [],
       };
       
       // Handle document images
@@ -165,6 +165,9 @@ export default function EnhancedAnswer({
       
       // Extract all types of text content
       if (source.excerpts && Array.isArray(source.excerpts)) {
+        if (!normalizedSource.excerpts) {
+          normalizedSource.excerpts = [];
+        }
         normalizedSource.excerpts.push(...source.excerpts.filter((e: any) => e !== null && e !== undefined));
       }
       

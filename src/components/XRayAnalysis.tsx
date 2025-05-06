@@ -641,7 +641,7 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
                               {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords || '')
                                 .split(',')
                                 .slice(0, 3)
-                                .map((keyword, i) => (
+                                .map((keyword: string, i: number) => (
                                   <span 
                                     key={i}
                                     className="px-1.5 py-0.5 text-xs rounded-full"

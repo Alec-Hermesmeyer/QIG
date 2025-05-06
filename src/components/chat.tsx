@@ -51,6 +51,7 @@ interface ChatProps {
   suggestFollowUpQuestions?: boolean;
   promptTemplate?: string;
   searchConfig?: SearchConfig;
+  conversationContext?: any; // Add this property
 }
 
 export interface ImprovedChatHandle {
