@@ -13,8 +13,9 @@ export interface ChatMessage {
 
 export interface ChatSession {
   id: string;
+  userId: string;
   title: string;
-  messages: ChatMessage[];
+  messages: any[]; // Add the missing properties
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +26,7 @@ export const chatHistoryService = {
   createSession: (title: string = 'New Chat'): ChatSession => {
     const newSession: ChatSession = {
       id: uuidv4(),
+      userId: 'default-user-id', // Replace with actual user ID logic
       title,
       messages: [],
       createdAt: new Date().toISOString(),

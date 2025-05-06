@@ -168,7 +168,7 @@ export function RAGControl({
           onClick={toggleRAG}
         >
           {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-          <span>Fast</span>
+          <span>{enabled ? "Deep" : "Fast"}</span>
         </Button>
         
         <Skeleton className="h-9 w-[250px]" />
@@ -192,7 +192,7 @@ export function RAGControl({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>Fast: {enabled ? 'Active' : 'Inactive'}</p>
+            <p>Mode: {enabled ? 'Deep' : 'Fast'}</p>
             {enabled && selectedBucket && (
               <p className="text-xs text-muted-foreground">{selectedBucket.name}</p>
             )}
@@ -221,7 +221,7 @@ export function RAGControl({
                 onClick={toggleRAG}
               >
                 {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                <span>Fast</span>
+                <span>{enabled ? "Deep" : "Fast"}</span>
               </Button>
             </div>
             
@@ -341,7 +341,7 @@ export function RAGControl({
         onClick={toggleRAG}
       >
         {enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-        <span>Deep</span>
+        <span>{enabled ? "Deep" : "Fast"}</span>
       </Button>
       
       {enabled && (

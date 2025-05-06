@@ -5,16 +5,19 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  ClipboardCopy, ClipboardCheck, Lightbulb, ChevronDown, ChevronUp,
-  Database, FileText, ExternalLink, Search, Code, BarChart, Info,
-  ArrowRight, MessageSquare, BookMarked, Cpu, Image as ImageIcon,
-  FileImage, X, ChevronLeft, ChevronRight, ZoomIn, Download,
-  FileJson, Table, List, PieChart, AlignLeft
-} from "lucide-react";
+import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, ImageIcon } from "lucide-react";
+
+// Import our custom components
+import AnswerHeader from "./AnswerHeader";
+import DocumentDetail from "./DocumentDetail";
+import ImageViewer from "./ImageViewer";
+import XRayAnalysis from "./XRayAnalysis";
+
+// Import types
+import { Source, XRayChunk, EnhancedAnswerProps } from "@/types/types";
 
 // Helper utilities
-const formatDate = (dateString?: string) => {
+export const formatDate = (dateString?: string) => {
   if (!dateString) return '';
   try {
     const date = new Date(dateString);
@@ -22,9 +25,9 @@ const formatDate = (dateString?: string) => {
   } catch (e) { return dateString; }
 };
 
-const getDocumentName = (path?: string) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
+export const getDocumentName = (path?: string) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
 
-const getDocumentType = (fileName?: string) => {
+export const getDocumentType = (fileName?: string) => {
   if (!fileName) return 'document';
   const extension = fileName.split('.').pop()?.toLowerCase();
   
@@ -39,71 +42,6 @@ const getDocumentType = (fileName?: string) => {
     default: return 'document';
   }
 };
-
-interface XRayChunk {
-  id: number;
-  contentType?: string[];
-  text?: string;
-  suggestedText?: string;
-  sectionSummary?: string;
-  narrative?: string[];
-  json?: any[];
-  pageNumbers?: number[];
-  boundingBoxes?: Array<{
-    pageNumber: number;
-    topLeftX: number;
-    topLeftY: number;
-    bottomRightX: number;
-    bottomRightY: number;
-  }>;
-  parsedData?: any; // Add support for parsed JSON data
-  originalText?: string; // Store original text when parsed
-}
-
-interface XRayData {
-  summary?: string;
-  keywords?: string;
-  language?: string;
-  chunks?: XRayChunk[];
-}
-
-interface Source {
-  id: string;
-  fileName: string;
-  score?: number;
-  excerpts: string[];
-  author?: string;
-  datePublished?: string;
-  url?: string;
-  fileSize?: number;
-  type?: string;
-  metadata?: Record<string, any>;
-  pageImages?: string[];
-  thumbnails?: string[];
-  imageLabels?: string[];
-  pageCount?: number;
-  highlights?: string[];
-  xray?: XRayData;
-}
-
-interface EnhancedAnswerProps {
-  answer: any;
-  index?: number;
-  isSelected?: boolean;
-  isStreaming?: boolean;
-  searchResults?: any;
-  documentExcerpts?: any[];
-  onCitationClicked?: (id: string) => void;
-  onThoughtProcessClicked?: () => void;
-  onSupportingContentClicked?: () => void;
-  onFollowupQuestionClicked?: (question: string) => void;
-  onRefreshClicked?: () => void;
-  onImageClicked?: (url: string, sourceId: string, imageIndex: number) => void;
-  showFollowupQuestions?: boolean;
-  enableAdvancedFeatures?: boolean;
-  theme?: string;
-  customStyles?: Record<string, any>;
-}
 
 export default function EnhancedAnswer({
   answer,
@@ -459,60 +397,6 @@ export default function EnhancedAnswer({
     return `This ${source.type} contains information relevant to your query. The system has ${confidenceLevel} (${confidencePercent}%) that this source contributes valuable information to the answer.`;
   };
   
-  // Enhanced JSON display function
-  const renderJsonData = (jsonData: any) => {
-    if (!jsonData) return null;
-    
-    // Handle array data
-    if (Array.isArray(jsonData)) {
-      return (
-        <div className="space-y-2">
-          {jsonData.map((item, index) => (
-            <div key={index} className="border-b pb-2" style={{ borderColor: `${themeStyles.borderColor}30` }}>
-              {typeof item === 'object' ? (
-                <div>
-                  {Object.entries(item).map(([key, value]) => (
-                    <div key={key} className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="font-medium">{key}:</div>
-                      <div className="col-span-2">
-                        {typeof value === 'object' 
-                          ? JSON.stringify(value) 
-                          : String(value)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs">{String(item)}</div>
-              )}
-            </div>
-          ))}
-        </div>
-      );
-    }
-    
-    // Handle object data
-    if (typeof jsonData === 'object' && jsonData !== null) {
-      return (
-        <div className="space-y-1">
-          {Object.entries(jsonData).map(([key, value]) => (
-            <div key={key} className="grid grid-cols-3 gap-2 text-xs">
-              <div className="font-medium">{key}:</div>
-              <div className="col-span-2">
-                {typeof value === 'object' 
-                  ? JSON.stringify(value)
-                  : String(value)}
-              </div>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    
-    // Handle primitive values
-    return <div className="text-xs">{String(jsonData)}</div>;
-  };
-  
   // Handlers
   const toggleDocExpansion = (docId: string) => {
     setExpandedDocs(prev => {
@@ -626,30 +510,19 @@ export default function EnhancedAnswer({
     return sources.find(s => s.id === currentDocumentId);
   };
   
-  // UI Components
-  const getDocumentIcon = (fileName?: string, type?: string) => {
-    const docType = type || getDocumentType(fileName);
-    switch (docType.toLowerCase()) {
-      case 'pdf': return <FileText size={16} className="text-red-600" />;
-      case 'word': return <FileText size={16} className="text-blue-600" />;
-      case 'spreadsheet': case 'csv': return <Code size={16} className="text-green-600" />;
-      case 'code': case 'json': return <Code size={16} className="text-yellow-600" />;
-      case 'text': case 'txt': return <FileText size={16} className="text-gray-600" />;
-      case 'web': case 'html': return <Search size={16} className="text-purple-600" />;
-      case 'image': return <FileImage size={16} className="text-pink-600" />;
-      default: return <FileText size={16} className="text-gray-600" />;
-    }
-  };
+  // Get extracted data
+  const content = extractContent();
+  const thoughtProcess = extractThoughtProcess();
+  const followupQuestions = extractFollowupQuestions();
+  const sources = extractAllSources();
+  const currentDocument = getCurrentDocument();
+  const allImages = getAllImages();
+  const allXrayChunks = getAllXrayChunks();
   
-  const getContentTypeIcon = (contentType?: string[]) => {
-    if (!contentType || contentType.length === 0) return <AlignLeft size={16} />;
-    if (contentType.includes('table')) return <Table size={16} />;
-    if (contentType.includes('figure')) return <PieChart size={16} />;
-    if (contentType.includes('list')) return <List size={16} />;
-    if (contentType.includes('code')) return <Code size={16} />;
-    if (contentType.includes('json')) return <FileJson size={16} />;
-    return <AlignLeft size={16} />;
-  };
+  const hasThoughts = thoughtProcess && thoughtProcess.length > 0;
+  const hasSources = sources && sources.length > 0;
+  const hasImages = allImages.length > 0;
+  const hasXray = hasXrayData();
   
   // Animation variants
   const containerVariants = {
@@ -668,41 +541,6 @@ export default function EnhancedAnswer({
     exit: { opacity: 0, y: -10 }
   };
   
-  const modalAnimation = {
-    hidden: { opacity: 0, scale: 0.95 },
-    visible: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.95 }
-  };
-  
-  // Get extracted data
-  const content = extractContent();
-  const thoughtProcess = extractThoughtProcess();
-  const followupQuestions = extractFollowupQuestions();
-  const sources = extractAllSources();
-  const currentDocument = getCurrentDocument();
-  const allImages = getAllImages();
-  const allXrayChunks = getAllXrayChunks();
-  
-  const hasThoughts = thoughtProcess && thoughtProcess.length > 0;
-  const hasSources = sources && sources.length > 0;
-  const hasImages = allImages.length > 0;
-  const hasXray = hasXrayData();
-  
-  // Get current image for image viewer
-  const currentImage = () => {
-    if (!selectedSourceId || selectedImageIndex === undefined) return null;
-    const source = sources.find(s => s.id === selectedSourceId);
-    if (!source || !source.pageImages || !source.pageImages.length) return null;
-    
-    return {
-      url: source.pageImages[selectedImageIndex],
-      label: source.imageLabels && source.imageLabels[selectedImageIndex] 
-          ? source.imageLabels[selectedImageIndex] 
-          : `Page ${selectedImageIndex + 1}`,
-      source
-    };
-  };
-  
   return (
     <motion.div
       initial="hidden"
@@ -717,587 +555,48 @@ export default function EnhancedAnswer({
       }}
     >
       {/* Header */}
-      <div className="p-4 flex justify-between items-center border-b" style={{ borderColor: themeStyles.borderColor }}>
-        <div className="flex items-center">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="mr-2">
-            <path
-              d="M8.4 4.9L8.5 4H9.5L9.6 4.9C9.8 7.3 11.7 9.2 14.1 9.4L15 9.5V10.5L14.1 10.6C11.7 10.8 9.8 12.7 9.6 15.1L9.5 16H8.5L8.4 15.1C8.2 12.7 6.3 10.8 3.9 10.6L3 10.5V9.5L3.9 9.4C6.3 9.2 8.2 7.3 8.4 4.9Z"
-              fill="currentColor"
-            />
-          </svg>
-          
-        </div>
-        
-        <div className="flex items-center space-x-1">
-          {onRefreshClicked && (
-            <button
-              onClick={onRefreshClicked}
-              className="p-2 rounded-full transition-colors hover:bg-indigo-50"
-              title="Refresh Response"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 2v6h-6"></path>
-                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-                <path d="M3 22v-6h6"></path>
-                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-              </svg>
-            </button>
-          )}
-          
-          <button
-            onClick={handleCopyToClipboard}
-            className="p-2 rounded-full transition-colors hover:bg-indigo-50 relative"
-            title={isCopied ? "Copied!" : "Copy to clipboard"}
-          >
-            {isCopied ? <ClipboardCheck size={18} /> : <ClipboardCopy size={18} />}
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveTab('thought-process');
-              onThoughtProcessClicked();
-            }}
-            className={`p-2 rounded-full transition-colors ${hasThoughts ? 'hover:bg-amber-50 text-amber-500' : 'opacity-50 cursor-not-allowed'}`}
-            title="Show Thought Process"
-            disabled={!hasThoughts}
-          >
-            <Lightbulb size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveTab('sources');
-              onSupportingContentClicked();
-            }}
-            className={`p-2 rounded-full transition-colors ${hasSources ? 'hover:bg-purple-50 text-purple-500' : 'opacity-50 cursor-not-allowed'}`}
-            title="Show Sources"
-            disabled={!hasSources}
-          >
-            <Database size={18} />
-          </button>
-          
-          {hasXray && (
-            <button
-              onClick={() => setActiveTab('xray')}
-              className="p-2 rounded-full transition-colors hover:bg-blue-50 text-blue-500"
-              title="X-Ray Document Analysis"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                <path d="M12 12 6 6"/>
-                <path d="M12 6v6"/>
-                <path d="M21 9V3h-6"/>
-              </svg>
-            </button>
-          )}
-          
-          {hasImages && (
-            <button
-              onClick={() => setActiveTab('images')}
-              className="p-2 rounded-full transition-colors hover:bg-pink-50 text-pink-500"
-              title="Document Images"
-            >
-              <ImageIcon size={18} />
-            </button>
-          )}
-          
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="p-2 rounded-full transition-colors hover:bg-gray-100"
-            title={expanded ? "Collapse" : "Expand"}
-          >
-            {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-        </div>
-      </div>
+      <AnswerHeader 
+        expanded={expanded}
+        setExpanded={setExpanded}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isCopied={isCopied}
+        hasThoughts={hasThoughts}
+        hasSources={hasSources}
+        hasXray={hasXray}
+        hasImages={hasImages}
+        handleCopyToClipboard={handleCopyToClipboard}
+        onThoughtProcessClicked={onThoughtProcessClicked}
+        onSupportingContentClicked={onSupportingContentClicked}
+        onRefreshClicked={onRefreshClicked}
+        themeStyles={themeStyles}
+      />
       
       {/* Document detail view */}
       {currentDocument && (
-        <div
-          className="border-b p-4"
-          style={{ 
-            borderColor: themeStyles.borderColor,
-            backgroundColor: `${themeStyles.secondaryColor}10`
-          }}
-        >
-          <div className="flex justify-between items-start mb-3">
-            <div className="flex items-center">
-              {getDocumentIcon(currentDocument.fileName, currentDocument.type)}
-              <h3 className="ml-2 font-medium">{currentDocument.fileName}</h3>
-              {currentDocument.score !== undefined && (
-                <span 
-                  className="ml-2 px-2 py-0.5 text-xs rounded-full"
-                  style={{ 
-                    backgroundColor: `${themeStyles.secondaryColor}20`,
-                    color: themeStyles.secondaryColor
-                  }}
-                >
-                  Score: {(currentDocument.score * 100).toFixed(1)}%
-                </span>
-              )}
-              
-              {currentDocument.xray && (
-                <span 
-                  className="ml-2 px-2 py-0.5 text-xs rounded-full"
-                  style={{ 
-                    backgroundColor: `${themeStyles.xrayColor}20`,
-                    color: themeStyles.xrayColor
-                  }}
-                >
-                  X-Ray Analysis
-                </span>
-              )}
-            </div>
-            <button onClick={() => setCurrentDocumentId(null)} className="p-1">
-              <X size={16} />
-            </button>
-          </div>
-          
-          <div className="mb-3 text-xs opacity-70">
-            Document ID: {currentDocument.id}
-          </div>
-          
-          {/* X-Ray Summary */}
-          {currentDocument.xray?.summary && (
-            <div 
-              className="mb-4 p-3 rounded-lg border"
-              style={{ 
-                backgroundColor: `${themeStyles.xrayColor}05`,
-                borderColor: `${themeStyles.xrayColor}30`
-              }}
-            >
-              <h4 
-                className="text-sm font-medium mb-2 flex items-center"
-                style={{ color: themeStyles.xrayColor }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                  <path d="M12 12 6 6"/>
-                  <path d="M12 6v6"/>
-                  <path d="M21 9V3h-6"/>
-                </svg>
-                X-Ray Document Summary
-              </h4>
-              <p className="text-sm">{currentDocument.xray.summary}</p>
-              
-              {currentDocument.xray.keywords && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {currentDocument.xray.keywords.split(',').map((keyword, i) => (
-                    <span 
-                      key={i}
-                      className="px-2 py-0.5 text-xs rounded-full"
-                      style={{ 
-                        backgroundColor: `${themeStyles.xrayColor}15`,
-                        color: themeStyles.xrayColor
-                      }}
-                    >
-                      {keyword.trim()}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Document images if available */}
-          {currentDocument.pageImages && currentDocument.pageImages.length > 0 && (
-            <div className="mb-4">
-              <h4 className="text-sm font-medium mb-2">Document Pages:</h4>
-              <div className="flex flex-wrap gap-2">
-                {currentDocument.pageImages.slice(0, 6).map((imageUrl, index) => (
-                  <div 
-                    key={index}
-                    onClick={() => handleImageClick(currentDocument, index)}
-                    className="relative border rounded overflow-hidden cursor-pointer group"
-                    style={{
-                      width: '100px', 
-                      height: '120px',
-                      borderColor: themeStyles.borderColor
-                    }}
-                  >
-                    <img 
-                      src={imageUrl} 
-                      alt={currentDocument.imageLabels?.[index] || `Page ${index + 1}`}
-                      className="w-full h-full object-cover object-top"
-                    />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200" />
-                    <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
-                      {currentDocument.imageLabels?.[index] || `Page ${index + 1}`}
-                    </div>
-                  </div>
-                ))}
-                
-                {currentDocument.pageImages.length > 6 && (
-                  <div 
-                    className="relative border rounded overflow-hidden cursor-pointer flex items-center justify-center"
-                    onClick={() => setActiveTab('images')}
-                    style={{
-                      width: '100px', 
-                      height: '120px',
-                      backgroundColor: `${themeStyles.accentColor}10`,
-                      borderColor: themeStyles.borderColor
-                    }}
-                  >
-                    <div className="text-center">
-                      <span className="block font-medium" style={{ color: themeStyles.accentColor }}>
-                        +{currentDocument.pageImages.length - 6}
-                      </span>
-                      <span className="text-xs opacity-70">more pages</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          
-          {/* X-Ray chunks if available */}
-          {currentDocument.xray?.chunks && currentDocument.xray.chunks.length > 0 && (
-            <div className="mb-4">
-              <h4 
-                className="text-sm font-medium mb-2 flex items-center"
-                style={{ color: themeStyles.xrayColor }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-                  <rect width="18" height="18" x="3" y="3" rx="2" />
-                  <path d="M9 3v18" />
-                  <path d="M15 3v18" />
-                  <path d="M3 9h18" />
-                  <path d="M3 15h18" />
-                </svg>
-                X-Ray Content Chunks
-              </h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
-                {currentDocument.xray.chunks.slice(0, 4).map((chunk, index) => (
-                  <div 
-                    key={index}
-                    className="p-2 border rounded cursor-pointer hover:shadow-sm transition-shadow"
-                    onClick={() => {
-                      setActiveTab('xray');
-                      setActiveXrayChunk(chunk);
-                    }}
-                    style={{ 
-                      borderColor: themeStyles.borderColor,
-                      backgroundColor: `${themeStyles.cardBackground}`
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center">
-                        {getContentTypeIcon(chunk.contentType)}
-                        <span 
-                          className="ml-1.5 text-xs font-medium"
-                          style={{ color: themeStyles.xrayColor }}
-                        >
-                          {chunk.contentType?.join(', ') || 'Text'} 
-                        </span>
-                      </div>
-                      <span className="text-xs opacity-60">#{chunk.id}</span>
-                    </div>
-                    
-                    <div className="text-xs line-clamp-2 mt-1">
-                      {/* Display parsed summary if available */}
-                      {chunk.parsedData?.summary || chunk.parsedData?.Summary || 
-                       chunk.sectionSummary || chunk.text?.substring(0, 100) || 'No preview available'}
-                      {(!chunk.parsedData?.summary && !chunk.parsedData?.Summary && 
-                        !chunk.sectionSummary && chunk.text && chunk.text.length > 100) ? '...' : ''}
-                    </div>
-                    
-                    {chunk.pageNumbers && chunk.pageNumbers.length > 0 && (
-                      <div className="mt-1 text-xs opacity-60">
-                        Page{chunk.pageNumbers.length > 1 ? 's' : ''}: {chunk.pageNumbers.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              
-              {currentDocument.xray.chunks.length > 4 && (
-                <button
-                  onClick={() => {
-                    setActiveTab('xray');
-                    setSelectedSourceId(currentDocument.id);
-                  }}
-                  className="text-xs px-2 py-1 rounded"
-                  style={{ 
-                    backgroundColor: `${themeStyles.xrayColor}10`,
-                    color: themeStyles.xrayColor
-                  }}
-                >
-                  View all {currentDocument.xray.chunks.length} content chunks
-                </button>
-              )}
-            </div>
-          )}
-          
-          {/* Document excerpts */}
-          {currentDocument.excerpts.length > 0 ? (
-            <div>
-              <h4 className="text-sm font-medium mb-3 flex items-center">
-                <span className="mr-2">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                  </svg>
-                </span>
-                Excerpts from {currentDocument.fileName}
-              </h4>
-              
-              <div className="space-y-4">
-                {currentDocument.excerpts.map((excerpt, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border-l-4 shadow-sm p-4 text-sm relative overflow-hidden transition-all duration-150 hover:shadow-md"
-                    style={{
-                      backgroundColor: themeStyles.cardBackground,
-                      borderLeftColor: themeStyles.secondaryColor,
-                      borderTop: `1px solid ${themeStyles.borderColor}`,
-                      borderRight: `1px solid ${themeStyles.borderColor}`,
-                      borderBottom: `1px solid ${themeStyles.borderColor}`
-                    }}
-                  >
-                    <div 
-                      className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full"
-                      style={{ 
-                        backgroundColor: `${themeStyles.secondaryColor}15`,
-                        color: themeStyles.secondaryColor
-                      }}
-                    >
-                      Excerpt {i+1}
-                    </div>
-                    
-                    <div className="prose prose-sm max-w-none mt-1" style={{ color: themeStyles.textColor }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{excerpt}</ReactMarkdown>
-                    </div>
-                    
-                    {currentDocument.highlights && currentDocument.highlights[i] && (
-                      <div 
-                        className="mt-3 pt-3 text-sm rounded-md p-2" 
-                        style={{ 
-                          backgroundColor: `${themeStyles.primaryColor}08`,
-                          borderTop: `1px dashed ${themeStyles.borderColor}`
-                        }}
-                      >
-                        <div className="flex items-center mb-1 text-xs font-medium" style={{ color: themeStyles.primaryColor }}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                            <path d="M11.467 11.467 3.799 19.135a2.5 2.5 0 0 0 3.536 3.536l7.668-7.668"></path>
-                            <path d="M18.006 4.828 3.799 19.035"></path>
-                            <path d="m23 4-6 2 2-6"></path>
-                            <path d="m13 19 8-8"></path>
-                          </svg>
-                          Highlighted Match
-                        </div>
-                        <div className="text-sm italic ml-4" style={{ color: `${themeStyles.primaryColor}` }}>
-                          "{currentDocument.highlights[i]}"
-                        </div>
-                      </div>
-                    )}
-                    
-                    {currentDocument.metadata && Object.keys(currentDocument.metadata).length > 0 && (
-                      <div 
-                        className="mt-3 pt-2 flex flex-wrap gap-2 text-xs" 
-                        style={{ borderTop: `1px dashed ${themeStyles.borderColor}` }}
-                      >
-                        {currentDocument.score !== undefined && (
-                          <span 
-                            className="px-2 py-1 rounded-full flex items-center"
-                            style={{ 
-                              backgroundColor: `${themeStyles.secondaryColor}15`, 
-                              color: themeStyles.secondaryColor
-                            }}
-                          >
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                              <path d="M12 2v20"></path>
-                              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                            </svg>
-                            Relevance: {(currentDocument.score * 100).toFixed(1)}%
-                          </span>
-                        )}
-                        
-                        {currentDocument.metadata.page && (
-                          <span 
-                            className="px-2 py-1 rounded-full flex items-center"
-                            style={{ 
-                              backgroundColor: `${themeStyles.primaryColor}15`, 
-                              color: themeStyles.primaryColor
-                            }}
-                          >
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path>
-                            </svg>
-                            Page {currentDocument.metadata.page}
-                          </span>
-                        )}
-                        
-                        {currentDocument.datePublished && (
-                          <span 
-                            className="px-2 py-1 rounded-full flex items-center"
-                            style={{ 
-                              backgroundColor: `${themeStyles.textColor}10`, 
-                              color: themeStyles.textColor
-                            }}
-                          >
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                              <rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect>
-                              <line x1="16" x2="16" y1="2" y2="6"></line>
-                              <line x1="8" x2="8" y1="2" y2="6"></line>
-                              <line x1="3" x2="21" y1="10" y2="10"></line>
-                            </svg>
-                            {formatDate(currentDocument.datePublished)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    
-                    <div className="mt-3 flex justify-end">
-                      <button
-                        onClick={() => onCitationClicked && onCitationClicked(currentDocument.id)}
-                        className="text-xs px-2 py-1 rounded flex items-center"
-                        style={{ 
-                          backgroundColor: `${themeStyles.primaryColor}10`,
-                          color: themeStyles.primaryColor
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                          <polyline points="15 3 21 3 21 9"></polyline>
-                          <line x1="10" x2="21" y1="14" y2="3"></line>
-                        </svg>
-                        View in Document
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center p-6 rounded-lg border border-dashed text-sm italic" style={{ borderColor: themeStyles.borderColor, color: `${themeStyles.textColor}70` }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 opacity-70">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-              </svg>
-              No excerpts available for this document
-            </div>
-          )}
-          
-          {/* Relevance explanation */}
-          <div className="mt-3 p-3 rounded border text-sm"
-            style={{ 
-              backgroundColor: `${themeStyles.primaryColor}10`,
-              borderColor: `${themeStyles.primaryColor}30`
-            }}
-          >
-            <div className="font-medium mb-1">Why this is relevant:</div>
-            <p>{getRelevanceExplanation(currentDocument)}</p>
-          </div>
-          
-          <div className="mt-3 flex justify-end">
-            <button
-              onClick={() => {
-                setCurrentDocumentId(null);
-                onCitationClicked(currentDocument.id);
-              }}
-              className="text-white text-sm px-3 py-1.5 rounded flex items-center"
-              style={{ backgroundColor: themeStyles.secondaryColor }}
-            >
-              <ExternalLink size={14} className="mr-1.5" />
-              View Full Document
-            </button>
-          </div>
-        </div>
+        <DocumentDetail
+          document={currentDocument}
+          handleImageClick={handleImageClick}
+          setCurrentDocumentId={setCurrentDocumentId}
+          setActiveTab={setActiveTab}
+          setActiveXrayChunk={setActiveXrayChunk}
+          themeStyles={themeStyles}
+          getRelevanceExplanation={getRelevanceExplanation}
+          onCitationClicked={onCitationClicked}
+        />
       )}
       
       {/* Image Viewer Modal */}
-      <AnimatePresence>
-        {showImageViewer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
-            <motion.div 
-              ref={imageViewerRef}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              variants={modalAnimation}
-              className="relative max-w-4xl max-h-[90vh] flex flex-col rounded-lg overflow-hidden"
-              style={{ 
-                backgroundColor: themeStyles.cardBackground,
-                color: themeStyles.textColor
-              }}
-            >
-              {/* Image viewer header */}
-              <div className="p-3 flex justify-between items-center border-b" style={{ borderColor: themeStyles.borderColor }}>
-                <div className="flex items-center">
-                  <ImageIcon size={18} style={{ color: themeStyles.accentColor }} className="mr-2" />
-                  <h3 className="font-medium">
-                    {currentImage()?.source.fileName || 'Document Image'}
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setShowImageViewer(false)}
-                  className="p-1 rounded-full hover:bg-gray-100"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              
-              {/* Image display */}
-              <div className="relative flex-1 overflow-auto bg-gray-900 flex items-center justify-center">
-                {currentImage()?.url && (
-                  <img 
-                    src={currentImage()?.url} 
-                    alt={currentImage()?.label}
-                    className="max-w-full max-h-[70vh] object-contain"
-                  />
-                )}
-                
-                {/* Navigation controls */}
-                <button
-                  onClick={() => navigateImage('prev')}
-                  className="absolute left-2 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70"
-                >
-                  <ChevronLeft size={24} />
-                </button>
-                <button
-                  onClick={() => navigateImage('next')}
-                  className="absolute right-2 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70"
-                >
-                  <ChevronRight size={24} />
-                </button>
-              </div>
-              
-              {/* Footer with metadata */}
-              <div className="p-3 border-t" style={{ borderColor: themeStyles.borderColor }}>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <span className="text-sm font-medium">
-                      {currentImage()?.label} 
-                      {currentImage()?.source.pageImages && (
-                        <span className="ml-2 opacity-70">
-                          ({selectedImageIndex + 1} of {currentImage()?.source.pageImages.length})
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <div>
-                    <a 
-                      href={currentImage()?.url} 
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm px-3 py-1 rounded flex items-center"
-                      style={{ 
-                        backgroundColor: `${themeStyles.accentColor}10`,
-                        color: themeStyles.accentColor
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Download size={14} className="mr-1.5" />
-                      Download Image
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ImageViewer
+        showImageViewer={showImageViewer}
+        setShowImageViewer={setShowImageViewer}
+        imageViewerRef={imageViewerRef}
+        sources={sources}
+        selectedSourceId={selectedSourceId}
+        selectedImageIndex={selectedImageIndex}
+        navigateImage={navigateImage}
+        themeStyles={themeStyles}
+      />
       
       {/* Tab navigation */}
       {expanded && (
@@ -1535,7 +834,10 @@ export default function EnhancedAnswer({
                           color: themeStyles.secondaryColor 
                         }}
                       >
-                        <FileText size={12} className="mr-1" />
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+                          <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
                         {sources.length} Documents
                       </span>
                     </div>
@@ -1557,7 +859,6 @@ export default function EnhancedAnswer({
                           style={{ color: themeStyles.textColor }}
                         >
                           <div className="flex items-center gap-2 flex-1 min-w-0">
-                            {getDocumentIcon(source.fileName, source.type)}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center">
                                 <span className="truncate font-medium" title={source.fileName}>
@@ -1635,171 +936,6 @@ export default function EnhancedAnswer({
                               borderColor: themeStyles.borderColor
                             }}
                           >
-                            {/* X-Ray summary if available */}
-                            {source.xray?.summary && (
-                              <div 
-                                className="mb-3 p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: `${themeStyles.xrayColor}05`,
-                                  borderColor: `${themeStyles.xrayColor}30`
-                                }}
-                              >
-                                <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                                    <path d="M12 12 6 6"/>
-                                    <path d="M12 6v6"/>
-                                    <path d="M21 9V3h-6"/>
-                                  </svg>
-                                  X-Ray Summary
-                                </div>
-                                <div className="text-sm">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                    {source.xray.summary}
-                                  </ReactMarkdown>
-                                </div>
-                                
-                                {source.xray.keywords && (
-                                  <div className="mt-1.5 flex flex-wrap gap-1">
-                                    {source.xray.keywords.split(',').slice(0, 5).map((keyword, i) => (
-                                      <span 
-                                        key={i}
-                                        className="px-1.5 py-0.5 text-xs rounded-full"
-                                        style={{ 
-                                          backgroundColor: `${themeStyles.xrayColor}15`,
-                                          color: themeStyles.xrayColor
-                                        }}
-                                      >
-                                        {keyword.trim()}
-                                      </span>
-                                    ))}
-                                    {source.xray.keywords.split(',').length > 5 && (
-                                      <span className="text-xs opacity-70">+{source.xray.keywords.split(',').length - 5} more</span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            
-                            {/* Document images if available */}
-                            {source.pageImages && source.pageImages.length > 0 && (
-                              <div className="mb-3">
-                                <h5 className="text-xs font-medium mb-2">Document Pages:</h5>
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                  {source.pageImages.slice(0, 4).map((imageUrl, imgIndex) => (
-                                    <div 
-                                      key={imgIndex}
-                                      onClick={() => handleImageClick(source, imgIndex)}
-                                      className="relative border rounded overflow-hidden cursor-pointer"
-                                      style={{
-                                        width: '60px', 
-                                        height: '80px',
-                                        borderColor: themeStyles.borderColor
-                                      }}
-                                    >
-                                      <img 
-                                        src={imageUrl} 
-                                        alt={`Page ${imgIndex + 1} of ${source.fileName}`}
-                                        className="w-full h-full object-cover object-top"
-                                      />
-                                      <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-0.5">
-                                        {imgIndex + 1}
-                                      </div>
-                                    </div>
-                                  ))}
-                                  
-                                  {source.pageImages.length > 4 && (
-                                    <button
-                                      onClick={() => {
-                                        setActiveTab('images');
-                                        setSelectedSourceId(source.id);
-                                      }}
-                                      className="text-xs px-2 py-1 rounded"
-                                      style={{ 
-                                        backgroundColor: `${themeStyles.accentColor}10`,
-                                        color: themeStyles.accentColor
-                                      }}
-                                    >
-                                      View all {source.pageImages.length} pages
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* X-Ray chunks preview if available */}
-                            {source.xray?.chunks && source.xray.chunks.length > 0 && (
-                              <div className="mb-3">
-                                <h5 className="text-xs font-medium mb-2">
-                                  X-Ray Content Chunks ({source.xray.chunks.length}):
-                                </h5>
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                  {source.xray.chunks.slice(0, 3).map((chunk, chunkIndex) => (
-                                    <button
-                                      key={chunkIndex}
-                                      onClick={() => {
-                                        setActiveTab('xray');
-                                        setActiveXrayChunk(chunk);
-                                        setSelectedSourceId(source.id);
-                                      }}
-                                      className="text-xs px-2 py-1 rounded flex items-center"
-                                      style={{ 
-                                        backgroundColor: `${themeStyles.xrayColor}10`,
-                                        color: themeStyles.xrayColor
-                                      }}
-                                    >
-                                      {getContentTypeIcon(chunk.contentType)}
-                                      <span className="ml-1">
-                                        {chunk.contentType?.join(', ') || 'Text'} #{chunk.id}
-                                      </span>
-                                    </button>
-                                  ))}
-                                  
-                                  {source.xray.chunks.length > 3 && (
-                                    <button
-                                      onClick={() => {
-                                        setActiveTab('xray');
-                                        setSelectedSourceId(source.id);
-                                      }}
-                                      className="text-xs px-2 py-1 rounded"
-                                      style={{ 
-                                        backgroundColor: `${themeStyles.xrayColor}10`,
-                                        color: themeStyles.xrayColor
-                                      }}
-                                    >
-                                      +{source.xray.chunks.length - 3} more
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Document excerpts */}
-                            {source.excerpts && source.excerpts.length > 0 ? (
-                              <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                                {source.excerpts.slice(0, 3).map((excerpt, i) => (
-                                  <div 
-                                    key={i} 
-                                    className="p-2 text-sm rounded border"
-                                    style={{ 
-                                      backgroundColor: themeStyles.cardBackground,
-                                      borderColor: `${themeStyles.secondaryColor}30`
-                                    }}
-                                  >
-                                    <p>{excerpt}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="p-3 rounded border bg-blue-50 text-blue-700 text-sm flex items-center">
-                                <Info size={16} className="mr-2 flex-shrink-0" />
-                                <div>
-                                  <p className="font-medium">Document identified but no excerpts available</p>
-                                  <p className="text-xs mt-1">Use the "Open Document" button to view the full content</p>
-                                </div>
-                              </div>
-                            )}
-                            
                             <div className="flex justify-end mt-3 space-x-2">
                               <button
                                 className="text-xs px-2 py-1 rounded flex items-center"
@@ -1814,8 +950,6 @@ export default function EnhancedAnswer({
                               >
                                 View Details
                               </button>
-                              
-                              
                             </div>
                           </div>
                         )}
@@ -1828,580 +962,20 @@ export default function EnhancedAnswer({
             
             {/* X-Ray tab */}
             {activeTab === 'xray' && hasXray && (
-              <motion.div
-                key="xray-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div 
-                  className="p-4 rounded-lg border"
-                  style={{ 
-                    backgroundColor: `${themeStyles.xrayColor}05`, 
-                    borderColor: `${themeStyles.xrayColor}30` 
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 
-                      className="text-lg font-medium flex items-center"
-                      style={{ color: themeStyles.xrayColor }}
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                        <path d="M12 12 6 6"/>
-                        <path d="M12 6v6"/>
-                        <path d="M21 9V3h-6"/>
-                      </svg>
-                      X-Ray Document Analysis
-                    </h3>
-                    
-                    <div className="flex gap-2">
-                      {/* View mode toggle */}
-                      <div className="rounded-md overflow-hidden border flex" 
-                        style={{ borderColor: themeStyles.borderColor }}
-                      >
-                        <button
-                          onClick={() => setXrayViewMode('summary')}
-                          className={`px-3 py-1 text-xs ${xrayViewMode === 'summary' ? 'font-medium' : ''}`}
-                          style={{
-                            backgroundColor: xrayViewMode === 'summary' 
-                              ? `${themeStyles.xrayColor}15` 
-                              : 'transparent',
-                            color: xrayViewMode === 'summary'
-                              ? themeStyles.xrayColor
-                              : themeStyles.textColor
-                          }}
-                        >
-                          Summary
-                        </button>
-                        <button
-                          onClick={() => setXrayViewMode('detail')}
-                          className={`px-3 py-1 text-xs ${xrayViewMode === 'detail' ? 'font-medium' : ''}`}
-                          style={{
-                            backgroundColor: xrayViewMode === 'detail' 
-                              ? `${themeStyles.xrayColor}15` 
-                              : 'transparent',
-                            color: xrayViewMode === 'detail'
-                              ? themeStyles.xrayColor
-                              : themeStyles.textColor
-                          }}
-                        >
-                          Details
-                        </button>
-                      </div>
-                      
-                      {/* Content type filter */}
-                      <select
-                        value={xrayContentFilter || ''}
-                        onChange={(e) => setXrayContentFilter(e.target.value || null)}
-                        className="text-xs rounded border px-2 py-1"
-                        style={{ 
-                          borderColor: themeStyles.borderColor,
-                          backgroundColor: themeStyles.cardBackground,
-                          color: themeStyles.textColor 
-                        }}
-                      >
-                        <option value="">All Content Types</option>
-                        <option value="table">Tables</option>
-                        <option value="figure">Figures</option>
-                        <option value="paragraph">Paragraphs</option>
-                        <option value="list">Lists</option>
-                        <option value="code">Code</option>
-                      </select>
-                    </div>
-                  </div>
-                  
-                  {/* Summary view */}
-                  {xrayViewMode === 'summary' && (
-                    <div className="space-y-4">
-                      {/* Documents with X-Ray data */}
-                      {sources
-                        .filter(source => source.xray)
-                        .map((source, index) => (
-                          <div 
-                            key={`xray-summary-${index}`}
-                            className="border rounded-lg overflow-hidden"
-                            style={{
-                              borderColor: themeStyles.borderColor,
-                              backgroundColor: themeStyles.cardBackground
-                            }}
-                          >
-                            <div 
-                              className="p-3 border-b flex items-center justify-between"
-                              style={{ borderColor: themeStyles.borderColor }}
-                            >
-                              <div className="flex items-center">
-                                {getDocumentIcon(source.fileName, source.type)}
-                                <h4 className="ml-2 font-medium text-sm">
-                                  {source.fileName}
-                                </h4>
-                              </div>
-                              
-                              {source.score !== undefined && (
-                                <span 
-                                  className="px-2 py-0.5 text-xs rounded-full"
-                                  style={{ 
-                                    backgroundColor: `${themeStyles.secondaryColor}15`, 
-                                    color: themeStyles.secondaryColor 
-                                  }}
-                                >
-                                  Score: {(source.score * 100).toFixed(1)}%
-                                </span>
-                              )}
-                            </div>
-                            
-                            <div className="p-3">
-                              {/* Document summary */}
-                              {source.xray?.summary && (
-                                <div className="mb-4">
-                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                                      <rect width="18" height="14" x="3" y="5" rx="2" />
-                                      <path d="M21 15V19" />
-                                      <path d="M3 15V19" />
-                                      <path d="M12 17h.01" />
-                                    </svg>
-                                    Document Summary
-                                  </div>
-                                  <p className="text-sm">{source.xray.summary}</p>
-                                </div>
-                              )}
-                              
-                              {/* Keywords */}
-                              {source.xray?.keywords && (
-                                <div className="mb-4">
-                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                                      <path d="M10 4a2 2 0 1 0-4 0c0 1.1.9 2 2 2a2 2 0 0 0 0-4zm0 12a2 2 0 1 0-4 0 2 2 0 0 0 4 0z" />
-                                      <path d="M4 6v12" />
-                                      <path d="M12 22a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
-                                      <path d="M16 6a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
-                                      <path d="M16 14a4 4 0 0 0-8 0" />
-                                    </svg>
-                                    Keywords
-                                  </div>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {source.xray.keywords.split(',').map((keyword, i) => (
-                                      <span 
-                                        key={i}
-                                        className="px-2 py-0.5 text-xs rounded-full"
-                                        style={{ 
-                                          backgroundColor: `${themeStyles.xrayColor}10`,
-                                          color: themeStyles.xrayColor
-                                        }}
-                                      >
-                                        {keyword.trim()}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {/* Content Statistics */}
-                              {source.xray?.chunks && (
-                                <div className="mb-4">
-                                  <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                                      <path d="M3 3v18h18" />
-                                      <path d="M18 12V8" />
-                                      <path d="M12 18v-9" />
-                                      <path d="M7 15v-3" />
-                                    </svg>
-                                    Content Statistics
-                                  </div>
-                                  
-                                  <div className="mt-2 grid grid-cols-3 gap-2">
-                                    {(() => {
-                                      const contentTypes = new Map();
-                                      source.xray.chunks.forEach(chunk => {
-                                        if (chunk.contentType) {
-                                          chunk.contentType.forEach(type => {
-                                            contentTypes.set(type, (contentTypes.get(type) || 0) + 1);
-                                          });
-                                        } else {
-                                          contentTypes.set('text', (contentTypes.get('text') || 0) + 1);
-                                        }
-                                      });
-                                      
-                                      return Array.from(contentTypes.entries()).map(([type, count]) => (
-                                        <div 
-                                          key={type}
-                                          className="border rounded p-2 text-center"
-                                          style={{ 
-                                            borderColor: themeStyles.borderColor,
-                                            backgroundColor: `${themeStyles.xrayColor}05`
-                                          }}
-                                        >
-                                          <div className="text-lg font-semibold" style={{ color: themeStyles.xrayColor }}>
-                                            {count}
-                                          </div>
-                                          <div className="text-xs capitalize opacity-80">
-                                            {type}{count !== 1 ? 's' : ''}
-                                          </div>
-                                        </div>
-                                      ));
-                                    })()}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {/* Buttons for viewing more */}
-                              <div className="flex justify-end space-x-2">
-                                <button
-                                  className="text-xs px-2 py-1 rounded flex items-center"
-                                  onClick={() => {
-                                    setXrayViewMode('detail');
-                                    setSelectedSourceId(source.id);
-                                  }}
-                                  style={{ 
-                                    backgroundColor: `${themeStyles.xrayColor}10`,
-                                    color: themeStyles.xrayColor
-                                  }}
-                                >
-                                  View X-Ray Details
-                                </button>
-                                
-                                <button
-                                  className="text-xs text-white px-2 py-1 rounded flex items-center"
-                                  onClick={() => {
-                                    onCitationClicked(source.id);
-                                  }}
-                                  style={{ backgroundColor: themeStyles.xrayColor }}
-                                >
-                                  <ExternalLink size={12} className="mr-1" />
-                                  Open Document
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                  
-                  {/* Detailed view */}
-                  {xrayViewMode === 'detail' && (
-                    <div>
-                      {/* Content type filter UI */}
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        {(() => {
-                          // Get all unique content types
-                          const allTypes = new Set<string>();
-                          allXrayChunks.forEach(item => {
-                            if (item.chunk.contentType) {
-                              item.chunk.contentType.forEach(type => allTypes.add(type));
-                            }
-                          });
-                          
-                          return Array.from(allTypes).map(type => (
-                            <button
-                              key={type}
-                              onClick={() => setXrayContentFilter(xrayContentFilter === type ? null : type)}
-                              className={`px-2 py-1 text-xs rounded-full flex items-center`}
-                              style={{ 
-                                backgroundColor: xrayContentFilter === type 
-                                  ? themeStyles.xrayColor 
-                                  : `${themeStyles.xrayColor}10`,
-                                color: xrayContentFilter === type 
-                                  ? 'white' 
-                                  : themeStyles.xrayColor
-                              }}
-                            >
-                              {getContentTypeIcon(type ? [type] : [])}
-                              <span className="ml-1 capitalize">{type}s</span>
-                            </button>
-                          ));
-                        })()}
-                      </div>
-                      
-                      {/* Selected chunk detail */}
-                      {activeXrayChunk && (
-                        <div 
-                          className="mb-4 p-3 border rounded-lg"
-                          style={{ 
-                            borderColor: `${themeStyles.xrayColor}50`,
-                            backgroundColor: `${themeStyles.xrayColor}05`
-                          }}
-                        >
-                          <div className="flex justify-between items-start mb-3">
-                            <div className="flex items-center">
-                              {getContentTypeIcon(activeXrayChunk.contentType)}
-                              <h4 
-                                className="ml-2 font-medium"
-                                style={{ color: themeStyles.xrayColor }}
-                              >
-                                {activeXrayChunk.contentType?.join(', ') || 'Text'} Chunk #{activeXrayChunk.id}
-                              </h4>
-                            </div>
-                            <button
-                              onClick={() => setActiveXrayChunk(null)}
-                              className="p-1"
-                            >
-                              <X size={16} />
-                            </button>
-                          </div>
-                          
-                          {/* Parsed data summary if available */}
-                          {activeXrayChunk.parsedData && (activeXrayChunk.parsedData.summary || activeXrayChunk.parsedData.Summary) && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Summary from Analysis:</div>
-                              <div 
-                                className="p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {activeXrayChunk.parsedData.summary || activeXrayChunk.parsedData.Summary}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Section summary */}
-                          {activeXrayChunk.sectionSummary && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Section Summary:</div>
-                              <div 
-                                className="p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {activeXrayChunk.sectionSummary}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Original text */}
-                          {activeXrayChunk.text && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>
-                                {activeXrayChunk.originalText ? "Original JSON Data:" : "Original Text:"}
-                              </div>
-                              <div 
-                                className="p-2 rounded border text-sm overflow-auto max-h-40"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {activeXrayChunk.originalText || activeXrayChunk.text}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Suggested text */}
-                          {activeXrayChunk.suggestedText && activeXrayChunk.suggestedText !== activeXrayChunk.text && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Suggested Text:</div>
-                              <div 
-                                className="p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {activeXrayChunk.suggestedText}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Narrative format */}
-                          {activeXrayChunk.narrative && activeXrayChunk.narrative.length > 0 && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Narrative Format:</div>
-                              <div className="space-y-2">
-                                {activeXrayChunk.narrative.map((narrativeText, index) => (
-                                  <div 
-                                    key={index}
-                                    className="p-2 rounded border text-sm"
-                                    style={{ 
-                                      backgroundColor: themeStyles.cardBackground,
-                                      borderColor: themeStyles.borderColor
-                                    }}
-                                  >
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                      {narrativeText || ''}
-                                    </ReactMarkdown>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* JSON format - Use the enhanced renderJsonData function */}
-                          {(activeXrayChunk.json || activeXrayChunk.parsedData?.data || activeXrayChunk.parsedData?.Data) && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Parsed Data:</div>
-                              <div 
-                                className="p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {renderJsonData(activeXrayChunk.json || activeXrayChunk.parsedData?.data || activeXrayChunk.parsedData?.Data)}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Additional parsed data if available */}
-                          {activeXrayChunk.parsedData && Object.keys(activeXrayChunk.parsedData).length > 0 && 
-                           !['summary', 'Summary', 'data', 'Data'].includes(Object.keys(activeXrayChunk.parsedData)[0]) && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>Additional Metadata:</div>
-                              <div 
-                                className="p-2 rounded border text-sm"
-                                style={{ 
-                                  backgroundColor: themeStyles.cardBackground,
-                                  borderColor: themeStyles.borderColor
-                                }}
-                              >
-                                {renderJsonData(activeXrayChunk.parsedData)}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Page references */}
-                          {activeXrayChunk.pageNumbers && activeXrayChunk.pageNumbers.length > 0 && (
-                            <div className="mb-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: themeStyles.xrayColor }}>
-                                Pages: {activeXrayChunk.pageNumbers.join(', ')}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Bounding boxes */}
-                          {activeXrayChunk.boundingBoxes && activeXrayChunk.boundingBoxes.length > 0 && (
-                            <div className="text-xs opacity-70">
-                              This content has {activeXrayChunk.boundingBoxes.length} defined region{activeXrayChunk.boundingBoxes.length !== 1 ? 's' : ''} in the document.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Content chunks list */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {allXrayChunks.map((item, index) => (
-                          <div 
-            key={`chunk-${index}`}
-            className={`p-3 border rounded cursor-pointer transition-all ${
-              activeXrayChunk && activeXrayChunk.id === item.chunk.id ? 'ring-2' : 'hover:shadow-sm'
-            }`}
-            onClick={() => setActiveXrayChunk(item.chunk)}
-            style={{ 
-              backgroundColor: themeStyles.cardBackground,
-              borderColor: themeStyles.borderColor,
-              boxShadow: activeXrayChunk && activeXrayChunk.id === item.chunk.id 
-                ? `0 0 0 2px ${themeStyles.xrayColor}` 
-                : 'none'
-            }}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center">
-                {getContentTypeIcon(item.chunk.contentType)}
-                <span 
-                  className="ml-1.5 text-sm font-medium"
-                  style={{ color: themeStyles.xrayColor }}
-                >
-                  {item.chunk.contentType?.join(', ') || 'Text'} 
-                </span>
-              </div>
-              <span className="text-xs opacity-60">#{item.chunk.id}</span>
-            </div>
-            
-            {/* Source file */}
-            <div className="text-xs opacity-70 mb-1 flex items-center">
-              {getDocumentIcon(item.source.fileName)}
-              <span className="ml-1 truncate">{item.source.fileName}</span>
-            </div>
-            
-            {/* Display parsed data if available, otherwise show text preview */}
-            {item.chunk.parsedData ? (
-              <div className="text-sm mt-2 mb-1">
-                <strong className="block text-xs text-gray-500 mb-1">Summary:</strong>
-                <div className="line-clamp-3">
-                  {item.chunk.parsedData.summary || item.chunk.parsedData.Summary || 'No summary available'}
-                </div>
-                
-                {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords) && (
-                  <div className="mt-2">
-                    <strong className="block text-xs text-gray-500 mb-1">Keywords:</strong>
-                    <div className="flex flex-wrap gap-1">
-                      {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords || '')
-                        .split(',')
-                        .slice(0, 3)
-                        .map((keyword, i) => (
-                          <span 
-                            key={i}
-                            className="px-1.5 py-0.5 text-xs rounded-full"
-                            style={{ 
-                              backgroundColor: `${themeStyles.xrayColor}15`,
-                              color: themeStyles.xrayColor
-                            }}
-                          >
-                            {keyword.trim()}
-                          </span>
-                        ))
-                      }
-                      {(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords || '').split(',').length > 3 && (
-                        <span className="text-xs opacity-70">+{(item.chunk.parsedData.keywords || item.chunk.parsedData.Keywords).split(',').length - 3} more</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-sm line-clamp-3 mt-2 mb-1">
-                {item.chunk.sectionSummary || item.chunk.text?.substring(0, 150) || 'No preview available'}
-                {(item.chunk.text && item.chunk.text.length > 150) ? '...' : ''}
-              </div>
-            )}
-            
-            {/* Data indicator */}
-            {(item.chunk.json || item.chunk.parsedData?.data || item.chunk.parsedData?.Data) && (
-              <div className="mt-2 text-xs" style={{ color: themeStyles.xrayColor }}>
-                <div className="flex items-center">
-                  <FileJson size={12} className="mr-1" />
-                  <span>Contains structured data</span>
-                </div>
-              </div>
-            )}
-            
-            {/* Page numbers */}
-            {item.chunk.pageNumbers && item.chunk.pageNumbers.length > 0 && (
-              <div className="mt-2 text-xs opacity-70">
-                Page{item.chunk.pageNumbers.length > 1 ? 's' : ''}: {item.chunk.pageNumbers.join(', ')}
-              </div>
-            )}
-          </div>
-                        ))}
-                      </div>
-                      
-                      {/* Empty state */}
-                      {allXrayChunks.length === 0 && (
-                        <div className="flex flex-col items-center justify-center p-8 text-center">
-                          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4 opacity-50">
-                            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                            <path d="M12 12 6 6"/>
-                            <path d="M12 6v6"/>
-                            <path d="M21 9V3h-6"/>
-                          </svg>
-                          <h4 className="text-lg font-medium mb-2" style={{ color: themeStyles.xrayColor }}>No content chunks found</h4>
-                          <p className="text-sm opacity-70 max-w-md">
-                            {xrayContentFilter 
-                              ? `No ${xrayContentFilter} content was found in the X-Ray analysis. Try selecting a different content type.`
-                              : 'No X-Ray content chunks were found for this document. Try selecting a different document.'}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
+              <XRayAnalysis
+                xrayViewMode={xrayViewMode}
+                setXrayViewMode={setXrayViewMode}
+                xrayContentFilter={xrayContentFilter}
+                setXrayContentFilter={setXrayContentFilter}
+                activeXrayChunk={activeXrayChunk}
+                setActiveXrayChunk={setActiveXrayChunk}
+                selectedSourceId={selectedSourceId}
+                setSelectedSourceId={setSelectedSourceId}
+                sources={sources}
+                allXrayChunks={allXrayChunks}
+                onCitationClicked={onCitationClicked}
+                themeStyles={themeStyles}
+              />
             )}
             
             {/* Images tab */}
@@ -2537,7 +1111,10 @@ export default function EnhancedAnswer({
                           />
                           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200">
                             <div className="absolute top-2 right-2 p-1 rounded-full bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-200">
-                              <ZoomIn size={16} className="text-white opacity-0 group-hover:opacity-100 transition-all duration-200" />
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-0 group-hover:opacity-100 transition-all duration-200">
+                                <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 0 0 1.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 0 0-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 0 0 5.34-1.48l.27.28v.79l4.25 4.25c.41.41 1.08.41 1.49 0 .41-.41.41-1.08 0-1.49L15.5 14z"></path>
+                                <path d="M9.5 9.5v3M11 11H8"></path>
+                              </svg>
                             </div>
                           </div>
                           <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-black bg-opacity-40 text-white">
@@ -2577,7 +1154,6 @@ export default function EnhancedAnswer({
                               style={{ borderColor: themeStyles.borderColor }}
                             >
                               <div className="flex items-center">
-                                {getDocumentIcon(source.fileName, source.type)}
                                 <h4 className="ml-2 font-medium text-sm">
                                   {source.fileName}
                                 </h4>

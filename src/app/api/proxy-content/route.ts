@@ -285,7 +285,7 @@ export async function GET(req: NextRequest) {
 
     try {
       const token = await getAzureToken();
-      const backendUrl = `${process.env.NEXT_PUBLIC_API_URL}/content/${encodeURIComponent(filename)}`;
+      const backendUrl = `${process.env.NEXT_PUBLIC_BACKEND_URL}/content/${encodeURIComponent(filename)}`;
       console.log(`Fetching from Azure backend: ${backendUrl}`);
       
       const backendResponse = await fetch(backendUrl, {
