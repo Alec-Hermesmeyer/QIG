@@ -71,6 +71,16 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   // Handle potentially empty excerpts array in the updated type
   const excerpts = document.excerpts || [];
 
+  // HARDCODED URL for document viewing
+  const openDocument = () => {
+    window.open("https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf", "_blank");
+  };
+
+  // Helper function for "View in Document" button - still using onCitationClicked
+  const viewInDocument = (id: string) => {
+    onCitationClicked(id);
+  };
+
   return (
     <div
       className="border-b p-4"
@@ -408,7 +418,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                 
                 <div className="mt-3 flex justify-end">
                   <button
-                    onClick={() => onCitationClicked && onCitationClicked(documentId)}
+                    onClick={() => viewInDocument(documentId)}
                     className="text-xs px-2 py-1 rounded flex items-center"
                     style={{ 
                       backgroundColor: `${themeStyles.primaryColor}10`,
@@ -453,7 +463,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
         <button
           onClick={() => {
             setCurrentDocumentId(null);
-            onCitationClicked(documentId);
+            openDocument();
           }}
           className="text-white text-sm px-3 py-1.5 rounded flex items-center"
           style={{ backgroundColor: themeStyles.secondaryColor }}
