@@ -118,6 +118,11 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
     exit: { opacity: 0, y: -10 }
   };
 
+  // HARDCODED URL for document viewing
+  const openDocument = () => {
+    window.open("https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf", "_blank");
+  };
+
   return (
     <motion.div
       key="xray-tab"
@@ -366,9 +371,7 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
                         
                         <button
                           className="text-xs text-white px-2 py-1 rounded flex items-center"
-                          onClick={() => {
-                            onCitationClicked(sourceId);
-                          }}
+                          onClick={openDocument}
                           style={{ backgroundColor: themeStyles.xrayColor }}
                         >
                           <ExternalLink size={12} className="mr-1" />
