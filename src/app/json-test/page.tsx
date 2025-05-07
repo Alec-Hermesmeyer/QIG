@@ -2,18 +2,19 @@
 
 import { useState } from 'react';
 import { processCompanyData, CompanyData } from '@/utils/jsonProcessor';
-import TestPage from '@/components/TestPage';
+import EnhancedTestPage from '@/components/TestPage';
 
 // Default sample JSON in case the user doesn't upload one
 import sampleJSON from '@/data/sampleJson';
 
-const JsonLoaderTestPage = () => {
+const EnhancedJsonLoader = () => {
   const [jsonData, setJsonData] = useState<any>(sampleJSON);
   const [processedData, setProcessedData] = useState<CompanyData | null>(
     processCompanyData(sampleJSON)
   );
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showJson, setShowJson] = useState<boolean>(false);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -80,12 +81,19 @@ const JsonLoaderTestPage = () => {
           )}
         </div>
         
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <button
             onClick={resetToSample}
             className="py-2 px-4 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded-md"
           >
             Reset to Sample JSON
+          </button>
+          
+          <button
+            onClick={() => setShowJson(!showJson)}
+            className="py-2 px-4 bg-blue-100 hover:bg-blue-200 text-blue-800 font-medium rounded-md"
+          >
+            {showJson ? 'Hide JSON Structure' : 'Show JSON Structure'}
           </button>
           
           {isLoading ? (
@@ -96,18 +104,20 @@ const JsonLoaderTestPage = () => {
         </div>
       </div>
       
-      {/* JSON Structure Display */}
-      <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-        <h2 className="text-xl font-bold mb-4">JSON Structure</h2>
-        <div className="border rounded-lg p-4 bg-gray-50 max-h-60 overflow-auto">
-          <pre className="text-xs">{JSON.stringify(jsonData, null, 2)}</pre>
+      {/* JSON Structure Display (collapsible) */}
+      {showJson && (
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          <h2 className="text-xl font-bold mb-4">JSON Structure</h2>
+          <div className="border rounded-lg p-4 bg-gray-50 max-h-96 overflow-auto">
+            <pre className="text-xs">{JSON.stringify(jsonData, null, 2)}</pre>
+          </div>
         </div>
-      </div>
+      )}
       
       {/* Dynamic UI Preview */}
       <h2 className="text-2xl font-bold mb-4">Dynamic UI Preview</h2>
       {processedData ? (
-        <TestPage customData={processedData} />
+        <EnhancedTestPage customData={processedData} jsonData={jsonData} />
       ) : (
         <div className="bg-white rounded-lg shadow-md p-6 text-center">
           <p className="text-gray-600">
@@ -119,4 +129,4 @@ const JsonLoaderTestPage = () => {
   );
 };
 
-export default JsonLoaderTestPage;
+export default EnhancedJsonLoader;
