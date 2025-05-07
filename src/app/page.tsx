@@ -882,7 +882,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   {[
                     "What contracts are available for review?",
                     `How do our standard Spinakr service agreements compare to industry standards for liability clauses?`,
-                    "Can you analyze the risks in our latest client contract and highlight areas that need legal review?",
+                    "How do Spinakr's current NDA templates compare to industry standards?",
                   ].map((question, index) => (
                     <motion.button
                       key={question}
