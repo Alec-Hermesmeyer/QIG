@@ -1,21 +1,25 @@
-// Updated AuthContext.tsx with organization support
+// lib/auth/AuthContext.tsx
 'use client';
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { Session, User } from '@supabase/supabase-js';
+import { getOrganizationLogoUrl } from '@/lib/supabase/storage';
 
 // Define organization type
 interface Organization {
   id: string;
   name: string;
+  logo_url?: string | null;
+  theme_color?: string;
 }
 
 // Define profile type
 interface Profile {
   id: string;
   organization_id: string | null;
-  full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
   avatar_url: string | null;
 }
 
@@ -24,11 +28,14 @@ interface AuthContextType {
   session: Session | null;
   profile: Profile | null;
   organization: Organization | null;
+  organizationLogo: string;
   isLoading: boolean;
+  isQIGOrganization: boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string, organizationName: string) => Promise<{ error: any, user: any }>;
   signOut: () => Promise<void>;
   getUsersInOrganization: () => Promise<{ data: Profile[] | null, error: any }>;
+  getAllUsers: () => Promise<{ data: any[] | null, error: any }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,41 +45,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [organizationLogo, setOrganizationLogo] = useState<string>('/defaultLogo.png');
   const [isLoading, setIsLoading] = useState(true);
+  const [isQIGOrganization, setIsQIGOrganization] = useState(false);
   const router = useRouter();
 
-  // Fetch profile and organization data
-  const fetchUserData = async (userId: string) => {
-    // Get profile
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
+ // Fetch profile and organization data
+ const fetchUserData = async (userId: string) => {
+  // Get profile
+  const { data: profileData, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (profileError) {
+    console.error('Error fetching profile:', profileError);
+    return;
+  }
+
+  setProfile(profileData);
+
+  // If profile has an organization, fetch it
+  if (profileData.organization_id) {
+    const { data: orgData, error: orgError } = await supabase
+      .from('organizations')
       .select('*')
-      .eq('id', userId)
+      .eq('id', profileData.organization_id)
       .single();
 
-    if (profileError) {
-      console.error('Error fetching profile:', profileError);
+    if (orgError) {
+      console.error('Error fetching organization:', orgError);
       return;
     }
 
-    setProfile(profileData);
-
-    // If profile has an organization, fetch it
-    if (profileData.organization_id) {
-      const { data: orgData, error: orgError } = await supabase
-        .from('organizations')
-        .select('*')
-        .eq('id', profileData.organization_id)
-        .single();
-
-      if (orgError) {
-        console.error('Error fetching organization:', orgError);
-        return;
-      }
-
-      setOrganization(orgData);
+    setOrganization(orgData);
+    
+    // Use our API route for organization logo
+    if (orgData.id) {
+      setOrganizationLogo(`/api/org-logo/${orgData.id}`);
+    } else {
+      setOrganizationLogo('/defaultLogo.png');
     }
-  };
+    
+    // Check if this is the QIG organization
+    const isQIG = orgData.name === 'QIG';
+    setIsQIGOrganization(isQIG);
+  }
+};
 
   useEffect(() => {
     // Get initial session
@@ -101,6 +121,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           setProfile(null);
           setOrganization(null);
+          setOrganizationLogo('/defaultLogo.png');
+          setIsQIGOrganization(false);
         }
         
         setIsLoading(false);
@@ -114,6 +136,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    
+    // If successful login, redirect to main page
+    if (!error) {
+      router.push('/');
+    }
+    
     return { error };
   };
 
@@ -188,17 +216,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return { data, error };
   };
+  
+  // Get all users (for QIG organization only)
+  const getAllUsers = async () => {
+    if (!isQIGOrganization) {
+      return { data: null, error: new Error('Not authorized to view all users') };
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*, organizations(name)');
+
+    return { data, error };
+  };
 
   const value = {
     user,
     session,
     profile,
     organization,
+    organizationLogo,
     isLoading,
+    isQIGOrganization,
     signIn,
     signUp,
     signOut,
     getUsersInOrganization,
+    getAllUsers,
   };
 
   return (

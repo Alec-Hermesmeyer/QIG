@@ -2,6 +2,7 @@
 import { AuthProvider } from '@/lib/auth/AuthContext';
 import './globals.css';
 import type { Metadata } from 'next';
+import { ToastProvider } from "@/components/ui/toast";
 
 export const metadata: Metadata = {
   title: 'Contract Analyzer',
@@ -16,9 +17,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+      <ToastProvider>
         <AuthProvider>
           {children}
         </AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );

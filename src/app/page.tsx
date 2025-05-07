@@ -174,7 +174,7 @@ function SettingsSidebar({
 }
 
 export default function Page() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, organization, profile, isQIGOrganization, organizationLogo } = useAuth();
   const router = useRouter();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversationStarted, setConversationStarted] = useState(false);
@@ -184,6 +184,8 @@ export default function Page() {
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [useStorageFallback, setUseStorageFallback] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
 
   // Load settings from localStorage on init with safety checks
   const loadSavedSettings = (): Partial<SettingsState> => {
@@ -646,31 +648,56 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
     );
   }
 
+  // Get organization-specific background color
+  const getHeaderBgColor = () => {
+    if (!organization) return "bg-red-500"; // Default fallback
+    return organization.theme_color || "bg-red-500"; // Use the stored theme color with fallback
+  };
+
   return (
     <ProtectedRoute>
       <RAGProvider>
         <div className="min-h-screen flex flex-col">
           {/* Top Navigation */}
           <motion.header
-            className="bg-red-500 text-white"
+            className={getHeaderBgColor() + " text-white"}
             initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.5 }}
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
-              <Link href="/" className="text-lg font-medium cursor-pointer">
-                <Image
-                  src='/austinIndustries.png'
-                  alt='Spinakr Logo'
-                  height={200}
-                  width={200} />
-              </Link>
+            <Link href="/" className="text-lg font-medium cursor-pointer">
+  <div className="relative h-[50px] w-[200px]">
+    <img
+      src={imgError ? '/defaultLogo.png' : organizationLogo}
+      alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
+      fill
+      style={{ objectFit: 'contain' }}
+      onError={() => setImgError(true)}
+      priority
+    />
+  </div>
+</Link>
               <motion.div
                 className="flex items-center gap-6"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.5 }}
               >
+                {/* Organization name display */}
+                {organization && (
+                  <motion.div
+                    className="hidden md:block"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3, duration: 0.5 }}
+                  >
+                    <span className="text-sm font-medium">
+                      {organization.name}
+                    </span>
+                  </motion.div>
+                )}
+                
                 {/* User info and logout */}
                 {user && (
                   <motion.div
@@ -715,6 +742,21 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               </div>
 
               <div className="flex items-center gap-2 cursor-pointer">
+                {/* Organization Settings Button - Only show for admins or QIG */}
+                {isQIGOrganization && (
+                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="flex items-center gap-2 cursor-pointer"
+                      onClick={() => router.push('/settings')}
+                    >
+                      <Settings className="h-4 w-4" />
+                      Organization Settings
+                    </Button>
+                  </motion.div>
+                )}
+
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Button variant="ghost"
                     size="sm"
@@ -734,6 +776,22 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               </div>
             </div>
           </motion.div>
+
+          {/* QIG Organization Admin Notice - Only shown for QIG members */}
+          {/* {isQIGOrganization && (
+            <div className="bg-blue-50 border-l-4 border-blue-500 p-2 mx-auto max-w-7xl mt-2">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <Info className="h-5 w-5 text-blue-500" />
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-blue-700">
+                    QIG Admin View: You have access to all organization data
+                  </p>
+                </div>
+              </div>
+            </div>
+          )} */}
 
           {/* Storage fallback warning for Safari in private mode */}
           {useStorageFallback && (
@@ -774,7 +832,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     </motion.h1>
                     {/* Decorative Stars */}
                     <motion.div
-                      className="absolute -top-36 right-[calc(50%-30px)] text-red-500"
+                      className={`absolute -top-36 right-[calc(50%-30px)] ${organization?.name === 'QIG' ? 'text-blue-500' : 'text-red-500'}`}
                       initial={{ rotate: -10, opacity: 0 }}
                       animate={{ rotate: 0, opacity: 1 }}
                       transition={{ delay: 0.8, duration: 0.5 }}
@@ -814,7 +872,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </motion.p>
                 </motion.div>
 
-                {/* Example Questions */}
+                {/* Example Questions - Customize based on organization */}
                 <motion.div
                   className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl mb-8"
                   variants={staggerChildren}
@@ -823,7 +881,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 >
                   {[
                     "What contracts are available for review?",
-                    "What does a Construction manager at Risk do?",
+                    `What does a ${organization?.name === 'QIG' ? 'Quality Improvement Group' : 'Construction manager at Risk'} do?`,
                     "What are preconstruction services?",
                   ].map((question, index) => (
                     <motion.button

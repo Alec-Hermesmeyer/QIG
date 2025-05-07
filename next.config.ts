@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
     // Ignore TypeScript errors during build
     ignoreBuildErrors: true,
   },
+  images: {
+    domains: ['toyvsnymdhiwnywkbufd.supabase.co'],
+    // You can add a loader for even more control
+    loader: 'default',
+  },
 };
 
 export default nextConfig;
