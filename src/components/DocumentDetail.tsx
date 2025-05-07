@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExternalLink, X, FileIcon, FileText, Table, Image, List, Code, Calendar, DollarSign, BookOpen, AlertCircle, Activity, Zap, Loader, Globe } from "lucide-react";
@@ -17,7 +17,7 @@ interface DocumentDetailProps {
   // New props for X-Ray functionality
   onStartXRayAnalysis?: (documentId: string) => Promise<void>;
   isXRayLoading?: boolean;
-  documentViewerUrl?: string; // Make the URL configurable instead of hardcoded
+  defaultDocumentViewerUrl?: string; // Default URL as fallback
 }
 
 // Helper function to get document icon
@@ -69,9 +69,11 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   onCitationClicked,
   onStartXRayAnalysis,
   isXRayLoading = false,
-  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf" // Default URL if not provided
+  defaultDocumentViewerUrl = "" // Empty string default
 }) => {
-  // Local loading state for better UX
+  // Add state for document URL and debug info
+  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
+  const [urlSource, setUrlSource] = useState<string>("none");
   const [localXRayLoading, setLocalXRayLoading] = useState(false);
   const isLoading = isXRayLoading || localXRayLoading;
 
@@ -82,9 +84,61 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   // Handle potentially empty excerpts array in the updated type
   const excerpts = document.excerpts || [];
 
+  // Effect to extract the source URL when document changes
+  useEffect(() => {
+    // Check specifically for the metadata.sourceUrl field first (lowercase 'u')
+    if (document.metadata?.sourceUrl) {
+      console.log('Found sourceUrl in metadata:', document.metadata.sourceUrl);
+      setDocumentUrl(document.metadata.sourceUrl);
+      setUrlSource("metadata.sourceUrl");
+      return;
+    }
+    
+    // Check for metadata.sourceURL (uppercase 'URL')
+    if (document.metadata?.sourceURL) {
+      console.log('Found sourceURL in metadata:', document.metadata.sourceURL);
+      setDocumentUrl(document.metadata.sourceURL);
+      setUrlSource("metadata.sourceURL");
+      return;
+    }
+    
+    // Then try other possible locations as fallbacks
+    if (document.sourceURL) {
+      console.log('Found sourceURL directly on document:', document.sourceURL);
+      setDocumentUrl(document.sourceURL);
+      setUrlSource("document.sourceURL");
+      return;
+    }
+    
+    if (document.url) {
+      console.log('Found url directly on document:', document.url);
+      setDocumentUrl(document.url);
+      setUrlSource("document.url");
+      return;
+    }
+    
+    // If nothing found, use default
+    if (defaultDocumentViewerUrl) {
+      console.log('No source URL found, using default:', defaultDocumentViewerUrl);
+      setDocumentUrl(defaultDocumentViewerUrl);
+      setUrlSource("defaultDocumentViewerUrl");
+    } else {
+      console.log('No source URL found and no default provided for document:', document.id);
+      setDocumentUrl(null);
+      setUrlSource("none");
+    }
+  }, [document, defaultDocumentViewerUrl]);
+
   // Function to open document in viewer
   const openDocument = () => {
-    window.open(documentViewerUrl, "_blank", "noopener,noreferrer");
+    if (!documentUrl) {
+      console.error('No URL available to open document:', document.id);
+      alert('Sorry, no URL is available to open this document.');
+      return;
+    }
+    
+    console.log(`Opening document URL (source: ${urlSource}):`, documentUrl);
+    window.open(documentUrl, "_blank", "noopener,noreferrer");
   };
 
   // Helper function for "View in Document" button - still using onCitationClicked
@@ -107,6 +161,16 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
     }
   };
 
+  // Debug section - shown only in development mode
+  const debugUrlSection = process.env.NODE_ENV === 'development' && (
+    <div className="mt-2 mb-3 text-xs bg-yellow-50 p-2 rounded border border-yellow-200">
+      <div><strong>Debug - URL source:</strong> {urlSource}</div>
+      <div><strong>Document URL:</strong> {documentUrl || 'None found'}</div>
+      <div className="mt-1"><strong>Document ID:</strong> {document.id}</div>
+      <div><strong>Document fileName:</strong> {document.fileName || document.title || document.name}</div>
+    </div>
+  );
+
   return (
     <div
       className="border-b p-4"
@@ -115,6 +179,9 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
         backgroundColor: `${themeStyles.secondaryColor}10`
       }}
     >
+      {/* Show debug section in development */}
+      {debugUrlSection}
+    
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center">
           {getDocumentIcon(fileName, document.type)}
@@ -575,6 +642,7 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
           }}
           className="text-white text-sm px-3 py-1.5 rounded flex items-center"
           style={{ backgroundColor: themeStyles.secondaryColor }}
+          disabled={!documentUrl}
         >
           <ExternalLink size={14} className="mr-1.5" />
           View Full Document

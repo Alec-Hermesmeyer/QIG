@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,7 +18,7 @@ interface XRayAnalysisProps {
   allXrayChunks: {chunk: XRayChunk, sourceId: string, source: Source}[];
   onCitationClicked: (id: string) => void;
   themeStyles: any;
-  documentViewerUrl?: string; // Make the URL configurable instead of hardcoded
+  defaultDocumentViewerUrl?: string; // Default URL as fallback
 }
 
 // Content type icons as separate component for better reusability
@@ -104,28 +104,11 @@ const DocumentSummaryCard: React.FC<{
   index: number;
   themeStyles: any;
   onViewDetails: (id: string) => void;
-  onOpenDocument: () => void;
-}> = ({ source, index, themeStyles, onViewDetails, onOpenDocument }) => {
+  onOpenDocument: (sourceUrl: string | null) => void; // Modified to accept sourceUrl
+  documentUrl: string | null;
+}> = ({ source, index, themeStyles, onViewDetails, onOpenDocument, documentUrl }) => {
   const fileName = source.fileName || source.title || source.name || 'Unknown Document';
   const sourceId = source.id ? String(source.id) : '';
-  
-  // Calculate content type statistics
-  const contentStats = useMemo(() => {
-    if (!source.xray?.chunks) return [];
-    
-    const contentTypes = new Map();
-    source.xray.chunks.forEach(chunk => {
-      if (chunk.contentType) {
-        chunk.contentType.forEach(type => {
-          contentTypes.set(type, (contentTypes.get(type) || 0) + 1);
-        });
-      } else {
-        contentTypes.set('text', (contentTypes.get('text') || 0) + 1);
-      }
-    });
-    
-    return Array.from(contentTypes.entries());
-  }, [source.xray?.chunks]);
   
   return (
     <div 
@@ -196,7 +179,7 @@ const DocumentSummaryCard: React.FC<{
         )}
         
         {/* Content Statistics */}
-        {contentStats.length > 0 && (
+        {source.xray?.chunks && source.xray.chunks.length > 0 && (
           <div className="mb-4">
             <div className="flex items-center text-xs mb-1 font-medium" style={{ color: themeStyles.xrayColor }}>
               <BarChart2 size={12} className="mr-1" />
@@ -204,24 +187,44 @@ const DocumentSummaryCard: React.FC<{
             </div>
             
             <div className="mt-2 grid grid-cols-3 gap-2">
-              {contentStats.map(([type, count]) => (
-                <div 
-                  key={type}
-                  className="border rounded p-2 text-center"
-                  style={{ 
-                    borderColor: themeStyles.borderColor,
-                    backgroundColor: `${themeStyles.xrayColor}05`
-                  }}
-                >
-                  <div className="text-lg font-semibold" style={{ color: themeStyles.xrayColor }}>
-                    {count}
+              {useMemo(() => {
+                const contentTypes = new Map();
+                source.xray.chunks.forEach(chunk => {
+                  if (chunk.contentType) {
+                    chunk.contentType.forEach(type => {
+                      contentTypes.set(type, (contentTypes.get(type) || 0) + 1);
+                    });
+                  } else {
+                    contentTypes.set('text', (contentTypes.get('text') || 0) + 1);
+                  }
+                });
+                
+                return Array.from(contentTypes.entries()).map(([type, count]) => (
+                  <div 
+                    key={type}
+                    className="border rounded p-2 text-center"
+                    style={{ 
+                      borderColor: themeStyles.borderColor,
+                      backgroundColor: `${themeStyles.xrayColor}05`
+                    }}
+                  >
+                    <div className="text-lg font-semibold" style={{ color: themeStyles.xrayColor }}>
+                      {count}
+                    </div>
+                    <div className="text-xs capitalize opacity-80">
+                      {type}{count !== 1 ? 's' : ''}
+                    </div>
                   </div>
-                  <div className="text-xs capitalize opacity-80">
-                    {type}{count !== 1 ? 's' : ''}
-                  </div>
-                </div>
-              ))}
+                ));
+              }, [source.xray.chunks])}
             </div>
+          </div>
+        )}
+        
+        {/* Debug URL info - show only in development */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-3 text-xs bg-yellow-50 p-1 rounded">
+            <div>Document URL: {documentUrl || 'None'}</div>
           </div>
         )}
         
@@ -241,9 +244,10 @@ const DocumentSummaryCard: React.FC<{
           
           <button
             className="text-xs text-white px-2 py-1 rounded flex items-center"
-            onClick={onOpenDocument}
+            onClick={() => onOpenDocument(documentUrl)} // Pass the sourceUrl directly
             aria-label={`Open ${fileName} document`}
             style={{ backgroundColor: themeStyles.xrayColor }}
+            disabled={!documentUrl}
           >
             <ExternalLink size={12} className="mr-1" />
             Open Document
@@ -565,8 +569,54 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
   allXrayChunks,
   onCitationClicked,
   themeStyles,
-  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf" // Default URL if not provided
+  defaultDocumentViewerUrl = "" // Default URL as fallback
 }) => {
+  // State to store document URLs
+  const [documentUrls, setDocumentUrls] = useState<Record<string, string | null>>({});
+  
+  // Effect to extract URLs for all sources when they change
+  useEffect(() => {
+    const newUrls: Record<string, string | null> = {};
+    
+    sources.forEach(source => {
+      const sourceId = source.id ? String(source.id) : '';
+      if (!sourceId) return;
+      
+      // First check the specific metadata.sourceUrl path (lowercase 'u')
+      if (source.metadata?.sourceUrl) {
+        console.log(`Found sourceUrl in metadata for source ${sourceId}:`, source.metadata.sourceUrl);
+        newUrls[sourceId] = source.metadata.sourceUrl;
+        return;
+      }
+      
+      // Check for metadata.sourceURL (uppercase 'URL')
+      if (source.metadata?.sourceURL) {
+        console.log(`Found sourceURL in metadata for source ${sourceId}:`, source.metadata.sourceURL);
+        newUrls[sourceId] = source.metadata.sourceURL;
+        return;
+      }
+      
+      // Then try other possible locations as fallbacks
+      if (source.sourceURL) {
+        console.log(`Found sourceURL directly on source ${sourceId}:`, source.sourceURL);
+        newUrls[sourceId] = source.sourceURL;
+        return;
+      }
+      
+      if (source.url) {
+        console.log(`Found url directly on source ${sourceId}:`, source.url);
+        newUrls[sourceId] = source.url;
+        return;
+      }
+      
+      // If nothing found, store null
+      console.log(`No source URL found for source ${sourceId}`);
+      newUrls[sourceId] = null;
+    });
+    
+    setDocumentUrls(newUrls);
+  }, [sources]);
+
   // Animation variants
   const tabAnimation = {
     initial: { opacity: 0, y: 10 },
@@ -600,9 +650,31 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
     setSelectedSourceId(sourceId);
   }, [setXrayViewMode, setSelectedSourceId]);
 
-  const handleOpenDocument = useCallback(() => {
-    window.open(documentViewerUrl, "_blank", "noopener,noreferrer");
-  }, [documentViewerUrl]);
+  // Updated to accept an explicit source URL argument
+  const handleOpenDocument = useCallback((sourceUrl: string | null) => {
+    if (sourceUrl) {
+      // If we have a source URL, use it directly
+      console.log('Opening specific document URL:', sourceUrl);
+      window.open(sourceUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    
+    // If no URL was provided, see if we have one stored for the selected source
+    if (selectedSourceId && documentUrls[selectedSourceId]) {
+      console.log('Opening stored document URL for source:', selectedSourceId, documentUrls[selectedSourceId]);
+      window.open(documentUrls[selectedSourceId], "_blank", "noopener,noreferrer");
+      return;
+    }
+    
+    // Last resort - fall back to default
+    if (defaultDocumentViewerUrl) {
+      console.log('No source URL found, using default:', defaultDocumentViewerUrl);
+      window.open(defaultDocumentViewerUrl, "_blank", "noopener,noreferrer");
+    } else {
+      console.error('No URL available to open document');
+      alert('Sorry, no URL is available to open this document.');
+    }
+  }, [selectedSourceId, documentUrls, defaultDocumentViewerUrl]);
 
   return (
     <motion.div
@@ -704,6 +776,20 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
           </div>
         </div>
         
+        {/* Debug section - show in development mode */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-4 p-2 bg-yellow-50 rounded border border-yellow-200 text-xs">
+            <div><strong>Document URLs:</strong></div>
+            <ul>
+              {Object.entries(documentUrls).map(([id, url]) => (
+                <li key={id}>{id}: {url || 'None'}</li>
+              ))}
+            </ul>
+            <div><strong>Selected Source ID:</strong> {selectedSourceId || 'None'}</div>
+            <div><strong>Default URL:</strong> {defaultDocumentViewerUrl || 'None'}</div>
+          </div>
+        )}
+        
         {/* Summary view */}
         <div 
           role="tabpanel"
@@ -716,16 +802,22 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
               {/* Documents with X-Ray data */}
               {sources
                 .filter(source => source.xray)
-                .map((source, index) => (
-                  <DocumentSummaryCard
-                    key={`xray-summary-${index}`}
-                    source={source}
-                    index={index}
-                    themeStyles={themeStyles}
-                    onViewDetails={handleViewDetails}
-                    onOpenDocument={handleOpenDocument}
-                  />
-                ))}
+                .map((source, index) => {
+                  const sourceId = source.id ? String(source.id) : '';
+                  const documentUrl = sourceId ? documentUrls[sourceId] : null;
+                  
+                  return (
+                    <DocumentSummaryCard
+                      key={`xray-summary-${index}`}
+                      source={source}
+                      index={index}
+                      themeStyles={themeStyles}
+                      onViewDetails={handleViewDetails}
+                      onOpenDocument={handleOpenDocument}
+                      documentUrl={documentUrl}
+                    />
+                  );
+                })}
                 
               {/* No documents with X-Ray data */}
               {sources.filter(source => source.xray).length === 0 && (
