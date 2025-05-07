@@ -70,15 +70,25 @@ export async function GET(request: NextRequest) {
       );
     }
     
+    // Log organization name for debugging
+    console.log('Organization name:', organization.name);
+    
     // Define a mapping between organization names and bucket name patterns
     const orgToBucketMapping: Record<string, string[]> = {
       'Austin Industries': ['Austin Industries', 'Austin', 'AI'],
       'QIG': ['QIG', 'Quality Improvement Group'],
-      // Add more organizations as needed
+      'Spinakr': ['Spinakr', 'Spinaker', 'Spnkr'], 
+      // Add more variations if needed - ensure exact match to your database
     };
     
     // Default patterns to look for in bucket names
     let bucketPatterns = orgToBucketMapping[organization.name] || [organization.name];
+    
+    // Special case for Spinakr - add additional check
+    if (organization.name.toLowerCase().includes('spinak')) {
+      bucketPatterns = ['Spinakr', 'Spinaker', 'Spnkr'];
+      console.log('Spinakr organization detected, using patterns:', bucketPatterns);
+    }
     
     // Special case: QIG can see all buckets
     const isQIG = organization.name === 'QIG';
@@ -86,18 +96,32 @@ export async function GET(request: NextRequest) {
     // Filter buckets based on organization
     let filteredBuckets = response.buckets;
     
+    // Debug log all available buckets
+    console.log('All buckets before filtering:', response.buckets.map((b: any) => {
+      return {
+        id: b.bucket_id || b.bucketId || b.id || b.bId,
+        name: b.name || b.title || b.bucketName
+      };
+    }));
+    
     // If not QIG, filter buckets to only show those relevant to the organization
     if (!isQIG) {
       filteredBuckets = response.buckets.filter(bucket => {
         const bucketAny = bucket as any;
         const name = bucketAny.name || bucketAny.title || bucketAny.bucketName || '';
         
-        // Check if the bucket name contains any of the organization patterns
-        return bucketPatterns.some(pattern => 
+        // Debug log each bucket name evaluation
+        const matches = bucketPatterns.some(pattern => 
           name.toLowerCase().includes(pattern.toLowerCase())
         );
+        console.log(`Bucket "${name}" matches patterns for "${organization.name}": ${matches}`);
+        
+        // Check if the bucket name contains any of the organization patterns
+        return matches;
       });
     }
+    
+    console.log('Filtered buckets count:', filteredBuckets.length);
     
     // Process the filtered buckets
     const processedBuckets: ProcessedBucket[] = filteredBuckets.map(bucket => {
