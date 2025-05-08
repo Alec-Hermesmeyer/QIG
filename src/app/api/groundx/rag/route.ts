@@ -57,8 +57,7 @@ interface RagResponse {
       fileName?: string;
       text?: string;
       metadata?: Record<string, any>;
-      pageImages?: string[]; // Array of document page image URLs
-      thumbnails?: string[]; // Array of document thumbnail URLs
+      sourceUrl?: string; // Added this as a top-level field
       highlights?: string[]; // Highlighted matches from search
       hasXray?: boolean; // Flag indicating X-ray data is available
     }>;
@@ -174,26 +173,6 @@ function safeCacheStore<T>(cache: Record<string, CacheEntry<T>>, key: string, da
 }
 
 /**
- * Helper to fetch with timeout
- */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 5000): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-    clearTimeout(id);
-    return response;
-  } catch (error) {
-    clearTimeout(id);
-    throw error;
-  }
-}
-
-/**
  * Generate a cache key for search queries
  */
 function getSearchCacheKey(bucketId: number, query: string, limit: number): string {
@@ -270,8 +249,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       maxTokens = 2000,
       temperature = 0.3,
       model = "gpt-4-0125-preview",
-      tryRenderImages = true, // Flag to control whether to try document rendering
-      skipCache = isSafari || false // Skip cache for Safari or if explicitly requested
+      skipCache = false // Skip cache if explicitly requested
     } = body;
     
     console.log('RAG API request:', { 
@@ -282,7 +260,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       maxTokens,
       temperature,
       model,
-      tryRenderImages,
       skipCache,
       isSafari
     });
@@ -402,9 +379,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const text = result.text || result.suggestedText || '';
         let metadata = result.metadata || result.searchData || {};
         let highlights = result.highlight?.text || [];
-        let pageImages: string[] = [];
-        let thumbnails: string[] = [];
         let hasXray = false;
+        
+        // IMPORTANT: Extract sourceUrl as a top-level field
+        let sourceUrl = result.sourceUrl || null;
         
         console.log(`Processing search result ${index + 1}/${resultsToProcess.length}: ${fileName} (ID: ${documentId})`);
         
@@ -438,36 +416,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             
             if (docDetails?.document?.metadata) {
               metadata = { ...metadata, ...docDetails.document.metadata };
-            }
-            
-            // Extract page images if available in response
-            if (tryRenderImages && docDetails?.document?.pages) {
-              // For Safari, limit to fewer pages
-              const pagesToProcess = isSafari 
-                ? docDetails.document.pages.slice(0, 1) 
-                : docDetails.document.pages;
-                
-              pageImages = pagesToProcess
-                .filter(page => Boolean(page.imageUrl))
-                .map(page => page.imageUrl as string);
-                
-              thumbnails = pagesToProcess
-                .filter(page => Boolean(page.thumbnailUrl))
-                .map(page => page.thumbnailUrl as string);
-                
-              console.log(`Found ${pageImages.length} images and ${thumbnails.length} thumbnails in response`);
-            }
-            
-            // If no images found and not Safari, try constructing render URLs
-            if (tryRenderImages && pageImages.length === 0 && docDetails?.document?.pages && !isSafari) {
-              // Construct URLs without exposing API key in logs
-              const possibleRenderUrls = [
-                `${GROUNDX_BASE_URL}/documents/${documentId}/render`,
-                `${GROUNDX_BASE_URL}/documents/${documentId}/pages/1/render`
-              ];
               
-              console.log(`No image URLs found in response. Trying constructed URLs.`);
-              pageImages = [possibleRenderUrls[0]]; // Add first URL as a test
+              // Extra sourceURL extraction from metadata (with various possible case forms)
+              if (!sourceUrl) {
+                // Check for various possible property names
+                sourceUrl = docDetails.document.metadata.sourceUrl || 
+                            docDetails.document.metadata.sourceURL ||
+                            docDetails.document.metadata.source_url ||
+                            docDetails.document.metadata.source_URL ||
+                            docDetails.document.metadata.url ||
+                            docDetails.document.metadata.URL ||
+                            null;
+                            
+                // Log if we found it
+                if (sourceUrl) {
+                  console.log(`Found sourceUrl in document metadata: ${sourceUrl}`);
+                }
+              }
             }
             
             // Just check if X-ray data is available but don't fetch it
@@ -481,9 +446,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         }
         
-        // Extract source URL if available
-        if (result.sourceUrl) {
-          metadata.sourceUrl = result.sourceUrl;
+        // Move sourceUrl from metadata to top level if found in metadata
+        if (!sourceUrl && metadata.sourceUrl) {
+          sourceUrl = metadata.sourceUrl;
+          console.log(`Found sourceUrl in metadata: ${sourceUrl}`);
+        }
+        
+        // Also check for uppercase version
+        if (!sourceUrl && metadata.sourceURL) {
+          sourceUrl = metadata.sourceURL;
+          console.log(`Found sourceURL in metadata: ${sourceUrl}`);
         }
         
         // For Safari, truncate text to improve performance
@@ -495,9 +467,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           score,
           text: processedText,
           metadata,
+          sourceUrl, // Include as top-level field
           highlights,
-          pageImages,
-          thumbnails,
           hasXray
         };
       })
@@ -620,38 +591,21 @@ When responding:
     // 8. Return clean response
     const totalTime = Date.now() - startTime;
     
-    // For Safari, simplify the response significantly
-    const processedSources = enhancedResults.map(({ id, fileName, text, metadata, highlights, pageImages, thumbnails, hasXray }) => {
-      // For Safari, further limit response payload
-      if (isSafari) {
-        return { 
-          id, 
-          fileName, 
-          text: text.substring(0, 1000) + (text.length > 1000 ? '...' : ''),
-          metadata: { 
-            title: metadata.title || '',
-            hasImages: pageImages && pageImages.length > 0
-          },
-          pageImages: pageImages ? pageImages.slice(0, 1) : [], // Only include first image
-          thumbnails: thumbnails ? thumbnails.slice(0, 1) : [], // Only include first thumbnail
-          highlights: highlights ? highlights.slice(0, 2) : [], // Include just a couple of highlights
-          hasXray
-        };
-      }
+    // Prepare response with a consistent format for both Safari and other browsers
+    const processedSources = enhancedResults.map(({ id, fileName, text, metadata, sourceUrl, highlights, hasXray }) => {
+      const processedMetadata = isSafari 
+        ? { title: metadata.title || '' } // Minimal metadata for Safari
+        : metadata;
       
-      // Normal response for other browsers
       return { 
         id, 
         fileName, 
-        text, 
-        metadata: { 
-          ...metadata, 
-          hasImages: pageImages && pageImages.length > 0,
-          pageCount: pageImages?.length || 0
-        },
-        pageImages: pageImages || [], 
-        thumbnails: thumbnails || [],
-        highlights: highlights || [],
+        text: isSafari 
+          ? text.substring(0, 1000) + (text.length > 1000 ? '...' : '')
+          : text,
+        metadata: processedMetadata,
+        sourceUrl, // Important: Include sourceUrl at top level for all browsers
+        highlights: highlights ? (isSafari ? highlights.slice(0, 2) : highlights) : [],
         hasXray
       };
     });
@@ -681,13 +635,12 @@ When responding:
       }
     };
     
-    // Debug logging of final response structure
+    // Debug logging of final response structure with focus on sourceUrls
     console.log('Final response sources summary:', 
       finalResponse.searchResults.sources.map(s => ({
         id: s.id,
         fileName: s.fileName,
-        pageImagesCount: s.pageImages?.length || 0,
-        hasPageImages: Boolean(s.pageImages?.length),
+        sourceUrl: s.sourceUrl,
         hasXray: s.hasXray
       }))
     );

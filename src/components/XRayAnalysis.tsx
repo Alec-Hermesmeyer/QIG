@@ -21,6 +21,28 @@ interface XRayAnalysisProps {
   defaultDocumentViewerUrl?: string; // Default URL as fallback
 }
 
+// Helper function to safely open URLs across browsers
+const safeOpenUrl = (url: string) => {
+  try {
+    // First attempt - try to open in a new window
+    const newWindow = window.open(url, "_blank", "noopener,noreferrer");
+    
+    // If opening the window failed or was blocked
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+      console.log('Window.open failed, trying location.href as fallback');
+      
+      // Try fallback method with a slight delay
+      setTimeout(() => {
+        window.location.href = url;
+      }, 100);
+    }
+  } catch (error) {
+    console.error('Error opening URL:', error);
+    // Last resort fallback
+    window.location.href = url;
+  }
+};
+
 // Content type icons as separate component for better reusability
 const ContentTypeIcon: React.FC<{ contentType?: string[]; size?: number }> = ({ contentType, size = 16 }) => {
   if (!contentType || contentType.length === 0) 
@@ -42,6 +64,42 @@ const ContentTypeIcon: React.FC<{ contentType?: string[]; size?: number }> = ({ 
     return <FileIcon size={size} />;
   
   return <FileText size={size} />;
+};
+
+// Function to extract URL from document, checking all possible locations
+const extractDocumentUrl = (source: Source): string | null => {
+  // Check for all possible URL locations and case variations
+  const possibleUrls = [
+    // metadata variations - notice we check both lowercase and uppercase
+    source.metadata?.sourceUrl,
+    source.metadata?.sourceURL,
+    source.metadata?.url,
+    source.metadata?.URL,
+    
+    // direct properties on document
+    source.sourceUrl,
+    source.sourceURL,
+    source.url,
+    source.URL,
+    
+    // nested locations
+    source.xray?.metadata?.sourceUrl,
+    source.xray?.metadata?.sourceURL,
+    source.result?.metadata?.sourceUrl,
+    source.result?.metadata?.sourceURL,
+  ];
+  
+  // Find first non-empty URL
+  for (const url of possibleUrls) {
+    if (url && typeof url === 'string') {
+      const sourceId = source.id ? String(source.id) : 'unknown';
+      console.log(`Found URL in document ${sourceId}:`, url);
+      return url;
+    }
+  }
+  
+  // No URL found
+  return null;
 };
 
 // Separate the JSON renderer for clarity
@@ -104,7 +162,7 @@ const DocumentSummaryCard: React.FC<{
   index: number;
   themeStyles: any;
   onViewDetails: (id: string) => void;
-  onOpenDocument: (sourceUrl: string | null) => void; // Modified to accept sourceUrl
+  onOpenDocument: (e: React.MouseEvent, sourceUrl: string | null) => void; // Modified to accept event
   documentUrl: string | null;
 }> = ({ source, index, themeStyles, onViewDetails, onOpenDocument, documentUrl }) => {
   const fileName = source.fileName || source.title || source.name || 'Unknown Document';
@@ -225,6 +283,7 @@ const DocumentSummaryCard: React.FC<{
         {process.env.NODE_ENV === 'development' && (
           <div className="mb-3 text-xs bg-yellow-50 p-1 rounded">
             <div>Document URL: {documentUrl || 'None'}</div>
+            <div>Source ID: {sourceId}</div>
           </div>
         )}
         
@@ -244,7 +303,7 @@ const DocumentSummaryCard: React.FC<{
           
           <button
             className="text-xs text-white px-2 py-1 rounded flex items-center"
-            onClick={() => onOpenDocument(documentUrl)} // Pass the sourceUrl directly
+            onClick={(e) => onOpenDocument(e, documentUrl)} // Pass event and URL
             aria-label={`Open ${fileName} document`}
             style={{ backgroundColor: themeStyles.xrayColor }}
             disabled={!documentUrl}
@@ -394,6 +453,9 @@ const ChunkDetailView: React.FC<{
           <X size={16} />
         </button>
       </div>
+      
+      {/* Rest of the detail view stays the same */}
+      {/* ... */}
       
       {/* Parsed data summary if available */}
       {chunk.parsedData && (chunk.parsedData.summary || chunk.parsedData.Summary) && (
@@ -582,36 +644,8 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
       const sourceId = source.id ? String(source.id) : '';
       if (!sourceId) return;
       
-      // First check the specific metadata.sourceUrl path (lowercase 'u')
-      if (source.metadata?.sourceUrl) {
-        console.log(`Found sourceUrl in metadata for source ${sourceId}:`, source.metadata.sourceUrl);
-        newUrls[sourceId] = source.metadata.sourceUrl;
-        return;
-      }
-      
-      // Check for metadata.sourceURL (uppercase 'URL')
-      if (source.metadata?.sourceURL) {
-        console.log(`Found sourceURL in metadata for source ${sourceId}:`, source.metadata.sourceURL);
-        newUrls[sourceId] = source.metadata.sourceURL;
-        return;
-      }
-      
-      // Then try other possible locations as fallbacks
-      if (source.sourceURL) {
-        console.log(`Found sourceURL directly on source ${sourceId}:`, source.sourceURL);
-        newUrls[sourceId] = source.sourceURL;
-        return;
-      }
-      
-      if (source.url) {
-        console.log(`Found url directly on source ${sourceId}:`, source.url);
-        newUrls[sourceId] = source.url;
-        return;
-      }
-      
-      // If nothing found, store null
-      console.log(`No source URL found for source ${sourceId}`);
-      newUrls[sourceId] = null;
+      const url = extractDocumentUrl(source);
+      newUrls[sourceId] = url;
     });
     
     setDocumentUrls(newUrls);
@@ -650,30 +684,37 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
     setSelectedSourceId(sourceId);
   }, [setXrayViewMode, setSelectedSourceId]);
 
-  // Updated to accept an explicit source URL argument
-  const handleOpenDocument = useCallback((sourceUrl: string | null) => {
+  // Updated to accept an explicit event and source URL
+  const handleOpenDocument = useCallback((e: React.MouseEvent, sourceUrl: string | null) => {
+    e.preventDefault(); // Prevent any default behavior
+    
+    // Gather the URL to use
+    let urlToUse: string | null = null;
+    
     if (sourceUrl) {
-      // If we have a source URL, use it directly
-      console.log('Opening specific document URL:', sourceUrl);
-      window.open(sourceUrl, "_blank", "noopener,noreferrer");
-      return;
+      // If we have a source URL passed in, use it directly
+      urlToUse = sourceUrl;
+      console.log('Opening specific document URL:', urlToUse);
+    } else if (selectedSourceId && documentUrls[selectedSourceId]) {
+      // If no URL was provided, see if we have one stored for the selected source
+      urlToUse = documentUrls[selectedSourceId];
+      console.log('Opening stored document URL for source:', selectedSourceId, urlToUse);
+    } else if (defaultDocumentViewerUrl) {
+      // Last resort - fall back to default
+      urlToUse = defaultDocumentViewerUrl;
+      console.log('No source URL found, using default:', urlToUse);
     }
     
-    // If no URL was provided, see if we have one stored for the selected source
-    if (selectedSourceId && documentUrls[selectedSourceId]) {
-      console.log('Opening stored document URL for source:', selectedSourceId, documentUrls[selectedSourceId]);
-      window.open(documentUrls[selectedSourceId], "_blank", "noopener,noreferrer");
-      return;
-    }
-    
-    // Last resort - fall back to default
-    if (defaultDocumentViewerUrl) {
-      console.log('No source URL found, using default:', defaultDocumentViewerUrl);
-      window.open(defaultDocumentViewerUrl, "_blank", "noopener,noreferrer");
-    } else {
+    if (!urlToUse) {
       console.error('No URL available to open document');
       alert('Sorry, no URL is available to open this document.');
+      return;
     }
+    
+    // Use the safe open method
+    setTimeout(() => {
+      safeOpenUrl(urlToUse!);
+    }, 50);
   }, [selectedSourceId, documentUrls, defaultDocumentViewerUrl]);
 
   return (

@@ -58,6 +58,28 @@ const getContentTypeIcon = (contentType?: string[]) => {
   return <FileText size={12} />;
 };
 
+// Helper function to safely open URLs across browsers
+const safeOpenUrl = (url: string) => {
+  try {
+    // First attempt - try to open in a new window
+    const newWindow = window.open(url, "_blank", "noopener,noreferrer");
+    
+    // If opening the window failed or was blocked
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+      console.log('Window.open failed, trying location.href as fallback');
+      
+      // Try fallback method with a slight delay
+      setTimeout(() => {
+        window.location.href = url;
+      }, 100);
+    }
+  } catch (error) {
+    console.error('Error opening URL:', error);
+    // Last resort fallback
+    window.location.href = url;
+  }
+};
+
 const DocumentDetail: React.FC<DocumentDetailProps> = ({
   document,
   handleImageClick,
@@ -84,46 +106,54 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   // Handle potentially empty excerpts array in the updated type
   const excerpts = document.excerpts || [];
 
+  // Function to extract URL from document, checking all possible locations
+  const extractDocumentUrl = () => {
+    // Check for all possible URL locations and case variations
+    const possibleUrls = [
+      // metadata variations - notice we check both lowercase and uppercase
+      document.metadata?.sourceUrl,
+      document.metadata?.sourceURL,
+      document.metadata?.url,
+      document.metadata?.URL,
+      
+      // direct properties on document
+      document.sourceUrl,
+      document.sourceURL,
+      document.url,
+      document.URL,
+      
+      // nested locations
+      document.xray?.metadata?.sourceUrl,
+      document.xray?.metadata?.sourceURL,
+      document.result?.metadata?.sourceUrl,
+      document.result?.metadata?.sourceURL,
+    ];
+    
+    // Find first non-empty URL
+    for (const url of possibleUrls) {
+      if (url && typeof url === 'string') {
+        console.log(`Found URL in document ${documentId}:`, url);
+        return url;
+      }
+    }
+    
+    // No URL found
+    console.log(`No URL found in document ${documentId}`);
+    return null;
+  };
+
   // Effect to extract the source URL when document changes
   useEffect(() => {
-    // Check specifically for the metadata.sourceUrl field first (lowercase 'u')
-    if (document.metadata?.sourceUrl) {
-      console.log('Found sourceUrl in metadata:', document.metadata.sourceUrl);
-      setDocumentUrl(document.metadata.sourceUrl);
-      setUrlSource("metadata.sourceUrl");
-      return;
-    }
+    const url = extractDocumentUrl();
     
-    // Check for metadata.sourceURL (uppercase 'URL')
-    if (document.metadata?.sourceURL) {
-      console.log('Found sourceURL in metadata:', document.metadata.sourceURL);
-      setDocumentUrl(document.metadata.sourceURL);
-      setUrlSource("metadata.sourceURL");
-      return;
-    }
-    
-    // Then try other possible locations as fallbacks
-    if (document.sourceURL) {
-      console.log('Found sourceURL directly on document:', document.sourceURL);
-      setDocumentUrl(document.sourceURL);
-      setUrlSource("document.sourceURL");
-      return;
-    }
-    
-    if (document.url) {
-      console.log('Found url directly on document:', document.url);
-      setDocumentUrl(document.url);
-      setUrlSource("document.url");
-      return;
-    }
-    
-    // If nothing found, use default
-    if (defaultDocumentViewerUrl) {
-      console.log('No source URL found, using default:', defaultDocumentViewerUrl);
+    if (url) {
+      setDocumentUrl(url);
+      setUrlSource("document");
+    } else if (defaultDocumentViewerUrl) {
+      console.log('Using default URL:', defaultDocumentViewerUrl);
       setDocumentUrl(defaultDocumentViewerUrl);
-      setUrlSource("defaultDocumentViewerUrl");
+      setUrlSource("default");
     } else {
-      console.log('No source URL found and no default provided for document:', document.id);
       setDocumentUrl(null);
       setUrlSource("none");
     }
@@ -138,7 +168,9 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
     }
     
     console.log(`Opening document URL (source: ${urlSource}):`, documentUrl);
-    window.open(documentUrl, "_blank", "noopener,noreferrer");
+    
+    // Use the safe browser-compatible open method
+    safeOpenUrl(documentUrl);
   };
 
   // Helper function for "View in Document" button - still using onCitationClicked
@@ -168,6 +200,13 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
       <div><strong>Document URL:</strong> {documentUrl || 'None found'}</div>
       <div className="mt-1"><strong>Document ID:</strong> {document.id}</div>
       <div><strong>Document fileName:</strong> {document.fileName || document.title || document.name}</div>
+      <div className="mt-1 flex flex-col">
+        <strong>URL checks:</strong>
+        <span>metadata.sourceUrl: {String(Boolean(document.metadata?.sourceUrl))}</span>
+        <span>metadata.sourceURL: {String(Boolean(document.metadata?.sourceURL))}</span>
+        <span>document.sourceUrl: {String(Boolean(document.sourceUrl))}</span>
+        <span>document.sourceURL: {String(Boolean(document.sourceURL))}</span>
+      </div>
     </div>
   );
 
@@ -356,6 +395,8 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
           </div>
         </div>
       )}
+      
+      {/* The rest of the component remains the same */}
       
       {/* Document images if available */}
       {document.pageImages && document.pageImages.length > 0 && (
@@ -636,9 +677,15 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
         )}
         
         <button
-          onClick={() => {
+          onClick={(e) => {
+            // Explicitly handle the click event
+            e.preventDefault();
             setCurrentDocumentId(null);
-            openDocument();
+            
+            // Slight delay to ensure UI has time to update
+            setTimeout(() => {
+              openDocument();
+            }, 50);
           }}
           className="text-white text-sm px-3 py-1.5 rounded flex items-center"
           style={{ backgroundColor: themeStyles.secondaryColor }}
