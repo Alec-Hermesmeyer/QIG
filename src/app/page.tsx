@@ -101,13 +101,16 @@ const staggerChildren = {
 };
 
 // Sample Questions Component
-function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHandle> }) {
+function SampleQuestions({ chatRef, shouldDisplay }: { chatRef: React.RefObject<ImprovedChatHandle>, shouldDisplay: boolean }) {
   const { organization } = useAuth();
   const [questions, setQuestions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Skip fetching if we shouldn't display
+    if (!shouldDisplay) return;
+
     const fetchQuestions = async () => {
       try {
         setLoading(true);
@@ -151,7 +154,10 @@ function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHan
     };
 
     fetchQuestions();
-  }, [organization?.id]);
+  }, [organization?.id, shouldDisplay]);
+
+  // Don't render anything if we shouldn't display
+  if (!shouldDisplay) return null;
 
   if (loading) {
     return (
@@ -327,6 +333,9 @@ export default function Page() {
   const chatRef = useRef<ImprovedChatHandle>(null);
   const [showFileCabinetPanel, setShowFileCabinetPanel] = useState(false);
 
+  // Derived state for sample questions display
+  const shouldShowSampleQuestions = !conversationStarted && chatHistory.length === 0;
+
   // Load settings from localStorage on init with safety checks
   const loadSavedSettings = (): Partial<SettingsState> => {
     if (typeof window === 'undefined') return {};
@@ -340,6 +349,7 @@ export default function Page() {
       return {};
     }
   };
+
 
   // Settings state with safe initialization
   const [settings, setSettings] = useState<SettingsState>(() => {
@@ -389,6 +399,15 @@ export default function Page() {
       retrievalMode: settings.retrievalMode
     }
   });
+
+  // Sync conversationStarted with chatHistory
+  useEffect(() => {
+    const hasMessages = chatHistory.length > 0;
+    if (conversationStarted !== hasMessages) {
+      console.log(`Syncing conversationStarted state: ${hasMessages}`);
+      setConversationStarted(hasMessages);
+    }
+  }, [chatHistory, conversationStarted]);
 
   // Check browser storage compatibility
   useEffect(() => {
@@ -595,9 +614,11 @@ export default function Page() {
     setSelectedBucketId(bucketId);
   };
 
-  // Clear chat functionality
+  // Clear chat functionality - improved for more consistent behavior
   const clearChat = () => {
-    // First clear all states
+    console.log("Clearing chat...");
+
+    // First clear all state
     setChatHistory([]);
     setIsStreaming(false);
     setContractAnalysisResults(null);
@@ -605,40 +626,46 @@ export default function Page() {
     setShowContractPanel(false);
     setCurrentMessageForAnalysis(null);
 
-    // Clear conversation context
+    // Then clear conversation context
     try {
       contextManager.clearContext();
     } catch (error) {
       console.error("Error clearing context:", error);
     }
 
-    // Set conversationStarted to false AFTER clearing everything else
-    // This ensures the sample questions will be displayed again
+    // Finally, explicitly set conversationStarted to false
     setConversationStarted(false);
 
-    // Force a re-render to ensure sample questions appear
+    // Force a re-render with a slight delay to ensure state updates have taken effect
     setTimeout(() => {
+      console.log("Clear chat complete. Chat history length:", 0);
       console.log("Conversation started:", false);
     }, 50);
   };
 
-  // Handle profile navigation
-  const handleProfileNav = () => {
-    router.push('/profile');
-  };
-  interface HandleValueChangeProps {
-    value: string;
+  interface ValueChangeHandler {
+    (value: "tria" | "policy_excel" | "patra_excel" | string): void;
   }
 
-  const handleValueChange = (value: HandleValueChangeProps["value"]) => {
+  const handleValueChange: ValueChangeHandler = (value) => {
     if (value === "tria") {
       // Open the PDF file in a new tab when "TRIA Report" is selected
       window.open("/August Real Estate TRIA report.pdf", "_blank");
+    } else if (value === "policy_excel") {
+      // Open the Excel file in a new tab when "Policy Data Excel Export" is selected
+      window.open("/Comprehensive_Policy_Data_All_Locations.xlsx", "_blank");
+    } else if (value === "patra_excel") {
+      // Open the Excel file in a new tab when "Patra Data Excel Export" is selected
+      window.open("/Policy_Checks_Filled_COMPLETED.xlsx", "_blank");
     } else {
       // Handle other selections as needed
       console.log(`Selected: ${value}`);
       // You can add routing or other actions for other report types here
     }
+  };
+  // Handle profile navigation
+  const handleProfileNav = () => {
+    router.push('/profile');
   };
 
   // Handle logout
@@ -861,10 +888,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   <img
                     src={imgError ? '/defaultLogo.png' : organizationLogo}
                     alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
-                    fill
                     style={{ objectFit: 'contain' }}
                     onError={() => setImgError(true)}
-                    priority
                   />
                 </div> */}
               </Link>
@@ -949,6 +974,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       <SelectContent>
                         <SelectItem value="policy_comparison">Policy Comparison Report</SelectItem>
                         <SelectItem value="policy_excel">Policy Data Excel Export</SelectItem>
+                        <SelectItem value="patra_excel">Patra Policy Checklist</SelectItem>
                         <SelectItem value="safeguard">Protective Safeguard Report</SelectItem>
                         <SelectItem value="tria">TRIA Report</SelectItem>
                       </SelectContent>
@@ -974,13 +1000,13 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 )}
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                  <Button variant="ghost"
+                  {/* <Button variant="ghost"
                     size="sm"
                     className="flex items-center gap-2 cursor-pointer"
                     onClick={() => setShowFileCabinetPanel(true)} >
                     <File className="h-4 w-4" />
                     File Cabinet
-                  </Button>
+                  </Button> */}
                 </motion.div>
 
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
@@ -1013,8 +1039,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
           {/* Main Content - Add padding to account for fixed navbars */}
           <main className="flex-1 flex flex-col items-center px-4 py-16 bg-[#F5F5F5] mt-24">
-            {/* Show welcome screen when conversation hasn't started */}
-            {!conversationStarted && chatHistory.length === 0 && (
+            {/* Welcome Screen with Sample Questions - Using the improved conditional rendering */}
+            {shouldShowSampleQuestions && (
               <>
                 <motion.div
                   className="text-center mb-6"
@@ -1040,8 +1066,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </motion.p>
                 </motion.div>
 
-                {/* Dynamic Sample Questions Component */}
-                <SampleQuestions chatRef={chatRef} />
+                {/* Dynamic Sample Questions Component with explicit shouldDisplay prop */}
+                <SampleQuestions chatRef={chatRef} shouldDisplay={shouldShowSampleQuestions} />
               </>
             )}
 
