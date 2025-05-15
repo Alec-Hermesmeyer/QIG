@@ -47,7 +47,7 @@ export const getDocumentType = (fileName?: string) => {
   }
 };
 
-export default function EnhancedAnswer({
+export default function DeepRAG({
   answer,
   index = 0,
   isSelected = false,
@@ -68,24 +68,17 @@ export default function EnhancedAnswer({
   // DEBUG: Log the incoming answer object structure
   useEffect(() => {
     try {
-      console.log("EnhancedAnswer component mounted with answer:", answer);
+      console.log("DeepRAG component mounted with answer:", answer);
       // Log keys to understand structure
       if (answer && typeof answer === 'object') {
         console.log("Answer keys:", Object.keys(answer));
-        
-        // Log specific Azure RAG properties if they exist
-        if (answer.thought_process) console.log("thought_process exists:", typeof answer.thought_process);
-        if (answer.thoughtProcess) console.log("thoughtProcess exists:", typeof answer.thoughtProcess);
-        if (answer.supporting_content) console.log("supporting_content exists:", Array.isArray(answer.supporting_content));
-        if (answer.supportingContent) console.log("supportingContent exists:", Array.isArray(answer.supportingContent));
-        if (answer.citations) console.log("citations exists:", Array.isArray(answer.citations));
       }
     } catch (error) {
       console.error("Error logging answer structure:", error);
     }
   }, [answer]);
-  
-  // Function to check if text is from Ground X RAG format - moved inside component
+
+  // Function to check if text is from Ground X RAG format
   const isGroundXFormat = useCallback((text) => {
     if (!text || typeof text !== 'string') return false;
     
@@ -97,6 +90,45 @@ export default function EnhancedAnswer({
     
     return hasDocumentReferences && hasNumberedList;
   }, []);
+
+  // Process the content for Ground X format by adding document references
+  const processGroundXContent = useCallback((text) => {
+    if (!text || typeof text !== 'string') return '';
+    
+    // Format numbered lists first
+    const lines = text.split('\n');
+    let formattedText = '';
+    let inList = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isNumberedItem = line.match(/^\d+\.\s/);
+      
+      if (isNumberedItem) {
+        if (!inList) {
+          inList = true;
+          formattedText += '<ol class="list-decimal pl-5 my-4">\n';
+        }
+        formattedText += `<li>${line.replace(/^\d+\.\s/, '')}</li>\n`;
+      } else {
+        if (inList) {
+          inList = false;
+          formattedText += '</ol>\n';
+        }
+        formattedText += line + '\n';
+      }
+    }
+    
+    if (inList) {
+      formattedText += '</ol>\n';
+    }
+    
+    // Make document references clickable
+    return formattedText.replace(/\[Document\s+(\d+)\]/g, (match, num) => {
+      return `<span class="doc-ref cursor-pointer font-medium" style="color: ${themeStyles.primaryColor};" data-doc-num="${num}">${match}</span>`;
+    });
+  }, [themeStyles]);
+
   // State management
   const [expanded, setExpanded] = useState(true);
   const [activeTab, setActiveTab] = useState('answer');
@@ -115,10 +147,8 @@ export default function EnhancedAnswer({
   const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
   const [isGroundX, setIsGroundX] = useState(false);
   const [isXRayLoading, setIsXRayLoading] = useState(false);
-  const [hasAzureThoughtProcess, setHasAzureThoughtProcess] = useState(false);
-  const [hasSupportingContent, setHasSupportingContent] = useState(false);
-  const [supportingContent, setSupportingContent] = useState([]);
-  const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
+  const [hasThoughtProcess, setHasThoughtProcess] = useState(false);
+  const [thoughtProcess, setThoughtProcess] = useState('');
   
   // Track which documents have already been analyzed to avoid duplicate analysis
   const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
@@ -138,10 +168,10 @@ export default function EnhancedAnswer({
     textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
     cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
     borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
-    primaryColor: theme === 'dark' ? '#ff3f3f' : '#e53e3e', // Changed to red
-    secondaryColor: theme === 'dark' ? '#cc0000' : '#b91c1c', // Changed to darker red
-    accentColor: theme === 'dark' ? '#ff4d4d' : '#f87171', // Changed to lighter red
-    xrayColor: theme === 'dark' ? '#e02020' : '#dc2626', // Changed to vibrant red
+    primaryColor: theme === 'dark' ? '#3a7af3' : '#2563eb', // Changed to blue for DeepRAG
+    secondaryColor: theme === 'dark' ? '#2c66d9' : '#1d4ed8', // Changed to darker blue
+    accentColor: theme === 'dark' ? '#5c92f5' : '#3b82f6', // Changed to lighter blue
+    xrayColor: theme === 'dark' ? '#2563eb' : '#3b82f6', // Changed to vibrant blue
     ...customStyles
   };
 
@@ -354,11 +384,6 @@ export default function EnhancedAnswer({
       documents.forEach(processSource);
     }
 
-    // Handle Ground X format
-    if (answer && answer.search && answer.search.results && Array.isArray(answer.search.results)) {
-      answer.search.results.forEach(processSource);
-    }
-
     // Handle GroundX RAG format
     if (answer && answer.searchResults && answer.searchResults.sources &&
       Array.isArray(answer.searchResults.sources)) {
@@ -368,7 +393,7 @@ export default function EnhancedAnswer({
     return allSources;
   }, [answer, documentExcerpts, searchResults]);
 
-  // Utility functions to extract content safely
+  // Utility functions
   const extractContent = useCallback(() => {
     if (!answer) return '';
     if (typeof answer === 'string') return answer;
@@ -378,62 +403,6 @@ export default function EnhancedAnswer({
     }
     if (answer.response) return typeof answer.response === 'string' ? answer.response : JSON.stringify(answer.response, null, 2);
     return JSON.stringify(answer, null, 2);
-  }, [answer]);
-
-  // Utility functions
-  const extractThoughtProcess = useCallback(() => {
-    let reasoning = '';
-    if (!answer) return reasoning;
-    
-    // Check for Azure specific thought process format first
-    if (answer.thought_process) {
-      return typeof answer.thought_process === 'string' ? answer.thought_process : JSON.stringify(answer.thought_process, null, 2);
-    }
-    
-    // Try alternative property names for thought process
-    if (answer.thoughtProcess) {
-      return typeof answer.thoughtProcess === 'string' ? answer.thoughtProcess : JSON.stringify(answer.thoughtProcess, null, 2);
-    }
-    
-    // Handle other formats
-    if (answer.thoughts) {
-      reasoning = typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
-    }
-    else if (answer.result?.thoughts) {
-      reasoning = typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
-    }
-    else if (answer.systemMessage) { reasoning = answer.systemMessage; }
-    else if (answer.reasoning) { reasoning = answer.reasoning; }
-    
-    return reasoning;
-  }, [answer]);
-
-  const extractSupportingContent = useCallback(() => {
-    if (!answer) return [];
-    
-    // Azure specific supporting content
-    if (answer.supporting_content && Array.isArray(answer.supporting_content)) {
-      return answer.supporting_content;
-    }
-    
-    // Try alternative property names
-    if (answer.supportingContent && Array.isArray(answer.supportingContent)) {
-      return answer.supportingContent;
-    }
-    
-    // Try to convert citations to supporting content if they have content or text
-    if (answer.citations && Array.isArray(answer.citations)) {
-      const contentCitations = answer.citations.filter(c => c.content || c.text);
-      if (contentCitations.length > 0) {
-        return contentCitations.map((citation, index) => ({
-          title: citation.title || citation.source || `Citation ${index + 1}`,
-          content: citation.content || citation.text || '',
-          source: citation.source || citation.title || ''
-        }));
-      }
-    }
-    
-    return [];
   }, [answer]);
 
   const extractFollowupQuestions = useCallback(() => {
@@ -447,145 +416,34 @@ export default function EnhancedAnswer({
     return [];
   }, [answer]);
 
-  // Deep extraction utility - looks for properties at any depth in the object
-  const deepExtract = useCallback((obj, keys, stopAtFirst = false) => {
-    if (!obj || typeof obj !== 'object') return null;
+  // Check for Ground X thought process
+  const extractGroundXThoughtProcess = useCallback(() => {
+    if (!answer) return null;
     
-    // First check for direct property match
-    for (const key of keys) {
-      if (obj[key] !== undefined) {
-        if (stopAtFirst) return obj[key];
-        console.log(`Found property '${key}' at root level:`, obj[key]);
-      }
+    // Check for thought process in standard locations
+    if (answer.thoughts) {
+      return typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
     }
     
-    // Recursively check for the property in nested objects
-    const results = [];
-    const processObject = (o, path = '') => {
-      if (!o || typeof o !== 'object') return;
-      
-      // Skip checking arrays of primitives to avoid excessive processing
-      if (Array.isArray(o) && o.length > 0 && typeof o[0] !== 'object') return;
-      
-      for (const key in o) {
-        if (Object.prototype.hasOwnProperty.call(o, key)) {
-          // Check if this key matches any of our target keys
-          if (keys.includes(key)) {
-            const currentPath = path ? `${path}.${key}` : key;
-            console.log(`Found property '${key}' at path '${currentPath}':`, o[key]);
-            results.push({ path: currentPath, value: o[key] });
-            if (stopAtFirst) return o[key];
-          }
-          
-          // Recursively process nested objects if not a circular reference
-          if (o[key] && typeof o[key] === 'object' && o[key] !== o) {
-            const currentPath = path ? `${path}.${key}` : key;
-            processObject(o[key], currentPath);
-          }
-        }
-      }
-    };
-    
-    processObject(obj);
-    return stopAtFirst ? null : results;
-  }, []);
-
-  // Extract Azure-specific content using deep search
-  const extractAzureContent = useCallback(() => {
-    if (!answer) return;
-    
-    console.log("Extracting Azure content deeply");
-    
-    // First check for thought process using multiple possible keys
-    const thoughtProcessKeys = ['thought_process', 'thoughtProcess', 'thoughts', 'reasoning', 'rationalization'];
-    const thoughtResult = deepExtract(answer, thoughtProcessKeys, true);
-    
-    if (thoughtResult) {
-      console.log("Found thought process:", thoughtResult);
-      const formattedThought = typeof thoughtResult === 'string' 
-        ? thoughtResult 
-        : JSON.stringify(thoughtResult, null, 2);
-      
-      setHasAzureThoughtProcess(true);
-      setAzureThoughtProcess(formattedThought);
+    if (answer.reasoning) {
+      return typeof answer.reasoning === 'string' ? answer.reasoning : JSON.stringify(answer.reasoning, null, 2);
     }
     
-    // Check for supporting content using multiple possible keys
-    const supportingContentKeys = ['supporting_content', 'supportingContent', 'evidence', 'citations', 'sources'];
-    const contentResults = deepExtract(answer, supportingContentKeys);
-    
-    for (const result of contentResults) {
-      if (Array.isArray(result.value)) {
-        // Format the content into a uniform structure
-        const formattedContent = result.value.map((item, idx) => {
-          // If the array contains strings, wrap them in objects
-          if (typeof item === 'string') {
-            return {
-              title: `Supporting Content ${idx + 1}`,
-              content: item,
-              source: 'Document'
-            };
-          }
-          
-          // If it's already an object, normalize it
-          if (typeof item === 'object') {
-            return {
-              title: item.title || item.name || item.source || `Supporting Content ${idx + 1}`,
-              content: item.content || item.text || item.excerpt || item.snippet || '',
-              source: item.source || item.document || item.url || ''
-            };
-          }
-          
-          return null;
-        }).filter(Boolean);
-        
-        if (formattedContent.length > 0) {
-          console.log("Found supporting content:", formattedContent);
-          setHasSupportingContent(true);
-          setSupportingContent(formattedContent);
-          break; // Use the first matching array we find
-        }
-      }
-    }
-  }, [answer, deepExtract]);
-
-  // Process the content for Ground X format by adding document references - moved inside component
-  const processGroundXContent = useCallback((text) => {
-    if (!text || typeof text !== 'string') return '';
-    
-    // Format numbered lists first
-    const lines = text.split('\n');
-    let formattedText = '';
-    let inList = false;
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const isNumberedItem = line.match(/^\d+\.\s/);
-      
-      if (isNumberedItem) {
-        if (!inList) {
-          inList = true;
-          formattedText += '<ol class="list-decimal pl-5 my-4">\n';
-        }
-        formattedText += `<li>${line.replace(/^\d+\.\s/, '')}</li>\n`;
-      } else {
-        if (inList) {
-          inList = false;
-          formattedText += '</ol>\n';
-        }
-        formattedText += line + '\n';
-      }
+    if (answer.thoughtProcess) {
+      return typeof answer.thoughtProcess === 'string' ? answer.thoughtProcess : JSON.stringify(answer.thoughtProcess, null, 2);
     }
     
-    if (inList) {
-      formattedText += '</ol>\n';
+    // Check in nested properties
+    if (answer.result?.thoughts) {
+      return typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
     }
     
-    // Make document references clickable
-    return formattedText.replace(/\[Document\s+(\d+)\]/g, (match, num) => {
-      return `<span class="doc-ref cursor-pointer font-medium" style="color: ${themeStyles.primaryColor};" data-doc-num="${num}">${match}</span>`;
-    });
-  }, [themeStyles]);
+    if (answer.metadata?.reasoning) {
+      return typeof answer.metadata.reasoning === 'string' ? answer.metadata.reasoning : JSON.stringify(answer.metadata.reasoning, null, 2);
+    }
+    
+    return null;
+  }, [answer]);
 
   // Effects
   useEffect(() => {
@@ -628,41 +486,18 @@ export default function EnhancedAnswer({
       setAnalyzedDocumentIds(newAnalyzedIds);
     }
 
-    // Check for Azure format inline citations in the content
-    const content = extractContent();
-    if (typeof content === 'string') {
-      const azureCitationRegex = /\[(.*?)(?:#page=(\d+))?\]/g;
-      let match;
-      const azureCitations = [];
-      let citationCounter = 1;
-      
-      while ((match = azureCitationRegex.exec(content)) !== null) {
-        const fullMatch = match[0];
-        const filename = match[1];
-        const page = match[2] ? parseInt(match[2]) : null;
-        
-        // Only include if it looks like a filename (contains a dot)
-        if (filename && filename.includes('.')) {
-          azureCitations.push({
-            id: `citation-${citationCounter}`,
-            fileName: filename,
-            page: page,
-            index: citationCounter,
-            text: fullMatch
-          });
-          citationCounter++;
-        }
-      }
-      
-      // If we found Azure citations in the text, use those
-      if (azureCitations.length > 0) {
-        setCitationInfos(azureCitations);
-      }
-    }
-
     // Trigger a re-render to update the sources
     setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources]);
+  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds]);
+  
+  // Check for thought process
+  useEffect(() => {
+    const tp = extractGroundXThoughtProcess();
+    if (tp) {
+      setHasThoughtProcess(true);
+      setThoughtProcess(tp);
+    }
+  }, [answer, extractGroundXThoughtProcess]);
 
   // Parse the answer content using AnswerParser when the component mounts or answer changes
   useEffect(() => {
@@ -675,12 +510,6 @@ export default function EnhancedAnswer({
     
     console.log("Content format detection - Ground X format:", groundXFormatDetected);
     
-    // Check for inline Azure citations [FILENAME.pdf#page=NUMBER]
-    const hasInlineAzureCitations = typeof content === 'string' && 
-      /\[.*?\.(?:pdf|docx|xlsx|txt)(?:#page=\d+)?\]/i.test(content);
-    
-    // If the answer has inline Azure citations, don't try to parse with AnswerParser
-    // as we already extract these citations in the document initialization effect
     if (groundXFormatDetected) {
       console.log("Ground X format detected, processing citations");
       
@@ -716,39 +545,8 @@ export default function EnhancedAnswer({
         setCitationInfos(extractedCitations);
       }
       setParsedAnswerHtml("");
-    } else if (hasInlineAzureCitations) {
-      // For inline Azure citations, create HTML with clickable links
-      let htmlContent = content;
-      if (typeof htmlContent === 'string') {
-        // Replace [FILENAME.pdf#page=NUMBER] with clickable spans
-        htmlContent = htmlContent.replace(/\[(.*?)(?:#page=(\d+))?\]/g, (match, filename, page) => {
-          if (filename && filename.includes('.')) {
-            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: #e53e3e; cursor: pointer; font-weight: 500;">${match}</span>`;
-          }
-          return match;
-        });
-      } else {
-        htmlContent = "";
-      }
-      
-      setParsedAnswerHtml(htmlContent);
-    } else if (answer.citations && Array.isArray(answer.citations)) {
-      // Handle explicit Azure citation format
-      const azureCitations = answer.citations.map((citation, index) => ({
-        id: citation.id || `citation-${index + 1}`,
-        fileName: citation.title || citation.source || `Citation ${index + 1}`,
-        index: index + 1,
-        text: citation.text || '',
-        page: citation.page,
-        url: citation.url
-      }));
-      
-      setCitationInfos(azureCitations);
-      
-      // For this case, just use the raw content since citations are handled separately
-      setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
     } else {
-      // Parse the answer using the AnswerParser module for non-specific formats
+      // For non-Ground X format, use regular parsing
       try {
         const parsedAnswer = parseAnswerToHtml(answer, isStreaming, onCitationClicked);
         setParsedAnswerHtml(parsedAnswer.answerHtml);
@@ -785,8 +583,8 @@ export default function EnhancedAnswer({
           }
         });
 
-        // Only update citations if we found them and don't already have Azure citations
-        if (extractedCitations.length > 0 && citationInfos.length === 0) {
+        // Only update citations if we found them
+        if (extractedCitations.length > 0) {
           setCitationInfos(extractedCitations);
         }
       } catch (error) {
@@ -832,33 +630,6 @@ export default function EnhancedAnswer({
           }
         }
       }
-      
-      // Handle Azure inline citations
-      if (target.classList.contains('azure-citation') || target.closest('.azure-citation')) {
-        const citation = target.classList.contains('azure-citation') ? target : target.closest('.azure-citation');
-        if (!citation) return;
-        
-        const filename = citation.getAttribute('data-filename');
-        const page = citation.getAttribute('data-page');
-        
-        if (filename) {
-          // Look for a matching document in our sources
-          const matchingDoc = documentsRef.current.find(doc => 
-            doc.fileName === filename || 
-            doc.id === filename ||
-            (doc.fileName && filename.includes(doc.fileName))
-          );
-          
-          if (matchingDoc) {
-            console.log(`Clicked on Azure citation: ${matchingDoc.id}, page: ${page}`);
-            onCitationClicked(matchingDoc.id, page);
-          } else {
-            // If no matching document, just use the filename as a citation ID
-            console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
-            onCitationClicked(filename, page);
-          }
-        }
-      }
     };
     
     // Add event listener for the container
@@ -871,28 +642,6 @@ export default function EnhancedAnswer({
       }
     };
   }, [onCitationClicked]);
-
-  // Initialize Azure content when the component mounts
-  useEffect(() => {
-    if (!answer) return;
-    
-    console.log("Initializing Azure content extraction");
-    try {
-      // Extract data from answer object
-      extractAzureContent();
-      
-      // Logging what was found
-      setTimeout(() => {
-        console.log("Content extraction status:");
-        console.log("- Has thought process:", hasAzureThoughtProcess);
-        console.log("- Has supporting content:", hasSupportingContent);
-        console.log("- Supporting content items:", supportingContent.length);
-      }, 100); // Delay to ensure the state is updated
-      
-    } catch (error) {
-      console.error("Error extracting Azure content:", error);
-    }
-  }, [answer, extractAzureContent]);
 
   // Utility functions
   const fetchUpdatedDocument = useCallback(async (documentId) => {
@@ -1213,22 +962,11 @@ export default function EnhancedAnswer({
 
   // Get extracted data - use memoized callbacks to avoid unnecessary calculations
   const content = extractContent();
-  const thoughtProcess = extractThoughtProcess();
   const followupQuestions = extractFollowupQuestions();
-  const extractedSupportingContent = extractSupportingContent();
   const sources = documentsRef.current;
   const currentDocument = getCurrentDocument();
   const allImages = getAllImages();
   const allXrayChunks = getAllXrayChunks();
-  
-  // Check if we have thought process either from Azure state or extraction
-  const hasThoughts = hasAzureThoughtProcess || (thoughtProcess && thoughtProcess.length > 0);
-  
-  // Check if we have supporting content either from Azure state or extraction
-  const hasSupportingContentData = hasSupportingContent || 
-    (supportingContent && supportingContent.length > 0) || 
-    (extractedSupportingContent && extractedSupportingContent.length > 0);
-  
   const hasSources = sources && sources.length > 0;
   const hasImages = allImages.length > 0;
   const xrayAvailable = hasXrayData();
@@ -1269,7 +1007,7 @@ export default function EnhancedAnswer({
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         isCopied={isCopied}
-        hasThoughts={hasThoughts}
+        hasThoughts={hasThoughtProcess}
         hasSources={hasSources}
         hasXray={xrayAvailable}
         hasImages={hasImages}
@@ -1327,7 +1065,7 @@ export default function EnhancedAnswer({
               Answer
             </button>
 
-            {hasThoughts && (
+            {hasThoughtProcess && (
               <button
                 className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'thought-process'
                     ? 'border-b-2'
@@ -1341,23 +1079,6 @@ export default function EnhancedAnswer({
               >
                 <Lightbulb size={14} className="mr-1" />
                 Thought Process
-              </button>
-            )}
-
-            {hasSupportingContentData && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'supporting-content'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => setActiveTab('supporting-content')}
-                style={{
-                  color: activeTab === 'supporting-content' ? '#0EA5E9' : themeStyles.textColor,
-                  borderColor: activeTab === 'supporting-content' ? '#0EA5E9' : 'transparent'
-                }}
-              >
-                <FileText size={14} className="mr-1" />
-                Supporting Content
               </button>
             )}
 
@@ -1442,7 +1163,6 @@ export default function EnhancedAnswer({
                 transition={{ duration: 0.3 }}
                 className="p-4"
               >
-                {/* Use different rendering approaches based on the format */}
                 <div
                   id={answerElementId}
                   ref={contentRef}
@@ -1551,7 +1271,7 @@ export default function EnhancedAnswer({
             )}
 
             {/* Thought Process tab */}
-            {activeTab === 'thought-process' && hasThoughts && (
+            {activeTab === 'thought-process' && hasThoughtProcess && (
               <motion.div
                 key="thought-tab"
                 variants={tabAnimation}
@@ -1584,63 +1304,9 @@ export default function EnhancedAnswer({
                   >
                     <pre className="whitespace-pre-wrap">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {hasAzureThoughtProcess ? azureThoughtProcess : thoughtProcess}
+                        {thoughtProcess}
                       </ReactMarkdown>
                     </pre>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-            
-            {/* Supporting Content tab - for Azure specifics */}
-            {activeTab === 'supporting-content' && hasSupportingContentData && (
-              <motion.div
-                key="supporting-content-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: 'rgba(14, 165, 233, 0.05)',
-                    borderColor: 'rgba(14, 165, 233, 0.2)'
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-medium flex items-center" style={{ color: '#0EA5E9' }}>
-                      <FileText size={18} className="mr-2" />
-                      Supporting Content
-                    </h3>
-                  </div>
-
-                  <div className="space-y-4">
-                    {/* Use supporting content from state, or fall back to extracted */}
-                    {(supportingContent.length > 0 ? supportingContent : extractedSupportingContent).map((item, idx) => (
-                      <div 
-                        key={idx}
-                        className="rounded-md border p-3 overflow-auto text-sm"
-                        style={{
-                          backgroundColor: themeStyles.cardBackground,
-                          borderColor: 'rgba(14, 165, 233, 0.2)'
-                        }}
-                      >
-                        <div className="font-medium mb-2 text-sm">{item.title || `Supporting Content ${idx + 1}`}</div>
-                        <div className="prose max-w-none text-sm">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {item.content || item.text || ''}
-                          </ReactMarkdown>
-                        </div>
-                        {item.source && (
-                          <div className="mt-2 text-xs text-gray-500">
-                            Source: {item.source}
-                          </div>
-                        )}
-                      </div>
-                    ))}
                   </div>
                 </div>
               </motion.div>
@@ -2064,7 +1730,7 @@ export default function EnhancedAnswer({
         )}
       </AnimatePresence>
 
-      {/* Add custom styling for Ground X content and Azure citations */}
+      {/* Add custom styling for Ground X content */}
       <style jsx global>{`
         /* Ground X content styling */
         .ground-x-content ol {
@@ -2097,18 +1763,6 @@ export default function EnhancedAnswer({
         }
 
         .ground-x-content .doc-ref:hover {
-          text-decoration: underline;
-        }
-        
-        /* Azure citation styling */
-        .azure-citation {
-          color: ${themeStyles.primaryColor};
-          font-weight: 500;
-          cursor: pointer;
-          text-decoration: none;
-        }
-        
-        .azure-citation:hover {
           text-decoration: underline;
         }
       `}</style>

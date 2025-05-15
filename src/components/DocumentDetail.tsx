@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, X, FileIcon, FileText, Table, Image, List, Code, Calendar, DollarSign, BookOpen, AlertCircle, Activity, Zap, Loader, Globe } from "lucide-react";
+import { 
+  ExternalLink, X, FileIcon, FileText, Table, Image, List, Code, Calendar, 
+  DollarSign, BookOpen, AlertCircle, Activity, Zap, Loader, Globe, 
+  ChevronDown, ChevronUp, Tag, Info, Search, ClipboardCopy
+} from "lucide-react";
 import { getDocumentType, formatDate } from "./Answer";
 import { Source, XRayChunk } from "@/types/types";
+import { formatScoreDisplay, fixDecimalPointIssue } from "@/utils/scoreUtils";
 
 interface DocumentDetailProps {
   document: Source;
@@ -17,7 +23,8 @@ interface DocumentDetailProps {
   // New props for X-Ray functionality
   onStartXRayAnalysis?: (documentId: string) => Promise<void>;
   isXRayLoading?: boolean;
-  defaultDocumentViewerUrl?: string; // Default URL as fallback
+  documentViewerUrl?: string;
+  isAnalyzed: boolean; // Make the URL configurable instead of hardcoded
 }
 
 // Helper function to get document icon
@@ -38,46 +45,99 @@ const getDocumentIcon = (fileName?: string, type?: string) => {
 // Helper function to get content type icon
 const getContentTypeIcon = (contentType?: string[]) => {
   if (!contentType || contentType.length === 0) 
-    return <FileText size={12} />;
+    return <FileText size={14} className="text-gray-600" />;
   
   if (contentType.includes('table')) 
-    return <Table size={12} />;
+    return <Table size={14} className="text-indigo-600" />;
   
   if (contentType.includes('figure')) 
-    return <Image size={12} />;
+    return <Image size={14} className="text-blue-600" />;
   
   if (contentType.includes('list')) 
-    return <List size={12} />;
+    return <List size={14} className="text-green-600" />;
   
   if (contentType.includes('code')) 
-    return <Code size={12} />;
+    return <Code size={14} className="text-yellow-600" />;
   
   if (contentType.includes('json')) 
-    return <FileIcon size={12} />;
+    return <FileIcon size={14} className="text-orange-600" />;
   
-  return <FileText size={12} />;
+  return <FileText size={14} className="text-gray-600" />;
 };
 
-// Helper function to safely open URLs across browsers
-const safeOpenUrl = (url: string) => {
-  try {
-    // First attempt - try to open in a new window
-    const newWindow = window.open(url, "_blank", "noopener,noreferrer");
-    
-    // If opening the window failed or was blocked
-    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-      console.log('Window.open failed, trying location.href as fallback');
+// Export the score formatting function so other components can use it
+export const formatScoreDisplay = (score) => {
+  if (score === undefined || score === null) return "N/A";
+  
+  // IMPORTANT: Check for extreme values that indicate decimal point issues
+  const numericScore = typeof score === 'string' ? parseFloat(score) : score;
+  
+  // If score is suspiciously high (>1000), it might be a decimal point error
+  if (numericScore > 1000) {
+    // Try to detect if this is a decimal point error
+    const asString = numericScore.toString();
+    if (asString.length >= 5) {
+      // Attempt to fix by inserting decimal point at a reasonable position
+      // For a score like 11084, convert to 110.84
+      const correctedScore = parseFloat(asString.slice(0, 3) + '.' + asString.slice(3));
       
-      // Try fallback method with a slight delay
-      setTimeout(() => {
-        window.location.href = url;
-      }, 100);
+      // Use the corrected score if it seems reasonable
+      if (correctedScore > 0 && correctedScore < 200) {
+        if (correctedScore > 100) {
+          return "High"; // Just show "High" for high percentages
+        }
+        return correctedScore.toFixed(1) + '%';
+      }
     }
-  } catch (error) {
-    console.error('Error opening URL:', error);
-    // Last resort fallback
-    window.location.href = url;
+    return "Very High"; 
   }
+  
+  // For scores in the 100-1000 range
+  if (numericScore > 100 && numericScore <= 1000) {
+    return "High";
+  }
+  
+  // For scores in the 0-100 range that likely represent percentages
+  if (numericScore >= 1 && numericScore <= 100) {
+    const formattedScore = numericScore.toFixed(1);
+    // If it's very close to a whole number, remove the decimal
+    if (formattedScore.endsWith('.0')) {
+      return formattedScore.split('.')[0] + '%';
+    }
+    return formattedScore + '%';
+  }
+  
+  // If score is 0, return simple 0%
+  if (numericScore === 0) {
+    return "0%";
+  }
+  
+  // For very small scores (near 0 but not 0)
+  if (numericScore < 0.001) {
+    return "<0.1%";
+  }
+  
+  // If score is a decimal (0-1 range)
+  return (numericScore * 100).toFixed(1) + '%';
+};
+
+// Use the exported function for our local formatting
+const formatScore = formatScoreDisplay;
+
+// Animation variants
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: { 
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05
+    }
+  }
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0 }
 };
 
 const DocumentDetail: React.FC<DocumentDetailProps> = ({
@@ -91,13 +151,47 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   onCitationClicked,
   onStartXRayAnalysis,
   isXRayLoading = false,
-  defaultDocumentViewerUrl = "" // Empty string default
+  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf", // Keep default as fallback
+  isAnalyzed = false
 }) => {
-  // Add state for document URL and debug info
-  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
-  const [urlSource, setUrlSource] = useState<string>("none");
+  // Local loading state for better UX
   const [localXRayLoading, setLocalXRayLoading] = useState(false);
   const isLoading = isXRayLoading || localXRayLoading;
+  
+  // State for expandable sections
+  const [expandedSections, setExpandedSections] = useState({
+    summary: true,
+    excerpts: true,
+    images: true,
+    xrayChunks: true,
+    relevance: true
+  });
+
+  // Toggle expanded sections
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
+
+  // For debugging: log the document when component mounts
+  useEffect(() => {
+    console.log("DocumentDetail mounted with document:", document);
+    console.log("Document score:", document.score, typeof document.score);
+    
+    // Check if we can find the score in any other property
+    Object.keys(document).forEach(key => {
+      if (typeof document[key] === 'number' && key !== 'id') {
+        console.log(`Found potential score in property "${key}":`, document[key]);
+      }
+    });
+    
+    // Check if using a custom score property or just no scores
+    if (document.score === 0 || document.score === 0.0) {
+      console.log("Document has a zero score - this could be intentional or could indicate missing data");
+    }
+  }, [document]);
 
   // Handle potentially string or number id types
   const documentId = document.id ? String(document.id) : '';
@@ -106,71 +200,28 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   // Handle potentially empty excerpts array in the updated type
   const excerpts = document.excerpts || [];
 
-  // Function to extract URL from document, checking all possible locations
-  const extractDocumentUrl = () => {
-    // Check for all possible URL locations and case variations
-    const possibleUrls = [
-      // metadata variations - notice we check both lowercase and uppercase
-      document.metadata?.sourceUrl,
-      document.metadata?.sourceURL,
-      document.metadata?.url,
-      document.metadata?.URL,
-      
-      // direct properties on document
-      document.sourceUrl,
-      document.sourceURL,
-      document.url,
-      document.URL,
-      
-      // nested locations
-      document.xray?.metadata?.sourceUrl,
-      document.xray?.metadata?.sourceURL,
-      document.result?.metadata?.sourceUrl,
-      document.result?.metadata?.sourceURL,
-    ];
-    
-    // Find first non-empty URL
-    for (const url of possibleUrls) {
-      if (url && typeof url === 'string') {
-        console.log(`Found URL in document ${documentId}:`, url);
-        return url;
-      }
-    }
-    
-    // No URL found
-    console.log(`No URL found in document ${documentId}`);
-    return null;
-  };
+  // Fix the score using our utility function
+  const correctedScore = document.score !== undefined ? fixDecimalPointIssue(document.score) : undefined;
 
-  // Effect to extract the source URL when document changes
-  useEffect(() => {
-    const url = extractDocumentUrl();
-    
-    if (url) {
-      setDocumentUrl(url);
-      setUrlSource("document");
-    } else if (defaultDocumentViewerUrl) {
-      console.log('Using default URL:', defaultDocumentViewerUrl);
-      setDocumentUrl(defaultDocumentViewerUrl);
-      setUrlSource("default");
-    } else {
-      setDocumentUrl(null);
-      setUrlSource("none");
-    }
-  }, [document, defaultDocumentViewerUrl]);
-
-  // Function to open document in viewer
+  // Function to open document in viewer - check multiple possible URL properties
   const openDocument = () => {
-    if (!documentUrl) {
-      console.error('No URL available to open document:', document.id);
-      alert('Sorry, no URL is available to open this document.');
-      return;
+    // Try to find a URL from the document object, checking multiple possible property names
+    const documentUrl = document.sourceURL || 
+                       document.url || 
+                       document.fileUrl || 
+                       document.link || 
+                       document.source ||
+                       document.documentUrl ||
+                       (document.metadata && document.metadata.url) ||
+                       documentViewerUrl;
+    
+    console.log("Opening document URL:", documentUrl);
+    
+    if (documentUrl) {
+      window.open(documentUrl, "_blank", "noopener,noreferrer");
+    } else {
+      console.error("No source URL available for document:", documentId);
     }
-    
-    console.log(`Opening document URL (source: ${urlSource}):`, documentUrl);
-    
-    // Use the safe browser-compatible open method
-    safeOpenUrl(documentUrl);
   };
 
   // Helper function for "View in Document" button - still using onCitationClicked
@@ -193,509 +244,912 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
     }
   };
 
-  // Debug section - shown only in development mode
-  const debugUrlSection = process.env.NODE_ENV === 'development' && (
-    <div className="mt-2 mb-3 text-xs bg-yellow-50 p-2 rounded border border-yellow-200">
-      <div><strong>Debug - URL source:</strong> {urlSource}</div>
-      <div><strong>Document URL:</strong> {documentUrl || 'None found'}</div>
-      <div className="mt-1"><strong>Document ID:</strong> {document.id}</div>
-      <div><strong>Document fileName:</strong> {document.fileName || document.title || document.name}</div>
-      <div className="mt-1 flex flex-col">
-        <strong>URL checks:</strong>
-        <span>metadata.sourceUrl: {String(Boolean(document.metadata?.sourceUrl))}</span>
-        <span>metadata.sourceURL: {String(Boolean(document.metadata?.sourceURL))}</span>
-        <span>document.sourceUrl: {String(Boolean(document.sourceUrl))}</span>
-        <span>document.sourceURL: {String(Boolean(document.sourceURL))}</span>
-      </div>
-    </div>
-  );
-
   return (
-    <div
-      className="border-b p-4"
-      style={{ 
-        borderColor: themeStyles.borderColor,
-        backgroundColor: `${themeStyles.secondaryColor}10`
-      }}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="rounded-xl shadow-sm overflow-hidden bg-white border"
+      style={{ borderColor: themeStyles.borderColor }}
     >
-      {/* Show debug section in development */}
-      {debugUrlSection}
-    
-      <div className="flex justify-between items-start mb-3">
+      {/* Header with document information */}
+      <div 
+        className="p-4 border-b flex items-center justify-between"
+        style={{ 
+          background: `linear-gradient(to right, ${themeStyles.secondaryColor}10, ${themeStyles.secondaryColor}05)`,
+          borderColor: themeStyles.borderColor
+        }}
+      >
         <div className="flex items-center">
-          {getDocumentIcon(fileName, document.type)}
-          <h3 className="ml-2 font-medium">{fileName}</h3>
-          {document.score !== undefined && (
-            <span 
-              className="ml-2 px-2 py-0.5 text-xs rounded-full"
-              style={{ 
-                backgroundColor: `${themeStyles.secondaryColor}20`,
-                color: themeStyles.secondaryColor
-              }}
-            >
-              Score: {(document.score * 100).toFixed(1)}%
-            </span>
-          )}
+          <div
+            className="p-2 rounded-lg mr-3 flex items-center justify-center"
+            style={{ 
+              backgroundColor: `${themeStyles.secondaryColor}15`,
+              color: themeStyles.secondaryColor
+            }}
+          >
+            {getDocumentIcon(fileName, document.type)}
+          </div>
           
-          {document.xray && (
-            <span 
-              className="ml-2 px-2 py-0.5 text-xs rounded-full"
-              style={{ 
-                backgroundColor: `${themeStyles.xrayColor}20`,
-                color: themeStyles.xrayColor
-              }}
-            >
-              X-Ray Analysis
-            </span>
-          )}
+          <div>
+            <h2 className="text-lg font-bold">{fileName}</h2>
+            <div className="flex items-center gap-2 mt-1">
+              {document.score !== undefined && (
+                <span 
+                  className="px-2 py-0.5 text-xs rounded-full flex items-center"
+                  style={{ 
+                    backgroundColor: `${themeStyles.secondaryColor}15`,
+                    color: themeStyles.secondaryColor
+                  }}
+                >
+                  <DollarSign size={10} className="mr-1" />
+                  Relevance: {formatScoreDisplay(document.score)}
+                </span>
+              )}
+              
+              {document.xray && (
+                <span 
+                  className="px-2 py-0.5 text-xs rounded-full flex items-center"
+                  style={{ 
+                    backgroundColor: `${themeStyles.xrayColor}15`,
+                    color: themeStyles.xrayColor
+                  }}
+                >
+                  <Zap size={10} className="mr-1" />
+                  X-Ray Analyzed
+                </span>
+              )}
+              
+              <span className="text-xs text-gray-500">
+                ID: {documentId}
+              </span>
+            </div>
+          </div>
         </div>
+        
         <button 
           onClick={() => setCurrentDocumentId(null)} 
-          className="p-1"
+          className="p-1.5 rounded-full hover:bg-gray-100"
           aria-label="Close document details"
         >
           <X size={16} />
         </button>
       </div>
       
-      <div className="mb-3 text-xs opacity-70">
-        Document ID: {documentId}
-      </div>
-      
-      {/* X-Ray Analysis Button - show when X-Ray is not available */}
-      {!document.xray && !isLoading && onStartXRayAnalysis && (
-        <div 
-          className="mb-4 p-3 rounded-lg border cursor-pointer hover:shadow-md transition-all"
-          style={{ 
-            backgroundColor: `${themeStyles.xrayColor}05`,
-            borderColor: `${themeStyles.xrayColor}30`
-          }}
-          onClick={handleStartXRayAnalysis}
-          role="button"
-          tabIndex={0}
-          aria-label="Start X-Ray analysis for this document"
+      <div className="p-4">
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
+          className="space-y-4"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <Zap 
-                size={20} 
-                className="mr-2" 
-                style={{ color: themeStyles.xrayColor }}
-              />
-              <div>
-                <h4 
-                  className="text-sm font-medium"
-                  style={{ color: themeStyles.xrayColor }}
-                >
-                  Start X-Ray Analysis
-                </h4>
-                <p className="text-xs opacity-80 mt-1">
-                  Generate advanced document insights with AI, including content summaries, tables, figures, and structured data extraction
-                </p>
-              </div>
-            </div>
-            <div 
-              className="rounded-full p-2"
-              style={{ backgroundColor: `${themeStyles.xrayColor}15` }}
+          {/* X-Ray Analysis Button - show when X-Ray is not available */}
+          {!document.xray && !isLoading && onStartXRayAnalysis && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-visible"
+              style={{ borderColor: themeStyles.borderColor }}
             >
-              <Activity size={16} style={{ color: themeStyles.xrayColor }} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* X-Ray Loading State */}
-      {isLoading && (
-        <div 
-          className="mb-4 p-3 rounded-lg border"
-          style={{ 
-            backgroundColor: `${themeStyles.xrayColor}05`,
-            borderColor: `${themeStyles.xrayColor}30`
-          }}
-        >
-          <div className="flex items-center">
-            <div className="animate-spin mr-3">
-              <Loader size={20} style={{ color: themeStyles.xrayColor }} />
-            </div>
-            <div>
-              <h4 
-                className="text-sm font-medium"
-                style={{ color: themeStyles.xrayColor }}
+              <div 
+                className="p-4 cursor-pointer transition-all hover:shadow-md flex items-center justify-between"
+                style={{ backgroundColor: `${themeStyles.xrayColor}05` }}
+                onClick={handleStartXRayAnalysis}
+                role="button"
+                tabIndex={0}
+                aria-label="Start X-Ray analysis for this document"
               >
-                X-Ray Analysis in Progress
-              </h4>
-              <p className="text-xs opacity-80 mt-1">
-                Analyzing document content and extracting insights. This may take a few moments...
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5 dark:bg-gray-700">
-            <div 
-              className="h-1.5 rounded-full animate-pulse" 
-              style={{ 
-                width: '60%', 
-                backgroundColor: themeStyles.xrayColor 
-              }}
-            ></div>
-          </div>
-        </div>
-      )}
-      
-      {/* X-Ray Summary */}
-      {document.xray?.summary && (
-        <div 
-          className="mb-4 p-3 rounded-lg border"
-          style={{ 
-            backgroundColor: `${themeStyles.xrayColor}05`,
-            borderColor: `${themeStyles.xrayColor}30`
-          }}
-        >
-          <h4 
-            className="text-sm font-medium mb-2 flex items-center"
-            style={{ color: themeStyles.xrayColor }}
-          >
-            <Zap size={16} className="mr-2" />
-            X-Ray Document Summary
-          </h4>
-          <p className="text-sm">{document.xray.summary}</p>
-          
-          {document.xray.keywords && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {document.xray.keywords.split(',').map((keyword, i) => (
-                <span 
-                  key={i}
-                  className="px-2 py-0.5 text-xs rounded-full"
-                  style={{ 
-                    backgroundColor: `${themeStyles.xrayColor}15`,
-                    color: themeStyles.xrayColor
-                  }}
-                >
-                  {keyword.trim()}
-                </span>
-              ))}
-            </div>
+                <div className="flex items-center">
+                  <div 
+                    className="p-2 rounded-lg mr-3 flex items-center justify-center"
+                    style={{ 
+                      backgroundColor: `${themeStyles.xrayColor}15`,
+                      color: themeStyles.xrayColor
+                    }}
+                  >
+                    <Zap size={20} />
+                  </div>
+                  <div>
+                    <h3 
+                      className="text-base font-medium"
+                      style={{ color: themeStyles.xrayColor }}
+                    >
+                      Start X-Ray Analysis
+                    </h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Generate advanced document insights with AI, including content summaries, tables, figures, and structured data extraction
+                    </p>
+                  </div>
+                </div>
+                <Activity size={18} style={{ color: themeStyles.xrayColor }} />
+              </div>
+            </motion.div>
           )}
 
-          {/* View full X-Ray Analysis button */}
-          <div className="mt-3 flex justify-end">
-            <button
-              onClick={() => {
-                setActiveTab('xray');
-                setActiveXrayChunk(null);
+          {/* X-Ray Loading State */}
+          {isLoading && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-hidden"
+              style={{ borderColor: `${themeStyles.xrayColor}40` }}
+            >
+              <div 
+                className="p-4"
+                style={{ backgroundColor: `${themeStyles.xrayColor}05` }}
+              >
+                <div className="flex items-center">
+                  <div className="animate-spin mr-3">
+                    <Loader size={20} style={{ color: themeStyles.xrayColor }} />
+                  </div>
+                  <div>
+                    <h3 
+                      className="text-base font-medium"
+                      style={{ color: themeStyles.xrayColor }}
+                    >
+                      X-Ray Analysis in Progress
+                    </h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Analyzing document content and extracting insights. This may take a few moments...
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5">
+                  <div 
+                    className="h-1.5 rounded-full animate-pulse" 
+                    style={{ 
+                      width: '60%', 
+                      backgroundColor: themeStyles.xrayColor 
+                    }}
+                  ></div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          
+          {/* X-Ray Summary */}
+          {document.xray?.summary && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-hidden"
+              style={{ borderColor: themeStyles.borderColor }}
+            >
+              <div 
+                className="p-3 border-b flex items-center justify-between cursor-pointer"
+                style={{ 
+                  background: `linear-gradient(to right, ${themeStyles.xrayColor}10, ${themeStyles.xrayColor}05)`,
+                  borderColor: themeStyles.borderColor 
+                }}
+                onClick={() => toggleSection('summary')}
+              >
+                <div className="flex items-center">
+                  <div 
+                    className="p-1.5 rounded-full mr-2"
+                    style={{ backgroundColor: `${themeStyles.xrayColor}15` }}
+                  >
+                    <Zap size={16} style={{ color: themeStyles.xrayColor }} />
+                  </div>
+                  <h3 className="font-medium" style={{ color: themeStyles.xrayColor }}>
+                    X-Ray Document Summary
+                  </h3>
+                </div>
+                
+                {expandedSections.summary ? 
+                  <ChevronUp size={18} className="text-gray-400" /> : 
+                  <ChevronDown size={18} className="text-gray-400" />
+                }
+              </div>
+              
+              <AnimatePresence>
+                {expandedSections.summary && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4"
+                  >
+                    <p className="text-sm mb-3">{document.xray.summary}</p>
+                    
+                    {document.xray.keywords && (
+                      <div className="mb-3">
+                        <div className="text-xs font-medium mb-2 flex items-center" style={{ color: themeStyles.xrayColor }}>
+                          <Tag size={12} className="mr-1.5" />
+                          Keywords
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {document.xray.keywords.split(',').map((keyword, i) => (
+                            <span 
+                              key={i}
+                              className="px-2 py-0.5 text-xs rounded-full flex items-center"
+                              style={{ 
+                                backgroundColor: `${themeStyles.xrayColor}10`,
+                                color: themeStyles.xrayColor
+                              }}
+                            >
+                              <Tag size={10} className="mr-1" />
+                              {keyword.trim()}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => {
+                          setActiveTab('xray');
+                          setActiveXrayChunk(null);
+                        }}
+                        className="text-xs px-3 py-1.5 rounded flex items-center"
+                        style={{ 
+                          backgroundColor: `${themeStyles.xrayColor}15`,
+                          color: themeStyles.xrayColor
+                        }}
+                      >
+                        <Activity size={12} className="mr-1.5" />
+                        View Full X-Ray Analysis
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+          
+          {/* Document images */}
+          {document.pageImages && document.pageImages.length > 0 && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-hidden"
+              style={{ borderColor: themeStyles.borderColor }}
+            >
+              <div 
+                className="p-3 border-b flex items-center justify-between cursor-pointer"
+                style={{ borderColor: themeStyles.borderColor }}
+                onClick={() => toggleSection('images')}
+              >
+                <div className="flex items-center">
+                  <div 
+                    className="p-1.5 rounded-full mr-2"
+                    style={{ backgroundColor: `${themeStyles.secondaryColor}15` }}
+                  >
+                    <Image size={16} style={{ color: themeStyles.secondaryColor }} />
+                  </div>
+                  <h3 className="font-medium" style={{ color: themeStyles.secondaryColor }}>
+                    Document Pages
+                  </h3>
+                </div>
+                
+                {expandedSections.images ? 
+                  <ChevronUp size={18} className="text-gray-400" /> : 
+                  <ChevronDown size={18} className="text-gray-400" />
+                }
+              </div>
+              
+              <AnimatePresence>
+                {expandedSections.images && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4"
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      {document.pageImages.slice(0, 6).map((imageUrl, index) => (
+                        <motion.div 
+                          key={index}
+                          whileHover={{ y: -3, boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)' }}
+                          onClick={() => handleImageClick(document, index)}
+                          className="relative border rounded-lg overflow-hidden cursor-pointer group"
+                          style={{
+                            width: '100px', 
+                            height: '120px',
+                            borderColor: themeStyles.borderColor
+                          }}
+                        >
+                          <img 
+                            src={imageUrl} 
+                            alt={document.imageLabels?.[index] || `Page ${index + 1}`}
+                            className="w-full h-full object-cover object-top"
+                            loading="lazy"
+                          />
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200" />
+                          <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
+                            {document.imageLabels?.[index] || `Page ${index + 1}`}
+                          </div>
+                        </motion.div>
+                      ))}
+                      
+                      {document.pageImages.length > 6 && (
+                        <motion.div 
+                          whileHover={{ y: -3, boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)' }}
+                          className="relative border rounded-lg overflow-hidden cursor-pointer flex items-center justify-center"
+                          onClick={() => setActiveTab('images')}
+                          style={{
+                            width: '100px', 
+                            height: '120px',
+                            backgroundColor: `${themeStyles.accentColor}10`,
+                            borderColor: themeStyles.borderColor
+                          }}
+                        >
+                          <div className="text-center">
+                            <span className="block font-medium" style={{ color: themeStyles.accentColor }}>
+                              +{document.pageImages.length - 6}
+                            </span>
+                            <span className="text-xs opacity-70">more pages</span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+          
+          {/* X-Ray chunks */}
+          {document.xray?.chunks && document.xray.chunks.length > 0 && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-hidden"
+              style={{ borderColor: themeStyles.borderColor }}
+            >
+              <div 
+                className="p-3 border-b flex items-center justify-between cursor-pointer"
+                style={{ 
+                  background: `linear-gradient(to right, ${themeStyles.xrayColor}10, ${themeStyles.xrayColor}05)`,
+                  borderColor: themeStyles.borderColor 
+                }}
+                onClick={() => toggleSection('xrayChunks')}
+              >
+                <div className="flex items-center">
+                  <div 
+                    className="p-1.5 rounded-full mr-2"
+                    style={{ backgroundColor: `${themeStyles.xrayColor}15` }}
+                  >
+                    <Table size={16} style={{ color: themeStyles.xrayColor }} />
+                  </div>
+                  <h3 className="font-medium" style={{ color: themeStyles.xrayColor }}>
+                    X-Ray Content Chunks 
+                    <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-white">
+                      {document.xray.chunks.length}
+                    </span>
+                  </h3>
+                </div>
+                
+                {expandedSections.xrayChunks ? 
+                  <ChevronUp size={18} className="text-gray-400" /> : 
+                  <ChevronDown size={18} className="text-gray-400" />
+                }
+              </div>
+              
+              <AnimatePresence>
+                {expandedSections.xrayChunks && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4"
+                  >
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                      {document.xray.chunks.slice(0, 4).map((chunk, index) => (
+                        <motion.div 
+                          key={index}
+                          whileHover={{ y: -2, boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)' }}
+                          className="p-3 border rounded-lg cursor-pointer"
+                          onClick={() => {
+                            setActiveTab('xray');
+                            setActiveXrayChunk(chunk);
+                          }}
+                          style={{ 
+                            borderColor: themeStyles.borderColor,
+                            backgroundColor: `${themeStyles.cardBackground}`
+                          }}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center">
+                              <div 
+                                className="p-1 rounded-md mr-1.5"
+                                style={{ backgroundColor: `${themeStyles.xrayColor}10` }}
+                              >
+                                {getContentTypeIcon(chunk.contentType)}
+                              </div>
+                              <span 
+                                className="text-sm font-medium"
+                                style={{ color: themeStyles.xrayColor }}
+                              >
+                                {chunk.contentType?.join(', ') || 'Text'} 
+                              </span>
+                            </div>
+                            <span 
+                              className="px-1.5 py-0.5 text-xs rounded-full"
+                              style={{ 
+                                backgroundColor: `${themeStyles.xrayColor}10`,
+                                color: themeStyles.xrayColor 
+                              }}
+                            >
+                              #{chunk.id}
+                            </span>
+                          </div>
+                          
+                          <div className="text-sm line-clamp-2 mt-2">
+                            {chunk.parsedData?.summary || chunk.parsedData?.Summary || 
+                             chunk.sectionSummary || chunk.text?.substring(0, 120) || 'No preview available'}
+                            {(!chunk.parsedData?.summary && !chunk.parsedData?.Summary && 
+                              !chunk.sectionSummary && chunk.text && chunk.text.length > 120) ? '...' : ''}
+                          </div>
+                          
+                          {chunk.pageNumbers && chunk.pageNumbers.length > 0 && (
+                            <div className="mt-2 text-xs text-gray-500 flex items-center">
+                              <BookOpen size={10} className="mr-1" />
+                              Page{chunk.pageNumbers.length > 1 ? 's' : ''}: {chunk.pageNumbers.join(', ')}
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                    
+                    {document.xray.chunks.length > 4 && (
+                      <div className="flex justify-center">
+                        <button
+                          onClick={() => {
+                            setActiveTab('xray');
+                            setActiveXrayChunk(null);
+                          }}
+                          className="text-sm px-3 py-1.5 rounded flex items-center"
+                          style={{ 
+                            backgroundColor: `${themeStyles.xrayColor}15`,
+                            color: themeStyles.xrayColor
+                          }}
+                        >
+                          <Table size={14} className="mr-1.5" />
+                          View all {document.xray.chunks.length} content chunks
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+          
+          {/* Document excerpts */}
+          {excerpts.length > 0 && (
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border shadow-sm overflow-hidden"
+              style={{ borderColor: themeStyles.borderColor }}
+            >
+              <div 
+                className="p-3 border-b flex items-center justify-between cursor-pointer"
+                style={{ 
+                  background: `linear-gradient(to right, ${themeStyles.primaryColor}10, ${themeStyles.primaryColor}05)`,
+                  borderColor: themeStyles.borderColor 
+                }}
+                onClick={() => toggleSection('excerpts')}
+              >
+                <div className="flex items-center">
+                  <div 
+                    className="p-1.5 rounded-full mr-2"
+                    style={{ backgroundColor: `${themeStyles.primaryColor}15` }}
+                  >
+                    <BookOpen size={16} style={{ color: themeStyles.primaryColor }} />
+                  </div>
+                  <h3 className="font-medium" style={{ color: themeStyles.primaryColor }}>
+                    Key Excerpts 
+                    <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-white">
+                      {excerpts.length}
+                    </span>
+                  </h3>
+                </div>
+                
+                <div className="flex items-center">
+                  <span className="text-xs mr-2 text-gray-500">Most relevant content from document</span>
+                  {expandedSections.excerpts ? 
+                    <ChevronUp size={18} className="text-gray-400" /> : 
+                    <ChevronDown size={18} className="text-gray-400" />
+                  }
+                </div>
+              </div>
+              
+              <AnimatePresence>
+                {expandedSections.excerpts && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4"
+                  >
+                    {/* Search/filter input for longer excerpt lists */}
+                    {excerpts.length > 3 && (
+                      <div className="relative mb-4">
+                        <input
+                          type="text"
+                          placeholder="Search within excerpts..."
+                          className="w-full px-3 py-2 pl-8 text-sm border rounded-lg"
+                          style={{ borderColor: themeStyles.borderColor }}
+                        />
+                        <Search 
+                          size={14} 
+                          className="absolute left-2.5 top-2.5 text-gray-400" 
+                        />
+                      </div>
+                    )}
+                    
+                    {/* Excerpt timeline */}
+                    {document.metadata && document.metadata.page && (
+                      <div 
+                        className="mb-4 p-2 rounded-lg border" 
+                        style={{ 
+                          borderColor: `${themeStyles.borderColor}`,
+                          backgroundColor: `${themeStyles.cardBackground}`
+                        }}
+                      >
+                        <div className="text-xs font-medium mb-2">Document Position</div>
+                        <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden flex">
+                          {excerpts.map((excerpt, i) => {
+                            // Calculate position - if page info is available, use it; otherwise evenly space them
+                            const position = document.metadata && document.metadata.pages && document.metadata.pages[i] 
+                              ? (document.metadata.pages[i] / document.metadata.totalPages * 100) 
+                              : ((i + 1) / (excerpts.length + 1) * 100);
+                            
+                            return (
+                              <div 
+                                key={i}
+                                className="absolute w-3 h-3 rounded-full z-10 transform -translate-x-1/2 -translate-y-1/4 cursor-pointer"
+                                style={{
+                                  left: `${position}%`,
+                                  backgroundColor: themeStyles.primaryColor,
+                                  boxShadow: `0 0 0 2px white`
+                                }}
+                                title={`Excerpt ${i+1}${document.metadata.pages && document.metadata.pages[i] ? ` - Page ${document.metadata.pages[i]}` : ''}`}
+                              />
+                            );
+                          })}
+                          <div 
+                            className="h-full rounded-full"
+                            style={{ 
+                              width: '100%', 
+                              backgroundImage: `linear-gradient(to right, ${themeStyles.secondaryColor}30, ${themeStyles.primaryColor}60)` 
+                            }}
+                          ></div>
+                        </div>
+                      </div>
+                    )}
+                  
+                    <div className="space-y-4">
+                      {excerpts.map((excerpt, i) => {
+                        // Calculate relevance score for visual indicator 
+                        // If no score is provided, use position in array (first excerpts are typically more relevant)
+                        const relevanceScore = document.excerptScores 
+                          ? document.excerptScores[i] 
+                          : 1 - (i / Math.max(1, excerpts.length - 1));
+                        
+                        // Determine indicator color based on relevance
+                        const indicatorColor = relevanceScore > 0.8 
+                          ? themeStyles.primaryColor 
+                          : relevanceScore > 0.5 
+                            ? themeStyles.secondaryColor 
+                            : themeStyles.textColor;
+                        
+                        // Process paragraph breaks for better readability
+                        // Use a regex that preserves periods and handles multiple text patterns
+                        let paragraphs = [];
+                        try {
+                          // First try splitting by periods followed by spaces
+                          const tempParagraphs = excerpt.split(/(?<=\. )/).filter(p => p.trim().length > 0);
+                          
+                          // If that didn't work well (only one very long paragraph), try alternative approaches
+                          if (tempParagraphs.length <= 1 && excerpt.length > 200) {
+                            // Try splitting by double newlines if present
+                            if (excerpt.includes("\n\n")) {
+                              paragraphs = excerpt.split("\n\n").filter(p => p.trim().length > 0);
+                            } 
+                            // Try splitting by newlines
+                            else if (excerpt.includes("\n")) {
+                              paragraphs = excerpt.split("\n").filter(p => p.trim().length > 0);
+                            }
+                            // If still one paragraph, force split approximately every 150 chars at sentence boundaries
+                            else {
+                              paragraphs = [];
+                              let current = "";
+                              const sentences = excerpt.split(/(?<=\. )/);
+                              
+                              for (let sentence of sentences) {
+                                if (current.length + sentence.length > 150 && current.length > 0) {
+                                  paragraphs.push(current.trim());
+                                  current = sentence;
+                                } else {
+                                  current += sentence;
+                                }
+                              }
+                              
+                              if (current.length > 0) {
+                                paragraphs.push(current.trim());
+                              }
+                            }
+                          } else {
+                            paragraphs = tempParagraphs;
+                          }
+                        } catch (e) {
+                          // Fallback in case of any errors
+                          paragraphs = [excerpt];
+                        }
+                        
+                        // Ensure we have at least one paragraph
+                        if (paragraphs.length === 0) {
+                          paragraphs = [excerpt];
+                        }
+                        
+                        return (
+                          <motion.div
+                            key={i}
+                            whileHover={{ y: -2, boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)' }}
+                            className="rounded-lg border shadow-sm overflow-visible"
+                            style={{
+                              backgroundColor: themeStyles.cardBackground,
+                              borderColor: themeStyles.borderColor,
+                              width: "100%"
+                            }}
+                          >
+                            {/* Top bar with excerpt number and metadata */}
+                            <div 
+                              className="p-2 border-b flex items-center justify-between"
+                              style={{ 
+                                backgroundColor: `${themeStyles.primaryColor}08`,
+                                borderColor: themeStyles.borderColor
+                              }}
+                            >
+                              <div className="flex items-center">
+                                <div 
+                                  className="text-xs font-medium px-2 py-0.5 rounded-md mr-2 flex items-center"
+                                  style={{ 
+                                    backgroundColor: `${indicatorColor}15`,
+                                    color: indicatorColor
+                                  }}
+                                >
+                                  <FileText size={10} className="mr-1" />
+                                  Excerpt {i+1}
+                                </div>
+                                
+                                {document.metadata && (
+                                  <div className="flex gap-2">
+                                    {document.metadata.page && (
+                                      <span 
+                                        className="text-xs px-2 py-0.5 rounded-md flex items-center"
+                                        style={{ 
+                                          backgroundColor: `${themeStyles.textColor}10`,
+                                          color: themeStyles.textColor
+                                        }}
+                                      >
+                                        <BookOpen size={10} className="mr-1" />
+                                        {document.metadata.pages && document.metadata.pages[i] 
+                                          ? `Page ${document.metadata.pages[i]}` 
+                                          : document.metadata.page 
+                                            ? `Page ${document.metadata.page}` 
+                                            : "Unknown page"}
+                                      </span>
+                                    )}
+                                    
+                                    {document.datePublished && (
+                                      <span 
+                                        className="text-xs px-2 py-0.5 rounded-md flex items-center"
+                                        style={{ 
+                                          backgroundColor: `${themeStyles.textColor}10`,
+                                          color: themeStyles.textColor
+                                        }}
+                                      >
+                                        <Calendar size={10} className="mr-1" />
+                                        {formatDate(document.datePublished)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {/* Relevance indicator */}
+                              {document.score !== undefined && (
+                                <div className="flex items-center">
+                                  <span 
+                                    className="text-xs px-2 py-0.5 rounded-md flex items-center"
+                                    style={{ 
+                                      backgroundColor: `${themeStyles.secondaryColor}15`,
+                                      color: themeStyles.secondaryColor
+                                    }}
+                                  >
+                                    <DollarSign size={10} className="mr-1" />
+                                    Match: {formatScoreDisplay(document.score)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* Excerpt content */}
+                            <div className="p-3 w-full">
+                              <div 
+                                className="prose prose-sm w-full max-w-none break-words whitespace-normal overflow-visible" 
+                                style={{ 
+                                  color: themeStyles.textColor,
+                                  wordBreak: "break-word",
+                                  overflowWrap: "break-word",
+                                  hyphens: "auto"
+                                }}
+                              >
+                                {/* Show each paragraph with proper spacing */}
+                                {paragraphs.length > 0 ? (
+                                  paragraphs.map((paragraph, pIndex) => (
+                                    <p key={pIndex} className="mb-2 last:mb-0 whitespace-normal overflow-visible w-full">
+                                      {paragraph.trim()}
+                                    </p>
+                                  ))
+                                ) : (
+                                  // Fallback if no paragraphs were detected
+                                  <p className="whitespace-normal overflow-visible w-full">
+                                    {excerpt}
+                                  </p>
+                                )}
+                              </div>
+                              
+                              {/* Highlighted match */}
+                              {document.highlights && document.highlights[i] && (
+                                <div 
+                                  className="mt-3 rounded-md p-3" 
+                                  style={{ 
+                                    backgroundColor: `${themeStyles.primaryColor}08`,
+                                    borderLeft: `3px solid ${themeStyles.primaryColor}`
+                                  }}
+                                >
+                                  <div className="flex items-center mb-1 text-xs font-medium" style={{ color: themeStyles.primaryColor }}>
+                                    <Activity size={12} className="mr-1" />
+                                    Key Match
+                                  </div>
+                                  <div className="text-sm ml-2" style={{ color: `${themeStyles.primaryColor}` }}>
+                                    "{document.highlights[i]}"
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Action buttons */}
+                              <div className="mt-3 flex items-center justify-between">
+                                <div className="flex gap-2">
+                                  <button
+                                    className="text-xs px-2 py-0.5 rounded flex items-center text-gray-500 hover:text-gray-700"
+                                    onClick={() => navigator.clipboard.writeText(excerpt)}
+                                  >
+                                    <ClipboardCopy size={12} className="mr-1" />
+                                    Copy
+                                  </button>
+                                  
+                                  {document.xray?.chunks && (
+                                    <button
+                                      className="text-xs px-2 py-0.5 rounded flex items-center"
+                                      style={{ color: themeStyles.xrayColor }}
+                                      onClick={() => {
+                                        setActiveTab('xray');
+                                        // Would need logic to find the matching xray chunk
+                                      }}
+                                    >
+                                      <Zap size={12} className="mr-1" />
+                                      View X-Ray
+                                    </button>
+                                  )}
+                                </div>
+                                
+                                <button
+                                  onClick={() => viewInDocument(documentId)}
+                                  className="text-xs px-2.5 py-1 rounded-md flex items-center shadow-sm hover:shadow transition-shadow"
+                                  style={{ 
+                                    backgroundColor: themeStyles.primaryColor,
+                                    color: 'white'
+                                  }}
+                                >
+                                  <ExternalLink size={12} className="mr-1.5" />
+                                  View in Document
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+          
+          {/* No excerpts message */}
+          {excerpts.length === 0 && (
+            <motion.div
+              variants={itemVariants}
+              className="flex items-center justify-center p-6 rounded-lg border border-dashed"
+              style={{ borderColor: themeStyles.borderColor }}
+            >
+              <Info size={18} className="mr-2 text-gray-400" />
+              <span className="text-sm text-gray-500">No excerpts available for this document</span>
+            </motion.div>
+          )}
+          
+          {/* Relevance explanation */}
+          <motion.div
+            variants={itemVariants}
+            className="rounded-lg border shadow-sm overflow-hidden"
+            style={{ borderColor: themeStyles.borderColor }}
+          >
+            <div 
+              className="p-3 border-b flex items-center justify-between cursor-pointer"
+              style={{ 
+                background: `linear-gradient(to right, ${themeStyles.primaryColor}10, ${themeStyles.primaryColor}05)`,
+                borderColor: themeStyles.borderColor 
               }}
-              className="text-xs px-2 py-1 rounded flex items-center"
+              onClick={() => toggleSection('relevance')}
+            >
+              <div className="flex items-center">
+                <div 
+                  className="p-1.5 rounded-full mr-2"
+                  style={{ backgroundColor: `${themeStyles.primaryColor}15` }}
+                >
+                  <Info size={16} style={{ color: themeStyles.primaryColor }} />
+                </div>
+                <h3 className="font-medium" style={{ color: themeStyles.primaryColor }}>
+                  Why This Document is Relevant
+                </h3>
+              </div>
+              
+              {expandedSections.relevance ? 
+                <ChevronUp size={18} className="text-gray-400" /> : 
+                <ChevronDown size={18} className="text-gray-400" />
+              }
+            </div>
+            
+            <AnimatePresence>
+              {expandedSections.relevance && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="p-4"
+                >
+                  <p className="text-sm">{getRelevanceExplanation(document)}</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        </motion.div>
+        
+        {/* Bottom action buttons */}
+        <div className="mt-4 flex justify-end space-x-3">
+          {!document.xray && !isLoading && onStartXRayAnalysis && (
+            <button
+              onClick={handleStartXRayAnalysis}
+              className="text-sm px-3 py-1.5 rounded-md flex items-center shadow-sm transition-shadow hover:shadow"
               style={{ 
                 backgroundColor: `${themeStyles.xrayColor}15`,
                 color: themeStyles.xrayColor
               }}
+              disabled={isLoading}
             >
-              <Activity size={12} className="mr-1" />
-              View Full X-Ray Analysis
-            </button>
-          </div>
-        </div>
-      )}
-      
-      {/* The rest of the component remains the same */}
-      
-      {/* Document images if available */}
-      {document.pageImages && document.pageImages.length > 0 && (
-        <div className="mb-4">
-          <h4 className="text-sm font-medium mb-2 flex items-center">
-            <Image size={16} className="mr-2" />
-            Document Pages
-          </h4>
-          <div className="flex flex-wrap gap-2">
-            {document.pageImages.slice(0, 6).map((imageUrl, index) => (
-              <div 
-                key={index}
-                onClick={() => handleImageClick(document, index)}
-                className="relative border rounded overflow-hidden cursor-pointer group"
-                style={{
-                  width: '100px', 
-                  height: '120px',
-                  borderColor: themeStyles.borderColor
-                }}
-              >
-                <img 
-                  src={imageUrl} 
-                  alt={document.imageLabels?.[index] || `Page ${index + 1}`}
-                  className="w-full h-full object-cover object-top"
-                  loading="lazy"
-                />
-                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200" />
-                <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
-                  {document.imageLabels?.[index] || `Page ${index + 1}`}
-                </div>
-              </div>
-            ))}
-            
-            {document.pageImages.length > 6 && (
-              <div 
-                className="relative border rounded overflow-hidden cursor-pointer flex items-center justify-center"
-                onClick={() => setActiveTab('images')}
-                style={{
-                  width: '100px', 
-                  height: '120px',
-                  backgroundColor: `${themeStyles.accentColor}10`,
-                  borderColor: themeStyles.borderColor
-                }}
-              >
-                <div className="text-center">
-                  <span className="block font-medium" style={{ color: themeStyles.accentColor }}>
-                    +{document.pageImages.length - 6}
-                  </span>
-                  <span className="text-xs opacity-70">more pages</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {/* X-Ray chunks if available */}
-      {document.xray?.chunks && document.xray.chunks.length > 0 && (
-        <div className="mb-4">
-          <h4 
-            className="text-sm font-medium mb-2 flex items-center"
-            style={{ color: themeStyles.xrayColor }}
-          >
-            <Table size={16} className="mr-2" />
-            X-Ray Content Chunks
-          </h4>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
-            {document.xray.chunks.slice(0, 4).map((chunk, index) => (
-              <div 
-                key={index}
-                className="p-2 border rounded cursor-pointer hover:shadow-sm transition-shadow"
-                onClick={() => {
-                  setActiveTab('xray');
-                  setActiveXrayChunk(chunk);
-                }}
-                style={{ 
-                  borderColor: themeStyles.borderColor,
-                  backgroundColor: `${themeStyles.cardBackground}`
-                }}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center">
-                    {getContentTypeIcon(chunk.contentType)}
-                    <span 
-                      className="ml-1.5 text-xs font-medium"
-                      style={{ color: themeStyles.xrayColor }}
-                    >
-                      {chunk.contentType?.join(', ') || 'Text'} 
-                    </span>
-                  </div>
-                  <span className="text-xs opacity-60">#{chunk.id}</span>
-                </div>
-                
-                <div className="text-xs line-clamp-2 mt-1">
-                  {/* Display parsed summary if available */}
-                  {chunk.parsedData?.summary || chunk.parsedData?.Summary || 
-                   chunk.sectionSummary || chunk.text?.substring(0, 100) || 'No preview available'}
-                  {(!chunk.parsedData?.summary && !chunk.parsedData?.Summary && 
-                    !chunk.sectionSummary && chunk.text && chunk.text.length > 100) ? '...' : ''}
-                </div>
-                
-                {chunk.pageNumbers && chunk.pageNumbers.length > 0 && (
-                  <div className="mt-1 text-xs opacity-60">
-                    Page{chunk.pageNumbers.length > 1 ? 's' : ''}: {chunk.pageNumbers.join(', ')}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          
-          {document.xray.chunks.length > 4 && (
-            <button
-              onClick={() => {
-                setActiveTab('xray');
-                setActiveXrayChunk(null);
-              }}
-              className="text-xs px-2 py-1 rounded flex items-center"
-              style={{ 
-                backgroundColor: `${themeStyles.xrayColor}10`,
-                color: themeStyles.xrayColor
-              }}
-            >
-              View all {document.xray.chunks.length} content chunks
+              <Zap size={14} className="mr-1.5" />
+              {isLoading ? 'Analyzing...' : 'Analyze with X-Ray'}
             </button>
           )}
-        </div>
-      )}
-      
-      {/* Document excerpts */}
-      {excerpts.length > 0 ? (
-        <div>
-          <h4 className="text-sm font-medium mb-3 flex items-center">
-            <BookOpen size={16} className="mr-2" />
-            Excerpts from {fileName}
-          </h4>
           
-          <div className="space-y-4">
-            {excerpts.map((excerpt, i) => (
-              <div
-                key={i}
-                className="rounded-lg border-l-4 shadow-sm p-4 text-sm relative overflow-hidden transition-all duration-150 hover:shadow-md"
-                style={{
-                  backgroundColor: themeStyles.cardBackground,
-                  borderLeftColor: themeStyles.secondaryColor,
-                  borderTop: `1px solid ${themeStyles.borderColor}`,
-                  borderRight: `1px solid ${themeStyles.borderColor}`,
-                  borderBottom: `1px solid ${themeStyles.borderColor}`
-                }}
-              >
-                <div 
-                  className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full"
-                  style={{ 
-                    backgroundColor: `${themeStyles.secondaryColor}15`,
-                    color: themeStyles.secondaryColor
-                  }}
-                >
-                  Excerpt {i+1}
-                </div>
-                
-                <div className="prose prose-sm max-w-none mt-1" style={{ color: themeStyles.textColor }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{excerpt}</ReactMarkdown>
-                </div>
-                
-                {document.highlights && document.highlights[i] && (
-                  <div 
-                    className="mt-3 pt-3 text-sm rounded-md p-2" 
-                    style={{ 
-                      backgroundColor: `${themeStyles.primaryColor}08`,
-                      borderTop: `1px dashed ${themeStyles.borderColor}`
-                    }}
-                  >
-                    <div className="flex items-center mb-1 text-xs font-medium" style={{ color: themeStyles.primaryColor }}>
-                      <Activity size={12} className="mr-1" />
-                      Highlighted Match
-                    </div>
-                    <div className="text-sm italic ml-4" style={{ color: `${themeStyles.primaryColor}` }}>
-                      "{document.highlights[i]}"
-                    </div>
-                  </div>
-                )}
-                
-                {document.metadata && Object.keys(document.metadata).length > 0 && (
-                  <div 
-                    className="mt-3 pt-2 flex flex-wrap gap-2 text-xs" 
-                    style={{ borderTop: `1px dashed ${themeStyles.borderColor}` }}
-                  >
-                    {document.score !== undefined && (
-                      <span 
-                        className="px-2 py-1 rounded-full flex items-center"
-                        style={{ 
-                          backgroundColor: `${themeStyles.secondaryColor}15`, 
-                          color: themeStyles.secondaryColor
-                        }}
-                      >
-                        <DollarSign size={10} className="mr-1" />
-                        Relevance: {(document.score * 100).toFixed(1)}%
-                      </span>
-                    )}
-                    
-                    {document.metadata.page && (
-                      <span 
-                        className="px-2 py-1 rounded-full flex items-center"
-                        style={{ 
-                          backgroundColor: `${themeStyles.primaryColor}15`, 
-                          color: themeStyles.primaryColor
-                        }}
-                      >
-                        <BookOpen size={10} className="mr-1" />
-                        Page {document.metadata.page}
-                      </span>
-                    )}
-                    
-                    {document.datePublished && (
-                      <span 
-                        className="px-2 py-1 rounded-full flex items-center"
-                        style={{ 
-                          backgroundColor: `${themeStyles.textColor}10`, 
-                          color: themeStyles.textColor
-                        }}
-                      >
-                        <Calendar size={10} className="mr-1" />
-                        {formatDate(document.datePublished)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                
-                <div className="mt-3 flex justify-end">
-                  <button
-                    onClick={() => viewInDocument(documentId)}
-                    className="text-xs px-2 py-1 rounded flex items-center"
-                    style={{ 
-                      backgroundColor: `${themeStyles.primaryColor}10`,
-                      color: themeStyles.primaryColor
-                    }}
-                  >
-                    <ExternalLink size={12} className="mr-1" />
-                    View in Document
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-center p-6 rounded-lg border border-dashed text-sm italic" style={{ borderColor: themeStyles.borderColor, color: `${themeStyles.textColor}70` }}>
-          <AlertCircle size={18} className="mr-2 opacity-70" />
-          No excerpts available for this document
-        </div>
-      )}
-      
-      {/* Relevance explanation */}
-      <div className="mt-3 p-3 rounded border text-sm"
-        style={{ 
-          backgroundColor: `${themeStyles.primaryColor}10`,
-          borderColor: `${themeStyles.primaryColor}30`
-        }}
-      >
-        <div className="font-medium mb-1">Why this is relevant:</div>
-        <p>{getRelevanceExplanation(document)}</p>
-      </div>
-      
-      <div className="mt-3 flex justify-end space-x-2">
-        {!document.xray && !isLoading && onStartXRayAnalysis && (
           <button
-            onClick={handleStartXRayAnalysis}
-            className="text-sm px-3 py-1.5 rounded flex items-center"
-            style={{ 
-              backgroundColor: `${themeStyles.xrayColor}15`,
-              color: themeStyles.xrayColor
-            }}
-            disabled={isLoading}
-          >
-            <Zap size={14} className="mr-1.5" />
-            {isLoading ? 'Analyzing...' : 'Analyze with X-Ray'}
-          </button>
-        )}
-        
-        <button
-          onClick={(e) => {
-            // Explicitly handle the click event
-            e.preventDefault();
-            setCurrentDocumentId(null);
-            
-            // Slight delay to ensure UI has time to update
-            setTimeout(() => {
+            onClick={() => {
+              setCurrentDocumentId(null);
               openDocument();
-            }, 50);
-          }}
-          className="text-white text-sm px-3 py-1.5 rounded flex items-center"
-          style={{ backgroundColor: themeStyles.secondaryColor }}
-          disabled={!documentUrl}
-        >
-          <ExternalLink size={14} className="mr-1.5" />
-          View Full Document
-        </button>
+            }}
+            className="text-white text-sm px-3 py-1.5 rounded-md flex items-center shadow-sm transition-shadow hover:shadow"
+            style={{ backgroundColor: themeStyles.secondaryColor }}
+          >
+            <ExternalLink size={14} className="mr-1.5" />
+            View Full Document
+          </button>
+        </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
 

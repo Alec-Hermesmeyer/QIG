@@ -215,6 +215,42 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 }
 
 /**
+ * Function to check if X-Ray data is actually available
+ * Even when xrayUrl is missing from document details
+ */
+async function checkAndGetXRayUrl(documentId: string): Promise<string | null> {
+  try {
+    // First try to get document details through the GroundX client
+    const docDetails = await groundxClient.documents.get(documentId) as DocumentDetail;
+    
+    // If we have an xrayUrl, return it
+    if (docDetails?.document?.xrayUrl) {
+      return docDetails.document.xrayUrl;
+    }
+    
+    // If not, try the layout service directly which might have X-Ray data
+    // even if the document metadata doesn't show it
+    const layoutUrl = `https://upload.eyelevel.ai/layout/processed/e7da7704-7ecd-4096-a6be-567a3878f9a7/${documentId}-xray.json`;
+    
+    // Test if this URL exists by making a HEAD request
+    const headRes = await fetch(layoutUrl, { 
+      method: 'HEAD',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    
+    if (headRes.ok) {
+      console.log(`Found X-Ray data at layout service for ${documentId}`);
+      return layoutUrl;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error checking X-Ray availability for ${documentId}:`, error);
+    return null;
+  }
+}
+
+/**
  * GET handler to fetch X-Ray data for a document
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -270,17 +306,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       : await groundxClient.documents.get(documentId) as DocumentDetail;
     
     // Check if document has X-Ray URL
-    if (!docDetails?.document?.xrayUrl) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          timestamp: new Date().toISOString(),
-          error: 'X-Ray data not available for this document',
-          documentId,
-          fileName: docDetails?.document?.fileName || '',
-        },
-        { status: 404 }
-      );
+    let xrayUrl = docDetails?.document?.xrayUrl;
+    
+    // If no xrayUrl in document details, try alternate method
+    if (!xrayUrl) {
+      console.log(`No xrayUrl in document details, checking alternate source for ${documentId}`);
+      xrayUrl = await checkAndGetXRayUrl(documentId);
+      
+      if (!xrayUrl) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            timestamp: new Date().toISOString(),
+            error: 'X-Ray data not available for this document',
+            documentId,
+            fileName: docDetails?.document?.fileName || '',
+          },
+          { status: 404 }
+        );
+      }
     }
     
     // Fetch X-Ray data with caching
@@ -291,8 +335,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ? await getCachedOrFetch(
             xrayCacheKey,
             async () => {
-              console.log(`Fetching X-Ray data from: ${docDetails.document?.xrayUrl}`);
-              const xrayResponse = await fetchWithTimeout(docDetails.document?.xrayUrl as string, {}, 15000); // Longer timeout for X-Ray data
+              console.log(`Fetching X-Ray data from: ${xrayUrl}`);
+              const xrayResponse = await fetchWithTimeout(xrayUrl as string, {}, 15000); // Longer timeout for X-Ray data
               
               if (xrayResponse.ok) {
                 const xrayResult: XRayResult = await xrayResponse.json();
@@ -306,8 +350,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             { increment: () => xrayCacheHits++ }
           )
         : await (async () => {
-            console.log(`Fetching X-Ray data from: ${docDetails.document?.xrayUrl} (cache bypassed)`);
-            const xrayResponse = await fetchWithTimeout(docDetails.document?.xrayUrl as string, {}, 15000);
+            console.log(`Fetching X-Ray data from: ${xrayUrl} (cache bypassed)`);
+            const xrayResponse = await fetchWithTimeout(xrayUrl as string, {}, 15000);
             
             if (xrayResponse.ok) {
               const xrayResult: XRayResult = await xrayResponse.json();
@@ -517,30 +561,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         
         // Check if X-Ray URL exists
-        if (!docDetails?.document?.xrayUrl) {
-          return NextResponse.json({
-            success: false,
-            timestamp: new Date().toISOString(),
-            action: 'refresh',
-            documentId,
-            fileName: docDetails?.document?.fileName || '',
-            message: 'X-Ray data not available for this document',
-            executionTime: {
-              totalMs: Date.now() - startTime
-            }
-          }, {
-            status: 404,
-            headers: {
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-              'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-            }
-          });
+        let xrayUrl = docDetails?.document?.xrayUrl;
+        
+        // If no xrayUrl in document details, try alternate method
+        if (!xrayUrl) {
+          console.log(`No xrayUrl in document details, checking alternate source for ${documentId}`);
+          xrayUrl = await checkAndGetXRayUrl(documentId);
+          
+          if (!xrayUrl) {
+            return NextResponse.json({
+              success: false,
+              timestamp: new Date().toISOString(),
+              action: 'refresh',
+              documentId,
+              fileName: docDetails?.document?.fileName || '',
+              message: 'X-Ray data not available for this document',
+              executionTime: {
+                totalMs: Date.now() - startTime
+              }
+            }, {
+              status: 404,
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+              }
+            });
+          }
         }
         
         // Fetch fresh X-Ray data
-        console.log(`Refreshing X-Ray data from: ${docDetails.document.xrayUrl}`);
-        const xrayResponse = await fetchWithTimeout(docDetails.document.xrayUrl, {}, 15000);
+        console.log(`Refreshing X-Ray data from: ${xrayUrl}`);
+        const xrayResponse = await fetchWithTimeout(xrayUrl, {}, 15000);
         
         if (xrayResponse.ok) {
           const xrayResult: XRayResult = await xrayResponse.json();
@@ -556,7 +608,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             timestamp: new Date().toISOString(),
             action: 'refresh',
             documentId,
-            fileName: xrayResult.fileName || docDetails.document.fileName,
+            fileName: xrayResult.fileName || docDetails.document?.fileName,
             message: 'X-Ray data refreshed successfully',
             summary: xrayResult.fileSummary,
             keywords: xrayResult.fileKeywords,

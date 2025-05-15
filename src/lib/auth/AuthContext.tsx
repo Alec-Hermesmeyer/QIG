@@ -23,6 +23,12 @@ interface Profile {
   avatar_url: string | null;
 }
 
+// Define user profile with organization name
+interface UserWithOrganization extends Profile {
+  email: string | null;
+  organization_name: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -35,7 +41,8 @@ interface AuthContextType {
   signUp: (email: string, password: string, organizationName: string) => Promise<{ error: any, user: any }>;
   signOut: () => Promise<void>;
   getUsersInOrganization: () => Promise<{ data: Profile[] | null, error: any }>;
-  getAllUsers: () => Promise<{ data: any[] | null, error: any }>;
+  getAllUsers: () => Promise<{ data: UserWithOrganization[] | null, error: any }>;
+  getAllOrganizations: () => Promise<{ data: Organization[] | null, error: any }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -209,12 +216,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { data: null, error: new Error('No organization found') };
     }
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('organization_id', organization.id);
-
-    return { data, error };
+    try {
+      // First get all profiles in the organization
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select(`
+          id,
+          first_name,
+          last_name,
+          avatar_url,
+          organization_id
+        `)
+        .eq('organization_id', organization.id)
+        .order('first_name');
+        
+      if (profilesError) throw profilesError;
+      
+      // For each profile, get the user from auth.users to get the email
+      const userEmails = await Promise.all(
+        profilesData.map(async (profile) => {
+          try {
+            const { data: userData } = await supabase.auth.admin.getUserById(profile.id);
+            return {
+              id: profile.id,
+              email: userData?.user?.email || null
+            };
+          } catch (err) {
+            console.error(`Error fetching email for user ${profile.id}:`, err);
+            return { id: profile.id, email: null };
+          }
+        })
+      );
+      
+      // Merge the profile data with emails
+      const mergedData = profilesData.map(profile => {
+        const userEmail = userEmails.find(u => u.id === profile.id);
+        return {
+          ...profile,
+          email: userEmail?.email || null
+        };
+      });
+      
+      return { data: mergedData, error: null };
+    } catch (error) {
+      console.error('Error in getUsersInOrganization:', error);
+      return { data: null, error };
+    }
   };
   
   // Get all users (for QIG organization only)
@@ -223,11 +270,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { data: null, error: new Error('Not authorized to view all users') };
     }
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*, organizations(name)');
+    try {
+      // Get all organizations for later lookup
+      const { data: orgsData, error: orgsError } = await supabase
+        .from('organizations')
+        .select('id, name');
+        
+      if (orgsError) throw orgsError;
+      
+      // Get all profiles
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('first_name');
+        
+      if (profilesError) throw profilesError;
+      
+      // Get user emails through admin API
+      const userEmails = await Promise.all(
+        profilesData.map(async (profile) => {
+          try {
+            const { data: userData } = await supabase.auth.admin.getUserById(profile.id);
+            return {
+              id: profile.id,
+              email: userData?.user?.email || null
+            };
+          } catch (err) {
+            console.error(`Error fetching email for user ${profile.id}:`, err);
+            return { id: profile.id, email: null };
+          }
+        })
+      );
+      
+      // Create merged data with organization names
+      const mergedData: UserWithOrganization[] = profilesData.map(profile => {
+        const userEmail = userEmails.find(u => u.id === profile.id);
+        const org = orgsData.find(o => o.id === profile.organization_id);
+        
+        return {
+          ...profile,
+          email: userEmail?.email || null,
+          organization_name: org?.name || null
+        };
+      });
+      
+      return { data: mergedData, error: null };
+    } catch (error) {
+      console.error('Error in getAllUsers:', error);
+      return { data: null, error };
+    }
+  };
+  
+  // Get all organizations - useful for admin functions
+  const getAllOrganizations = async () => {
+    if (!isQIGOrganization) {
+      return { data: null, error: new Error('Not authorized to view all organizations') };
+    }
 
-    return { data, error };
+    try {
+      const { data, error } = await supabase
+        .from('organizations')
+        .select('*')
+        .order('name');
+        
+      if (error) throw error;
+      
+      return { data, error: null };
+    } catch (error) {
+      console.error('Error fetching all organizations:', error);
+      return { data: null, error };
+    }
   };
 
   const value = {
@@ -243,6 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     getUsersInOrganization,
     getAllUsers,
+    getAllOrganizations
   };
 
   return (

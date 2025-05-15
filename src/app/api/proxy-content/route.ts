@@ -5,6 +5,8 @@ const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID;
 const AZURE_SECRET = process.env.AZURE_SECRET;
 const GROUNDX_API_KEY = process.env.GROUNDX_API_KEY;
 const GROUNDX_API_URL = process.env.GROUNDX_API_URL || 'https://api.groundx.ai';
+// Updated backend URL for Azure
+const AZURE_BACKEND_URL = 'https://capps-backend-px4batn2ycs6a.greenground-334066dd.eastus2.azurecontainerapps.io';
 
 async function getAzureToken() {
   const tokenEndpoint = `https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token`;
@@ -274,7 +276,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Azure fallback
+    // Azure fallback - Updated to use the specified backend URL
     const filename = searchParams.get('filename');
     if (!filename) {
       return NextResponse.json(
@@ -285,7 +287,8 @@ export async function GET(req: NextRequest) {
 
     try {
       const token = await getAzureToken();
-      const backendUrl = `${process.env.NEXT_PUBLIC_BACKEND_URL}/content/${encodeURIComponent(filename)}`;
+      // Use the new backend URL instead of environment variable
+      const backendUrl = `${AZURE_BACKEND_URL}/content/${encodeURIComponent(filename)}`;
       console.log(`Fetching from Azure backend: ${backendUrl}`);
       
       const backendResponse = await fetch(backendUrl, {

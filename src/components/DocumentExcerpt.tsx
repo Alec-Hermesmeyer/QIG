@@ -2,7 +2,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { FileText, ExternalLink } from 'lucide-react';
-import { DocumentExcerpt as DocExcerpt, ThemeStyles } from '@/types';
+import { DocumentExcerpt as DocExcerpt, ThemeStyles } from '@/types/types';
 import { formatFileSize, formatDate } from '@/utils/formatUtils';
 import { getSourceExcerpts } from '@/utils/dataUtils';
 import { getDocumentIcon } from '@/utils/iconUtils'; // This would be a separate utility file

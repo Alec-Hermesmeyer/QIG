@@ -1,4 +1,4 @@
-// app/api/groundx/rag/route.ts
+// app/api/groundx/rag/route.ts - MODIFIED TO REMOVE SAFARI LIMITATIONS
 import { NextRequest, NextResponse } from 'next/server';
 import { GroundXClient } from "groundx";
 import OpenAI from "openai";
@@ -16,6 +16,8 @@ interface SearchResultItem {
   documentId?: string;
   fileName?: string;
   score?: number;
+  relevanceScore?: number; // Add alternative score property
+  rankingScore?: number;   // Add another possible score property
   text?: string;
   metadata?: Record<string, any>;
   highlight?: {
@@ -28,11 +30,6 @@ interface SearchResultItem {
 
 interface DocumentDetail {
   document?: {
-    pages?: Array<{
-      pageNumber: number;
-      imageUrl?: string;
-      thumbnailUrl?: string;
-    }>;
     metadata?: Record<string, any>;
     title?: string;
     fileName?: string;
@@ -50,6 +47,7 @@ interface RagResponse {
   timestamp: string;
   query?: string;
   response: string;
+  thoughts?: string; // Added field for AI reasoning process
   searchResults: {
     count: number;
     sources: Array<{
@@ -57,9 +55,12 @@ interface RagResponse {
       fileName?: string;
       text?: string;
       metadata?: Record<string, any>;
-      sourceUrl?: string; // Added this as a top-level field
-      highlights?: string[]; // Highlighted matches from search
-      hasXray?: boolean; // Flag indicating X-ray data is available
+      sourceUrl?: string; 
+      score?: number;       // Explicitly include score in response
+      rawScore?: number;    // Include raw score for debugging
+      scoreSource?: string; // Track where the score came from
+      highlights?: string[]; 
+      hasXray?: boolean; 
     }>;
   };
   executionTime?: {
@@ -180,11 +181,42 @@ function getSearchCacheKey(bucketId: number, query: string, limit: number): stri
 }
 
 /**
- * Detect if request is from Safari (for response size optimization)
+ * Extract the best available score from a search result
+ * This function tries multiple potential score properties and returns the best one
  */
-function isSafariBrowser(request: NextRequest): boolean {
-  const userAgent = request.headers.get('user-agent') || '';
-  return /^((?!chrome|android).)*safari/i.test(userAgent);
+function extractBestScore(result: SearchResultItem): { score: number, source: string } {
+  // Log all potential score fields for debugging
+  console.log('Score fields for document:', {
+    primaryScore: result.score,
+    relevanceScore: result.relevanceScore,
+    rankingScore: result.rankingScore,
+    metadataScore: result.metadata?.score,
+    searchDataScore: result.searchData?.score
+  });
+  
+  // Try different possible score locations in order of preference
+  if (typeof result.score === 'number' && result.score > 0) {
+    return { score: result.score, source: 'primary' };
+  }
+  
+  if (typeof result.relevanceScore === 'number' && result.relevanceScore > 0) {
+    return { score: result.relevanceScore, source: 'relevance' };
+  }
+  
+  if (typeof result.rankingScore === 'number' && result.rankingScore > 0) {
+    return { score: result.rankingScore, source: 'ranking' };
+  }
+  
+  if (result.metadata && typeof result.metadata.score === 'number' && result.metadata.score > 0) {
+    return { score: result.metadata.score, source: 'metadata' };
+  }
+  
+  if (result.searchData && typeof result.searchData.score === 'number' && result.searchData.score > 0) {
+    return { score: result.searchData.score, source: 'searchData' };
+  }
+  
+  // If no valid score found, calculate a normalized position score
+  return { score: 0, source: 'default' };
 }
 
 /**
@@ -195,9 +227,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const startTime = Date.now();
   let searchTime = 0;
   let llmTime = 0;
-  
-  // Check if request is from Safari
-  const isSafari = isSafariBrowser(request);
   
   try {
     // Validate API clients
@@ -249,7 +278,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       maxTokens = 2000,
       temperature = 0.3,
       model = "gpt-4-0125-preview",
-      skipCache = false // Skip cache if explicitly requested
+      skipCache = false, // Skip cache if explicitly requested
+      includeThoughts = true // New parameter to control thoughts output
     } = body;
     
     console.log('RAG API request:', { 
@@ -261,7 +291,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       temperature,
       model,
       skipCache,
-      isSafari
+      includeThoughts
     });
     
     // Validate required fields
@@ -332,6 +362,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         );
     
+    // Log the raw search response structure for debugging
+    console.log('Raw search response structure:', JSON.stringify({
+      hasResults: Boolean(searchResponse?.search?.results),
+      resultCount: searchResponse?.search?.results?.length || 0,
+      sampleResult: searchResponse?.search?.results?.[0] 
+        ? {
+            documentId: searchResponse.search.results[0].documentId,
+            score: searchResponse.search.results[0].score,
+            hasScore: 'score' in searchResponse.search.results[0],
+            scoreType: typeof searchResponse.search.results[0].score,
+            keys: Object.keys(searchResponse.search.results[0])
+          }
+        : null
+    }, null, 2).substring(0, 1000) + '...');
+    
     // Track search execution time
     searchTime = Date.now() - searchStartTime;
     console.log(`Search completed in ${searchTime}ms${!skipCache && searchCache[searchCacheKey]?.timestamp === startTime ? ' (cache miss)' : (skipCache ? '' : ' (cache hit)')}`);
@@ -344,6 +389,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         timestamp: new Date().toISOString(),
         query: query,
         response: "I couldn't find any relevant information about that in the documents.",
+        thoughts: includeThoughts ? "I searched for relevant documents but couldn't find any matches. The search returned zero results." : undefined,
         searchResults: {
           count: 0,
           sources: []
@@ -362,10 +408,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // For Safari, limit results count to prevent performance issues
-    const resultsToProcess = isSafari 
-      ? searchResponse.search.results.slice(0, Math.min(5, searchResponse.search.results.length))
-      : searchResponse.search.results;
+    // Process all results - SAFARI LIMITATION REMOVED
+    const resultsToProcess = searchResponse.search.results;
     
     console.log(`Found ${searchResponse.search.results.length} results, processing ${resultsToProcess.length}`);
     
@@ -375,7 +419,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Default values for missing properties
         const documentId = result.documentId || '';
         const fileName = result.fileName || `Document ${documentId}`;
-        const score = result.score || 0; 
+        
+        // Extract the best available score using our helper function
+        const { score, source: scoreSource } = extractBestScore(result);
+        
+        // Save raw score for debugging
+        const rawScore = result.score;
+        
         const text = result.text || result.suggestedText || '';
         let metadata = result.metadata || result.searchData || {};
         let highlights = result.highlight?.text || [];
@@ -384,7 +434,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // IMPORTANT: Extract sourceUrl as a top-level field
         let sourceUrl = result.sourceUrl || null;
         
-        console.log(`Processing search result ${index + 1}/${resultsToProcess.length}: ${fileName} (ID: ${documentId})`);
+        console.log(`Processing search result ${index + 1}/${resultsToProcess.length}: ${fileName} (ID: ${documentId}, Score: ${score}, Source: ${scoreSource})`);
         
         // Only attempt to fetch details if we have a document ID
         if (documentId) {
@@ -458,14 +508,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           console.log(`Found sourceURL in metadata: ${sourceUrl}`);
         }
         
-        // For Safari, truncate text to improve performance
-        const processedText = isSafari ? text.substring(0, 3000) + (text.length > 3000 ? '... (text truncated for performance)' : '') : text;
-        
+        // No truncation for Safari - SAFARI LIMITATION REMOVED
         return {
           id: documentId,
           fileName,
-          score,
-          text: processedText,
+          score, // Use our extracted best score
+          rawScore, // Include raw score for debugging
+          scoreSource, // Track where we got the score from
+          text, // Full text without truncation
           metadata,
           sourceUrl, // Include as top-level field
           highlights,
@@ -494,23 +544,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Add highlighted matches if available
       if (result.highlights && result.highlights.length > 0) {
         context += `Highlighted Matches:\n`;
-        result.highlights.slice(0, 3).forEach(highlight => {
+        result.highlights.forEach(highlight => {
           context += `- ${highlight}\n`;
         });
         context += '\n';
       }
       
-      // Add content - truncate for Safari
-      const contentLimit = isSafari ? 2000 : 10000;
-      const contentText = result.text.length > contentLimit 
-        ? result.text.substring(0, contentLimit) + `... [text truncated, ${result.text.length - contentLimit} characters not shown]` 
-        : result.text;
-        
-      context += `Content:\n${contentText}\n\n`;
+      // Add full content - no truncation - SAFARI LIMITATION REMOVED
+      context += `Content:\n${result.text}\n\n`;
       context += '---\n\n';
     });
     
-    // 5. Create system prompt
+    // 5. Create system prompt with new instructions for thoughts
     const systemPrompt = `You are an AI assistant answering questions based on retrieved documents.
 Base your answers only on the content provided below and avoid making assumptions.
 If the documents don't contain relevant information, acknowledge that you don't have enough information.
@@ -527,7 +572,17 @@ When responding:
 3. If multiple documents provide the same information, cite the most relevant sources
 4. Only discuss information found in the documents
 5. Present information in clear sections with proper formatting
-6. If documents contradict each other, acknowledge the different perspectives`;
+6. If documents contradict each other, acknowledge the different perspectives
+
+IMPORTANT: Your response must be in JSON format with two parts:
+- "thoughts": Your internal reasoning process, analyzing the documents and explaining how you're formulating your answer. Be detailed.
+- "answer": Your final, polished response to the query that will be shown to the user.
+
+Example format:
+{
+  "thoughts": "Looking at the documents, I found relevant information in Document 1 and Document 3...",
+  "answer": "Based on the documents, [Document 1] states that..."
+}`;
 
     // 6. Prepare conversation history for OpenAI
     const conversationHistory: ChatCompletionMessageParam[] = [
@@ -536,8 +591,8 @@ When responding:
     
     // Include recent conversation history if provided
     if (Array.isArray(messages) && messages.length > 0) {
-      // Include up to 5 recent messages for context - fewer for Safari
-      const maxMessages = isSafari ? 3 : 5;
+      // Include up to 5 recent messages for context - SAFARI LIMITATION REMOVED
+      const maxMessages = 5;
       const recentMessages = messages.slice(-maxMessages);
       
       const filteredMessages = recentMessages.filter(msg => 
@@ -574,6 +629,7 @@ When responding:
       messages: conversationHistory,
       temperature: temperature,
       max_tokens: maxTokens,
+      response_format: { type: "json_object" } // Ensure response is in JSON format
     }).catch(error => {
       console.error('OpenAI API error:', error);
       throw new Error(`Failed to generate response: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -586,36 +642,57 @@ When responding:
       throw new Error('Invalid response from OpenAI');
     }
 
-    const response = completion.choices[0].message.content;
+    // Parse the JSON response
+    let parsedResponse;
+    let answer = '';
+    let thoughts = '';
+    
+    try {
+      parsedResponse = JSON.parse(completion.choices[0].message.content);
+      
+      if (parsedResponse.answer) {
+        answer = parsedResponse.answer;
+      } else {
+        // Fallback if format is incorrect
+        answer = completion.choices[0].message.content;
+      }
+      
+      if (parsedResponse.thoughts) {
+        thoughts = parsedResponse.thoughts;
+      }
+    } catch (error) {
+      console.error('Error parsing JSON response:', error);
+      // If JSON parsing fails, use the raw content as the answer
+      answer = completion.choices[0].message.content;
+      thoughts = `Failed to parse thoughts from LLM response. Raw response: ${completion.choices[0].message.content.substring(0, 100)}...`;
+    }
     
     // 8. Return clean response
     const totalTime = Date.now() - startTime;
     
-    // Prepare response with a consistent format for both Safari and other browsers
-    const processedSources = enhancedResults.map(({ id, fileName, text, metadata, sourceUrl, highlights, hasXray }) => {
-      const processedMetadata = isSafari 
-        ? { title: metadata.title || '' } // Minimal metadata for Safari
-        : metadata;
-      
+    // Prepare response - No Safari-specific truncation - SAFARI LIMITATION REMOVED
+    const processedSources = enhancedResults.map(({ id, fileName, text, metadata, sourceUrl, highlights, hasXray, score, rawScore, scoreSource }) => {
       return { 
         id, 
         fileName, 
-        text: isSafari 
-          ? text.substring(0, 1000) + (text.length > 1000 ? '...' : '')
-          : text,
-        metadata: processedMetadata,
-        sourceUrl, // Important: Include sourceUrl at top level for all browsers
-        highlights: highlights ? (isSafari ? highlights.slice(0, 2) : highlights) : [],
-        hasXray
+        text, // Full text without truncation
+        metadata, // Full metadata
+        sourceUrl, // Include sourceUrl at top level
+        highlights: highlights || [],
+        hasXray,
+        score,
+        rawScore,
+        scoreSource
       };
     });
     
-    // Final response with clearly structured sources
+    // Final response with clearly structured sources and thoughts
     const finalResponse = {
       success: true,
       timestamp: new Date().toISOString(),
       query: query,
-      response: response,
+      response: answer,
+      thoughts: includeThoughts ? thoughts : undefined,
       searchResults: {
         count: enhancedResults.length,
         sources: processedSources
@@ -628,18 +705,17 @@ When responding:
       cacheStats: CACHE_ENABLED && !skipCache ? {
         docCacheHits,
         searchCacheHits
-      } : undefined,
-      browserInfo: {
-        isSafari,
-        optimized: isSafari
-      }
+      } : undefined
     };
     
-    // Debug logging of final response structure with focus on sourceUrls
+    // Debug logging of final response structure with focus on scores and sourceUrls
     console.log('Final response sources summary:', 
       finalResponse.searchResults.sources.map(s => ({
         id: s.id,
         fileName: s.fileName,
+        score: s.score,
+        rawScore: s.rawScore,
+        scoreSource: s.scoreSource,
         sourceUrl: s.sourceUrl,
         hasXray: s.hasXray
       }))
@@ -667,6 +743,7 @@ When responding:
         timestamp: new Date().toISOString(),
         error: error.message || 'RAG processing failed',
         response: '',
+        thoughts: 'Error occurred during processing, unable to generate thoughts.',
         searchResults: { count: 0, sources: [] },
         executionTime: {
           totalMs: totalTime,

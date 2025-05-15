@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { History, Trash2, Settings, File, Info, Database } from "lucide-react";
+import { History, Trash2, Settings, File, Info, Database, User } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,7 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { ImprovedChatHandle, ImprovedChat } from "@/components/chat";
-import Answer from "@/components/Answer";
+import FastRAG from "@/components/FastRag";
+import DeepRAG from "@/components/DeepRag";
 import { ContractAnalyzerPanel } from "@/components/ContractAnalyzerPanel";
 import { Risk } from "@/lib/useContractAnalyst";
 import { AnalysisPanel } from "@/components/AnalysisPanel";
@@ -27,6 +28,7 @@ import ContractRiskAnalysisModal from "@/components/EnhancedRiskAnalysisModal";
 import { RAGProvider } from '@/components/RagProvider';
 import { RAGControl } from '@/components/RagControl';
 import { contextManager, ContextMessage } from '@/services/contextManager'; // Import our new context manager
+import { supabase } from '@/lib/supabase/client'; // Import supabase client
 
 // Define interface for chat message
 interface ChatMessage {
@@ -97,6 +99,106 @@ const staggerChildren = {
     }
   }
 };
+
+// Sample Questions Component
+function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHandle> }) {
+  const { organization } = useAuth();
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      try {
+        setLoading(true);
+        
+        if (!organization?.id) {
+          throw new Error('Organization ID not available');
+        }
+        
+        // Fetch questions for this organization
+        const { data: questionData, error: questionError } = await supabase
+          .from('sample_questions')
+          .select('question')
+          .eq('organization_id', organization.id)
+          .order('created_at', { ascending: false });
+          
+        if (questionError) throw questionError;
+        
+        if (questionData && questionData.length > 0) {
+          setQuestions(questionData.map(item => item.question));
+        } else {
+          // Fallback to default questions if none found for this organization
+          setQuestions([
+            "What contracts are available for review?",
+            "How do our standard Spinakr service agreements compare to industry standards for liability clauses?",
+            "What key provisions should we include in Spinakr's SaaS agreements to protect our intellectual property?"
+          ]);
+        }
+      } catch (err: any) {
+        console.error('Error fetching questions:', err);
+        setError(err.message);
+        
+        // Fallback to default questions if there's an error
+        setQuestions([
+          "What contracts are available for review?",
+          "How do our standard Spinakr service agreements compare to industry standards for liability clauses?",
+          "What key provisions should we include in Spinakr's SaaS agreements to protect our intellectual property?"
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchQuestions();
+  }, [organization?.id]);
+
+  if (loading) {
+    return (
+      <motion.div
+        className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl mb-8"
+        variants={staggerChildren}
+        initial="hidden"
+        animate="visible"
+      >
+        {[1, 2, 3].map((index) => (
+          <motion.div
+            key={index}
+            className="px-4 py-12 bg-gray-100 rounded-lg animate-pulse"
+            variants={slideUp}
+          />
+        ))}
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div
+      className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl mb-8"
+      variants={staggerChildren}
+      initial="hidden"
+      animate="visible"
+    >
+      {questions.map((question, index) => (
+        <motion.button
+          key={question}
+          className="px-4 py-12 bg-gray-200 rounded-lg text-left hover:bg-gray-300 transition-colors"
+          onClick={() => chatRef.current?.submitMessage(question)}
+          variants={slideUp}
+          whileHover={{
+            scale: 1.03,
+            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+            backgroundColor: "#E5E7EB"
+          }}
+          whileTap={{ scale: 0.98 }}
+          transition={{ delay: 0.1 * index }}
+        >
+          {question}
+        </motion.button>
+      ))}
+    </motion.div>
+  );
+}
 
 // Settings Sidebar Component
 interface SettingsSidebarProps {
@@ -185,7 +287,45 @@ export default function Page() {
   const [isLoading, setIsLoading] = useState(true);
   const [useStorageFallback, setUseStorageFallback] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [useDeepRag, setUseDeepRag] = useState(false);
+  
+  // State for Swingle Collins report modals
+  const [showPolicyComparisonModal, setShowPolicyComparisonModal] = useState(false);
+  const [showPolicyExcelModal, setShowPolicyExcelModal] = useState(false);
+  const [showSafeguardModal, setShowSafeguardModal] = useState(false);
+  const [showTriaModal, setShowTriaModal] = useState(false);
+  const [policyNumber, setPolicyNumber] = useState('');
+  const [selectedCompany, setSelectedCompany] = useState('');
+  
+  // Sample company list for dropdowns
+  const companyList = [
+    "Company A", 
+    "Company B", 
+    "Company C", 
+    "Company D", 
+    "Company E"
+  ];
 
+  // Contract Analyzer state
+  const [showContractAnalyzer, setShowContractAnalyzer] = useState(false);
+  const [contractAnalysisResults, setContractAnalysisResults] = useState<{
+    analysisText: string;
+    risks: Risk[];
+    mitigationPoints: string[];
+    contractText: string;
+  } | null>(null);
+  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
+  const [showContractPanel, setShowContractPanel] = useState(false);
+
+  // Analysis panel state
+  const [analysisTabKey, setAnalysisTabKey] = useState(AnalysisPanelTabs.ThoughtProcessTab);
+  const [activeCitation, setActiveCitation] = useState("");
+  const [currentMessageForAnalysis, setCurrentMessageForAnalysis] = useState<any>(null);
+  const [mostRecentUserMessage, setMostRecentUserMessage] = useState("");
+
+  const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
+  const chatRef = useRef<ImprovedChatHandle>(null);
+  const [showFileCabinetPanel, setShowFileCabinetPanel] = useState(false);
 
   // Load settings from localStorage on init with safety checks
   const loadSavedSettings = (): Partial<SettingsState> => {
@@ -249,27 +389,6 @@ export default function Page() {
       retrievalMode: settings.retrievalMode
     }
   });
-
-  // Contract Analyzer state
-  const [showContractAnalyzer, setShowContractAnalyzer] = useState(false);
-  const [contractAnalysisResults, setContractAnalysisResults] = useState<{
-    analysisText: string;
-    risks: Risk[];
-    mitigationPoints: string[];
-    contractText: string;
-  } | null>(null);
-  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
-  const [showContractPanel, setShowContractPanel] = useState(false);
-
-  // Analysis panel state
-  const [analysisTabKey, setAnalysisTabKey] = useState(AnalysisPanelTabs.ThoughtProcessTab);
-  const [activeCitation, setActiveCitation] = useState("");
-  const [currentMessageForAnalysis, setCurrentMessageForAnalysis] = useState<any>(null);
-  const [mostRecentUserMessage, setMostRecentUserMessage] = useState("");
-
-  const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
-  const chatRef = useRef<ImprovedChatHandle>(null);
-  const [showFileCabinetPanel, setShowFileCabinetPanel] = useState(false);
 
   // Check browser storage compatibility
   useEffect(() => {
@@ -486,6 +605,11 @@ export default function Page() {
     }
   };
 
+  // Handle profile navigation
+  const handleProfileNav = () => {
+    router.push('/profile');
+  };
+
   // Handle logout
   const handleLogout = async () => {
     try {
@@ -496,9 +620,32 @@ export default function Page() {
     }
   };
 
-  // Simple handlers for Answer component
-  const handleCitationClicked = (filePath: string) => {
-    setActiveCitation(filePath);
+  // Enhanced citation click handler that detects various citation formats
+  const handleCitationClicked = (filePath: string, pageNumber?: number | string) => {
+    console.log(`Citation clicked: ${filePath}, page: ${pageNumber || 'N/A'}`);
+    
+    // Handle various citation formats
+    let normalizedPath = filePath;
+    
+    // Extract filename from citation format with brackets [filename.pdf]
+    if (filePath.startsWith('[') && filePath.endsWith(']')) {
+      normalizedPath = filePath.substring(1, filePath.length - 1);
+    }
+    
+    // If there's a "#page=" in the path, extract the page number
+    if (!pageNumber && normalizedPath.includes('#page=')) {
+      const parts = normalizedPath.split('#page=');
+      normalizedPath = parts[0];
+      pageNumber = parseInt(parts[1]);
+    }
+    
+    // Clean up file extensions if they're repeated
+    if (normalizedPath.endsWith('.msg.msg')) {
+      normalizedPath = normalizedPath.replace('.msg.msg', '.msg');
+    }
+    
+    // Set active citation and show the panel
+    setActiveCitation(normalizedPath);
     setAnalysisTabKey(AnalysisPanelTabs.CitationTab);
     setShowAnalysisPanel(true);
   };
@@ -528,6 +675,18 @@ export default function Page() {
     if (chatRef.current) {
       chatRef.current.submitMessage(question);
     }
+  };
+  
+  // Optional: Add a handler for image clicks from FastRAG
+  const handleImageClicked = (imageUrl: string, documentId: string, pageIndex: number) => {
+    console.log(`Image clicked: ${imageUrl} from document ${documentId}, page ${pageIndex}`);
+    // Add your implementation here if needed
+  };
+
+  // Optional: Add a refresh handler for FastRAG
+  const handleRefreshClicked = () => {
+    console.log("Refresh clicked");
+    // Add your implementation here if needed
   };
 
   // Handle new message from user
@@ -658,26 +817,26 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
     <ProtectedRoute>
       <RAGProvider>
         <div className="min-h-screen flex flex-col">
-          {/* Top Navigation */}
+          {/* Top Navigation - Fixed to top */}
           <motion.header
-            className={getHeaderBgColor() + " text-white"}
+            className={getHeaderBgColor() + " text-white fixed top-0 left-0 right-0 w-full z-50"}
             initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.5 }}
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
             <Link href="/" className="text-lg font-medium cursor-pointer">
-  <div className="relative h-[50px] w-[200px]">
-    <img
-      src={imgError ? '/defaultLogo.png' : organizationLogo}
-      alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
-      fill
-      style={{ objectFit: 'contain' }}
-      onError={() => setImgError(true)}
-      priority
-    />
-  </div>
-</Link>
+              <div className="relative h-[50px] w-[200px]">
+                <img
+                  src={imgError ? '/defaultLogo.png' : organizationLogo}
+                  alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
+                  fill
+                  style={{ objectFit: 'contain' }}
+                  onError={() => setImgError(true)}
+                  priority
+                />
+              </div>
+            </Link>
               <motion.div
                 className="flex items-center gap-6"
                 initial={{ opacity: 0 }}
@@ -698,7 +857,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   </motion.div>
                 )}
                 
-                {/* User info and logout */}
+                {/* User info, profile and logout */}
                 {user && (
                   <motion.div
                     className="flex items-center gap-3 ml-6"
@@ -709,6 +868,15 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     <span className="text-sm text-gray-300">
                       {user.email}
                     </span>
+                    <motion.button
+                      onClick={handleProfileNav}
+                      className="flex items-center gap-1 text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md text-white"
+                      whileHover={{ backgroundColor: "#4B5563" }}
+                      whileTap={{ scale: 0.95 }}
+                    >
+                      <User className="h-3 w-3" />
+                      Profile
+                    </motion.button>
                     <motion.button
                       onClick={handleLogout}
                       className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md text-white"
@@ -723,9 +891,9 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             </nav>
           </motion.header>
 
-          {/* Secondary Toolbar */}
+          {/* Secondary Toolbar - Fixed below main navbar */}
           <motion.div
-            className="bg-[#F5F5F5]"
+            className="bg-[#F5F5F5] fixed top-14 left-0 right-0 w-full z-40"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3, duration: 0.4 }}
@@ -739,6 +907,35 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   onToggle={handleRAGToggle}
                   onBucketSelect={handleBucketSelect}
                 />
+                
+                {/* Swingle Collins Special Reports - Only shown for Swingle Collins organization */}
+                {organization?.name === 'Swingle Collins' && (
+                  <div className="flex items-center ml-4">
+                    <Select
+                      onValueChange={(value) => {
+                        if (value === "policy_comparison") {
+                          setShowPolicyComparisonModal(true);
+                        } else if (value === "policy_excel") {
+                          setShowPolicyExcelModal(true);
+                        } else if (value === "safeguard") {
+                          setShowSafeguardModal(true);
+                        } else if (value === "tria") {
+                          setShowTriaModal(true);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 bg-blue-600 text-white border-none hover:bg-blue-700">
+                        <SelectValue placeholder="Special Reports" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="policy_comparison">Policy Comparison Report</SelectItem>
+                        <SelectItem value="policy_excel">Policy Data Excel Export</SelectItem>
+                        <SelectItem value="safeguard">Protective Safeguard Report</SelectItem>
+                        <SelectItem value="tria">TRIA Report</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2 cursor-pointer">
@@ -777,25 +974,9 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             </div>
           </motion.div>
 
-          {/* QIG Organization Admin Notice - Only shown for QIG members */}
-          {/* {isQIGOrganization && (
-            <div className="bg-blue-50 border-l-4 border-blue-500 p-2 mx-auto max-w-7xl mt-2">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <Info className="h-5 w-5 text-blue-500" />
-                </div>
-                <div className="ml-3">
-                  <p className="text-sm text-blue-700">
-                    QIG Admin View: You have access to all organization data
-                  </p>
-                </div>
-              </div>
-            </div>
-          )} */}
-
-          {/* Storage fallback warning for Safari in private mode */}
+          {/* Storage fallback warning for Safari in private mode - Adjust position for fixed navbars */}
           {useStorageFallback && (
-            <div className="bg-yellow-100 border-l-4 border-yellow-500 p-4 mx-auto max-w-4xl mt-4">
+            <div className="bg-yellow-100 border-l-4 border-yellow-500 p-4 mx-auto max-w-4xl mt-28">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
                   <svg className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
@@ -811,56 +992,23 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             </div>
           )}
 
-          {/* Main Content */}
-          <main className="flex-1 flex flex-col items-center px-4 py-16 bg-[#F5F5F5]">
+          {/* Main Content - Add padding to account for fixed navbars */}
+          <main className="flex-1 flex flex-col items-center px-4 py-16 bg-[#F5F5F5] mt-24">
             {!conversationStarted && (
               <>
                 <motion.div
-                  className="text-center mb-16"
+                  className="text-center mb-6"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.5, duration: 0.5 }}
                 >
-                  <div className="relative mb-4">
-                    <motion.h1
-                      className="text-4xl font-bold mb-2 mt-40"
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ delay: 0.6, duration: 0.5, type: "spring" }}
-                    >
-                      Chat with your Contracts
-                    </motion.h1>
-                    {/* Decorative Stars */}
-                    <motion.div
-                      className={`absolute -top-36 right-[calc(50%-30px)] ${organization?.name === 'QIG' ? 'text-blue-500' : 'text-red-500'}`}
-                      initial={{ rotate: -10, opacity: 0 }}
-                      animate={{ rotate: 0, opacity: 1 }}
-                      transition={{ delay: 0.8, duration: 0.5 }}
-                    >
-                      <motion.svg
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-                        width="100"
-                        height="100"
-                        viewBox="0 0 40 40"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        <path d="M20 0L25 15L40 20L25 25L20 40L15 25L0 20L15 15L20 0Z" fill="currentColor" />
-                      </motion.svg>
-                      <motion.svg
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="ml-4"
-                      >
-                        <path d="M12 0L15 9L24 12L15 15L12 24L9 15L0 12L9 9L12 0Z" fill="currentColor" />
-                      </motion.svg>
-                    </motion.div>
+                  <div className="relative h-[250px] w-[400px]">
+                    <img
+                      src={imgError ? '/defaultLogo.png' : organizationLogo}
+                      alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
+                      style={{ objectFit: 'contain', width: '100%', height: '100%' }}
+                      onError={() => setImgError(true)}
+                    />
                   </div>
                   <motion.p
                     className="text-gray-600 font-bold"
@@ -869,38 +1017,11 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     transition={{ delay: 0.9, duration: 0.5 }}
                   >
                     Ask anything or try an example
-                  </motion.p>
+                  </motion.p> 
                 </motion.div>
 
-                {/* Example Questions - Customize based on organization */}
-                <motion.div
-                  className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl mb-8"
-                  variants={staggerChildren}
-                  initial="hidden"
-                  animate="visible"
-                >
-                  {[
-                    "What contracts are available for review?",
-                    `How do our standard Spinakr service agreements compare to industry standards for liability clauses?`,
-                    "What key provisions should we include in Spinakr's SaaS agreements to protect our intellectual property?",
-                  ].map((question, index) => (
-                    <motion.button
-                      key={question}
-                      className="px-4 py-12 bg-gray-200 rounded-lg text-left hover:bg-gray-300 transition-colors"
-                      onClick={() => chatRef.current?.submitMessage(question)}
-                      variants={slideUp}
-                      whileHover={{
-                        scale: 1.03,
-                        boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-                        backgroundColor: "#E5E7EB"
-                      }}
-                      whileTap={{ scale: 0.98 }}
-                      transition={{ delay: 0.1 * index }}
-                    >
-                      {question}
-                    </motion.button>
-                  ))}
-                </motion.div>
+                {/* Dynamic Sample Questions Component */}
+                <SampleQuestions chatRef={chatRef} />
               </>
             )}
 
@@ -940,24 +1061,64 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                             animate={{ x: 0, opacity: 1 }}
                             transition={{ duration: 0.3 }}
                           >
-                            <Answer
-                              answer={message.content}
-                              index={index}
-                              isSelected={false}
-                              isStreaming={isStreaming && index === chatHistory.length - 1}
-                              searchResults={message.searchResults}
-                              onCitationClicked={handleCitationClicked}
-                              onThoughtProcessClicked={() => {
-                                setCurrentMessageForAnalysis(message);
-                                handleThoughtProcessClicked();
-                              }}
-                              onSupportingContentClicked={() => {
-                                setCurrentMessageForAnalysis(message);
-                                handleSupportingContentClicked(index);
-                              }}
-                              onFollowupQuestionClicked={handleFollowupQuestionClicked}
-                              showFollowupQuestions={true}
-                            />
+                            {/* Use conditional rendering to toggle between FastRAG and DeepRAG */}
+                            {useDeepRag ? (
+                              <DeepRAG
+                                answer={message.content}
+                                index={index}
+                                isSelected={false}
+                                isStreaming={isStreaming && index === chatHistory.length - 1}
+                                searchResults={message.searchResults}
+                                documentExcerpts={message.documentExcerpts || []}
+                                onCitationClicked={handleCitationClicked}
+                                onThoughtProcessClicked={() => {
+                                  setCurrentMessageForAnalysis(message);
+                                  handleThoughtProcessClicked();
+                                }}
+                                onSupportingContentClicked={() => {
+                                  setCurrentMessageForAnalysis(message);
+                                  handleSupportingContentClicked(index);
+                                }}
+                                onFollowupQuestionClicked={handleFollowupQuestionClicked}
+                                onRefreshClicked={handleRefreshClicked}
+                                onImageClicked={handleImageClicked}
+                                showFollowupQuestions={true}
+                                enableAdvancedFeatures={true}
+                                theme="light"
+                              />
+                            ) : (
+                              <FastRAG
+                                answer={message.content}
+                                index={index}
+                                isSelected={false}
+                                isStreaming={isStreaming && index === chatHistory.length - 1}
+                                searchResults={message.searchResults}
+                                documentExcerpts={message.documentExcerpts || []}
+                                onCitationClicked={handleCitationClicked}
+                                onThoughtProcessClicked={() => {
+                                  setCurrentMessageForAnalysis(message);
+                                  handleThoughtProcessClicked();
+                                }}
+                                onSupportingContentClicked={() => {
+                                  setCurrentMessageForAnalysis(message);
+                                  handleSupportingContentClicked(index);
+                                }}
+                                onFollowupQuestionClicked={handleFollowupQuestionClicked}
+                                onRefreshClicked={handleRefreshClicked}
+                                onImageClicked={handleImageClicked}
+                                showFollowupQuestions={true}
+                                enableAdvancedFeatures={true}
+                                theme="light"
+                                customStyles={{
+                                  primaryColor: "#e53e3e",  // Red theme
+                                  secondaryColor: "#b91c1c",
+                                  accentColor: "#f87171",
+                                  cardBackground: "#ffffff",
+                                  borderColor: "#e2e8f0",
+                                  textColor: "#1e1e2e"
+                                }}
+                              />
+                            )}
                           </motion.div>
                         )}
                       </motion.div>
@@ -1048,6 +1209,285 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               setShowFileCabinetPanel(false);
             }}
           />
+
+          {/* Swingle Collins Report Modals */}
+          {/* Policy Comparison Report Modal */}
+          <Sheet open={showPolicyComparisonModal} onOpenChange={setShowPolicyComparisonModal}>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Policy Comparison Report</SheetTitle>
+              </SheetHeader>
+              <div className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="policyNumber" className="text-sm font-medium">
+                    Enter Policy Number
+                  </label>
+                  <Input
+                    id="policyNumber"
+                    value={policyNumber}
+                    onChange={(e) => setPolicyNumber(e.target.value)}
+                    placeholder="e.g. POL-12345678"
+                  />
+                </div>
+                <div className="flex flex-col gap-2 pt-4">
+                  <Button
+                    onClick={() => {
+                      // Here you would implement the actual report generation logic
+                      console.log(`Generating Policy Comparison Report for ${policyNumber}`);
+                      // Example of what might happen:
+                      // 1. Call an API to generate the report
+                      // 2. Show a loading state
+                      // 3. When ready, display the PDF and/or offer download
+                      setShowPolicyComparisonModal(false);
+                    }}
+                    disabled={!policyNumber}
+                  >
+                    Generate Report
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          {/* Policy Excel Export Modal */}
+          <Sheet open={showPolicyExcelModal} onOpenChange={setShowPolicyExcelModal}>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Policy Data Excel Export</SheetTitle>
+              </SheetHeader>
+              <div className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="policyNumberExcel" className="text-sm font-medium">
+                    Enter Policy Number
+                  </label>
+                  <Input
+                    id="policyNumberExcel"
+                    value={policyNumber}
+                    onChange={(e) => setPolicyNumber(e.target.value)}
+                    placeholder="e.g. POL-12345678"
+                  />
+                </div>
+                <div className="flex flex-col gap-2 pt-4">
+                  <Button
+                    onClick={() => {
+                      // Here you would implement the actual Excel download logic
+                      console.log(`Downloading Excel for ${policyNumber}`);
+                      // Example of what might happen:
+                      // 1. Call an API to get the Excel file
+                      // 2. Trigger browser download
+                      
+                      // Example of triggering a download (would need the actual file URL)
+                      // const a = document.createElement('a');
+                      // a.href = `https://your-api.com/reports/excel/${policyNumber}`;
+                      // a.download = `Policy_${policyNumber}.xlsx`;
+                      // document.body.appendChild(a);
+                      // a.click();
+                      // document.body.removeChild(a);
+                      
+                      setShowPolicyExcelModal(false);
+                    }}
+                    disabled={!policyNumber}
+                  >
+                    Download Excel
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          {/* Protective Safeguard Report Modal */}
+          <Sheet open={showSafeguardModal} onOpenChange={setShowSafeguardModal}>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Protective Safeguard Report</SheetTitle>
+              </SheetHeader>
+              <div className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="companySelect" className="text-sm font-medium">
+                    Select Company
+                  </label>
+                  <Select
+                    onValueChange={setSelectedCompany}
+                    value={selectedCompany}
+                  >
+                    <SelectTrigger id="companySelect">
+                      <SelectValue placeholder="Select a company" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companyList.map((company) => (
+                        <SelectItem key={company} value={company}>
+                          {company}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2 pt-4">
+                  <Button
+                    onClick={() => {
+                      // Here you would implement the actual report display logic
+                      console.log(`Viewing Safeguard Report for ${selectedCompany}`);
+                      // Example of what might happen:
+                      // 1. Call an API to get the PDF 
+                      // 2. Display it in a PDF viewer component
+                      // 3. Offer download option
+                      setShowSafeguardModal(false);
+                    }}
+                    disabled={!selectedCompany}
+                  >
+                    View Report
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          {/* TRIA Report Modal */}
+          <Sheet open={showTriaModal} onOpenChange={setShowTriaModal}>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>TRIA Report</SheetTitle>
+              </SheetHeader>
+              <div className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="companySelectTria" className="text-sm font-medium">
+                    Select Company
+                  </label>
+                  <Select
+                    onValueChange={setSelectedCompany}
+                    value={selectedCompany}
+                  >
+                    <SelectTrigger id="companySelectTria">
+                      <SelectValue placeholder="Select a company" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companyList.map((company) => (
+                        <SelectItem key={company} value={company}>
+                          {company}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2 pt-4">
+                  <Button
+                    onClick={() => {
+                      // Here you would implement the actual report display logic
+                      console.log(`Viewing TRIA Report for ${selectedCompany}`);
+                      // Similar to the safeguard report flow
+                      setShowTriaModal(false);
+                    }}
+                    disabled={!selectedCompany}
+                  >
+                    View Report
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+          
+          {/* Add custom styling for FastRAG and citations */}
+          <style jsx global>{`
+            /* Citation styling */
+            .prose a, .prose [data-citation] {
+              color: #e53e3e !important;
+              font-weight: 500;
+              text-decoration: none;
+              cursor: pointer;
+              position: relative;
+            }
+            
+            .prose a:hover, .prose [data-citation]:hover {
+              text-decoration: underline;
+            }
+            
+            /* Match citation patterns in square brackets */
+            .prose p {
+              line-height: 1.75;
+              margin-bottom: 1rem;
+            }
+            
+            /* Override for citation format with square brackets */
+            .prose span[data-citation-text], 
+            .prose span[data-file-name],
+            .prose span.citation-text {
+              color: #e53e3e;
+              font-weight: 500;
+              cursor: pointer;
+              background-color: rgba(229, 62, 62, 0.1);
+              padding: 2px 4px;
+              border-radius: 4px;
+            }
+            
+            /* Styling for references in square brackets */
+            .prose span:not([class]):not([style]):not([id]) {
+              color: inherit;
+            }
+            
+            .prose span:not([class]):not([style]):not([id]):has(> a) {
+              background-color: transparent;
+              padding: 0;
+            }
+            
+            /* Special styling for FastRAG citation format [text][text] */
+            .prose p span:not([class]):not([style]):not([id]),
+            .prose li span:not([class]):not([style]):not([id]) {
+              display: inline;
+            }
+            
+            /* Match citation format [text] or [text][text] */
+            .prose a[href^="#citation-"],
+            .prose span[data-citation="true"],
+            .prose span.citation {
+              color: #e53e3e !important;
+              font-weight: 500;
+              cursor: pointer;
+              background-color: rgba(229, 62, 62, 0.1);
+              padding: 2px 4px;
+              border-radius: 4px;
+              text-decoration: none;
+            }
+            
+            /* Override for FastRAG */
+            .ground-x-content .doc-ref {
+              color: #e53e3e !important;
+              font-weight: 500;
+              cursor: pointer;
+              text-decoration: none;
+              background-color: rgba(229, 62, 62, 0.1);
+              padding: 2px 4px;
+              border-radius: 4px;
+            }
+            
+            .ground-x-content .doc-ref:hover {
+              text-decoration: underline;
+            }
+            
+            /* Styling for Azure-style citations */
+            .azure-citation {
+              color: #e53e3e !important;
+              font-weight: 500;
+              cursor: pointer;
+              text-decoration: none;
+              background-color: rgba(229, 62, 62, 0.1);
+              padding: 2px 4px;
+              border-radius: 4px;
+            }
+            
+            /* Custom styling for bracket citations that follow this pattern: [text.pdf] */
+            .prose p a:not([href]), 
+            .prose p span:not([class]):not([style]):not([id]):matches(/\\[.*\\]/),
+            .prose li span:not([class]):not([style]):not([id]):matches(/\\[.*\\]/),
+            .prose span:matches(/\\[.*\\]/) {
+              color: #e53e3e !important;
+              font-weight: 500;
+              cursor: pointer;
+              background-color: rgba(229, 62, 62, 0.1);
+              padding: 2px 4px;
+              border-radius: 4px;
+              text-decoration: none;
+            }
+          `}</style>
         </div>
       </RAGProvider>
     </ProtectedRoute>
