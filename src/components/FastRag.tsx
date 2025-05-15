@@ -106,9 +106,6 @@ export default function FastRAG({
   const [hasSupportingContent, setHasSupportingContent] = useState(false);
   const [supportingContent, setSupportingContent] = useState([]);
   const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
-  const [compactCitationDisplay, setCompactCitationDisplay] = useState(true);
-  const [processedMarkdown, setProcessedMarkdown] = useState('');
-  const [originalContent, setOriginalContent] = useState('');
   
   // Track which documents have already been analyzed to avoid duplicate analysis
   const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
@@ -488,105 +485,6 @@ export default function FastRAG({
     return JSON.stringify(answer, null, 2);
   }, [answer]);
 
-  // Process content to create markdown with clickable citations
-  const processContent = useCallback((content) => {
-    if (typeof content !== 'string') return '';
-    
-    // Store original content
-    setOriginalContent(content);
-    
-    // Extract citations using enhanced regex that matches different formats
-    // This will catch citations like:
-    // - [filename.pdf]
-    // - [filename.pdf#page=2]
-    // - [some text] that ends with .pdf, .docx, etc.
-    // - [1][filename.pdf] - numbered citation format
-    const extractedCitations = [];
-    
-    // This regex handles both regular and numbered citation formats
-    const numberedCitationRegex = /\[(\d+)\]\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
-    const standardCitationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
-    
-    let match;
-    let counter = 1;
-    
-    // First look for numbered citations [1][filename.pdf]
-    while ((match = numberedCitationRegex.exec(content)) !== null) {
-      const fullMatch = match[0];
-      const number = parseInt(match[1]);
-      const filename = match[2];
-      const page = match[3] ? parseInt(match[3]) : null;
-      
-      if (filename) {
-        extractedCitations.push({
-          id: `citation-${number}`,
-          fileName: filename,
-          page: page,
-          index: number,
-          text: fullMatch,
-          position: match.index,
-          length: fullMatch.length,
-          isNumbered: true
-        });
-      }
-    }
-    
-    // Then look for standard citations [filename.pdf]
-    // First, reset the lastIndex of the regex
-    standardCitationRegex.lastIndex = 0;
-    
-    while ((match = standardCitationRegex.exec(content)) !== null) {
-      // Skip if this is part of a numbered citation (already processed)
-      // Check if there's a "[number]" before this citation
-      const preContext = content.substring(Math.max(0, match.index - 10), match.index);
-      if (preContext.match(/\[\d+\]$/)) {
-        continue; // Skip this match as it's part of a numbered citation
-      }
-      
-      const fullMatch = match[0];
-      const filename = match[1];
-      const page = match[2] ? parseInt(match[2]) : null;
-      
-      // Check if this filename is already in a numbered citation
-      const existingCitation = extractedCitations.find(c => c.fileName === filename && c.isNumbered);
-      
-      if (filename && !existingCitation) {
-        extractedCitations.push({
-          id: `citation-${counter}`,
-          fileName: filename,
-          page: page,
-          index: counter,
-          text: fullMatch,
-          position: match.index,
-          length: fullMatch.length,
-          isNumbered: false
-        });
-        counter++;
-      }
-    }
-    
-    // If we found citations, save them
-    if (extractedCitations.length > 0) {
-      // Sort by index to ensure proper numbering
-      extractedCitations.sort((a, b) => a.index - b.index);
-      setCitationInfos(extractedCitations);
-      console.log("Extracted citations:", extractedCitations);
-    }
-    
-    // Fix common markdown issues
-    let processedContent = content;
-    
-    // Fix unmatched asterisks that should be bold
-    processedContent = processedContent.replace(/\*\*\*([^*]+)(?!\*)/g, '<strong><em>$1</em></strong>');
-    processedContent = processedContent.replace(/\*\*([^*]+)(?!\*)/g, '<strong>$1</strong>');
-    processedContent = processedContent.replace(/\*([^*]+)(?!\*)/g, '<em>$1</em>');
-    
-    // Set the processed content for rendering
-    setProcessedMarkdown(processedContent);
-    
-    return processedContent;
-  }, []);
-
   const extractThoughtProcess = useCallback(() => {
     let reasoning = '';
     if (!answer) return reasoning;
@@ -694,59 +592,59 @@ export default function FastRAG({
       setAnalyzedDocumentIds(newAnalyzedIds);
     }
 
-    // Extract and process the content
+    // Check for Azure format inline citations in the content
     const content = extractContent();
-    processContent(content);
+    if (typeof content === 'string') {
+      const azureCitationRegex = /\[(.*?)(?:#page=(\d+))?\]/g;
+      let match;
+      const azureCitations = [];
+      let citationCounter = 1;
+      
+      while ((match = azureCitationRegex.exec(content)) !== null) {
+        const fullMatch = match[0];
+        const filename = match[1];
+        const page = match[2] ? parseInt(match[2]) : null;
+        
+        // Only include if it looks like a filename (contains a dot)
+        if (filename && filename.includes('.')) {
+          azureCitations.push({
+            id: `citation-${citationCounter}`,
+            fileName: filename,
+            page: page,
+            index: citationCounter,
+            text: fullMatch
+          });
+          citationCounter++;
+        }
+      }
+      
+      // If we found Azure citations in the text, use those
+      if (azureCitations.length > 0) {
+        setCitationInfos(azureCitations);
+      }
+    }
 
     // Trigger a re-render to update the sources
     setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds, processContent]);
+  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds]);
 
   // Parse the answer content using AnswerParser when the component mounts or answer changes
   useEffect(() => {
     if (!answer) return;
     
-    // Process the content to extract citations
+    // Check for inline Azure citations [FILENAME.pdf#page=NUMBER]
     const content = extractContent();
-    
-    // Check for different citation formats
     const hasInlineAzureCitations = typeof content === 'string' && 
-      /\[.*?\.(?:pdf|docx|xlsx|txt|msg)(?:#page=\d+)?\]/i.test(content);
-      
-    const hasNumberedCitations = typeof content === 'string' && 
-      /\[\d+\]\[.*?\.(?:pdf|docx|xlsx|txt|msg)(?:#page=\d+)?\]/i.test(content);
+      /\[.*?\.(?:pdf|docx|xlsx|txt)(?:#page=\d+)?\]/i.test(content);
     
-    // Transform the text content to include clickable citations
-    let htmlContent = '';
-    
-    if (hasInlineAzureCitations || hasNumberedCitations) {
-      // Format the content with properly styled citations
-      htmlContent = content;
+    if (hasInlineAzureCitations) {
+      // For inline Azure citations, create HTML with clickable links
+      let htmlContent = content;
       if (typeof htmlContent === 'string') {
-        // First, handle the numbered citation format [1][filename.pdf]
-        htmlContent = htmlContent.replace(/\[(\d+)\]\[(.*?)(?:#page=(\d+))?\]/g, (match, number, filename, page) => {
-          if (filename && filename.includes('.')) {
-            return `<span class="numbered-citation" data-index="${number}" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">[${number}]</span>`;
-          }
-          return match;
-        });
-        
-        // Then handle standard citation format [filename.pdf]
+        // Replace [FILENAME.pdf#page=NUMBER] with clickable spans
         htmlContent = htmlContent.replace(/\[(.*?)(?:#page=(\d+))?\]/g, (match, filename, page) => {
-          // Skip if this is inside a numbered citation (already processed)
-          if (match.match(/^\[\d+\]$/)) return match;
-          
           if (filename && filename.includes('.')) {
-            // Find if we have a citation info for this file
-            const citationInfo = citationInfos.find(c => c.fileName === filename);
-            const citationNumber = citationInfo ? citationInfo.index : '';
-            
-            // Display as numbered citation if in compact mode
-            if (compactCitationDisplay && citationNumber) {
-              return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">[${citationNumber}]</span>`;
-            }
-            
-            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">${match}</span>`;
+            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: #e53e3e; cursor: pointer; font-weight: 500;">${match}</span>`;
           }
           return match;
         });
@@ -768,34 +666,8 @@ export default function FastRAG({
       
       setCitationInfos(azureCitations);
       
-      // Convert Azure citations to HTML with proper styling
-      htmlContent = content;
-      
-      // Since the text doesn't contain citation markers, we'll append a citation list
-      let citationListHtml = '';
-      
-      if (azureCitations.length > 0) {
-        citationListHtml = '<div class="mt-4 pt-4 border-t" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0;">';
-        citationListHtml += '<h4 class="text-sm font-medium mb-2">Citations</h4>';
-        citationListHtml += '<ol class="list-decimal pl-5 space-y-1">';
-        
-        azureCitations.forEach(citation => {
-          citationListHtml += `<li id="citation-${citation.index}" class="text-sm">`;
-          citationListHtml += `<span class="citation-ref" data-id="${citation.id}" data-filename="${citation.fileName}" data-page="${citation.page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500;">`;
-          citationListHtml += `${citation.fileName || citation.id}`;
-          citationListHtml += '</span>';
-          if (citation.page) {
-            citationListHtml += ` (page ${citation.page})`;
-          }
-          citationListHtml += '</li>';
-        });
-        
-        citationListHtml += '</ol></div>';
-      }
-      
-      // Combine the content with the citation list
-      htmlContent = `<div>${typeof content === 'string' ? content : ''}${citationListHtml}</div>`;
-      setParsedAnswerHtml(htmlContent);
+      // For this case, just use the raw content since citations are handled separately
+      setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
     } else {
       // Parse the answer using the AnswerParser module for non-specific formats
       try {
@@ -844,174 +716,8 @@ export default function FastRAG({
         setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
       }
     }
-  }, [answer, isStreaming, onCitationClicked, extractContent, citationInfos, compactCitationDisplay, themeStyles.primaryColor, processContent]);
+  }, [answer, isStreaming, onCitationClicked, extractContent]);
   
-  // Custom components for ReactMarkdown
-  const MarkdownComponents = {
-    // For handling paragraphs
-    p: ({ node, children, ...props }) => {
-      return <p {...props}>{children}</p>;
-    },
-    
-    // For handling strong text (bold)
-    strong: ({ node, children, ...props }) => {
-      return <strong {...props}>{children}</strong>;
-    },
-    
-    // For handling emphasized text (italic)
-    em: ({ node, children, ...props }) => {
-      return <em {...props}>{children}</em>;
-    },
-    
-    // This transforms citations into clickable spans
-    text: ({ children }) => {
-      if (typeof children !== 'string') return <>{children}</>;
-      
-      // Regex to find both numbered and standard citations
-      const numberedCitationRegex = /\[(\d+)\]\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
-      const standardCitationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
-      
-      // If no citations, just return the text
-      if (!numberedCitationRegex.test(children) && !standardCitationRegex.test(children)) return <>{children}</>;
-      
-      // Split the text by citations
-      const parts = [];
-      let lastIndex = 0;
-      let count = 0;
-      
-      // Process text to find all citation patterns
-      let currentText = children;
-      let currentIndex = 0;
-      
-      // First, handle numbered citations [1][filename.pdf]
-      numberedCitationRegex.lastIndex = 0;
-      let numberedMatch;
-      
-      while ((numberedMatch = numberedCitationRegex.exec(currentText)) !== null) {
-        // Add text before citation
-        if (numberedMatch.index > currentIndex) {
-          parts.push(
-            <span key={`text-numbered-${count}`}>
-              {currentText.substring(currentIndex, numberedMatch.index)}
-            </span>
-          );
-        }
-        
-        // Extract information
-        const number = numberedMatch[1];
-        const filename = numberedMatch[2];
-        const page = numberedMatch[3];
-        
-        // Find the citation in our citations list
-        const citationInfo = citationInfos.find(c => 
-          c.fileName === filename || (c.index === parseInt(number) && c.isNumbered)
-        );
-        
-        // Add the citation with number format regardless of display preference for numbered citations
-        parts.push(
-          <span 
-            key={`citation-numbered-${count}`}
-            className="numbered-citation"
-            data-citation="true"
-            data-index={number}
-            data-filename={filename}
-            data-page={page || ''}
-            onClick={() => onCitationClicked(filename, page)}
-            style={{ 
-              color: themeStyles.primaryColor, 
-              cursor: 'pointer', 
-              fontWeight: 500,
-              backgroundColor: `${themeStyles.primaryColor}10`,
-              padding: '1px 4px',
-              borderRadius: '3px',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {`[${number}]`}
-          </span>
-        );
-        
-        currentIndex = numberedMatch.index + numberedMatch[0].length;
-        count++;
-      }
-      
-      // Add remaining text after numbered citations
-      if (currentIndex < currentText.length) {
-        const remainingText = currentText.substring(currentIndex);
-        
-        // Now process standard citations [filename.pdf] in the remaining text
-        standardCitationRegex.lastIndex = 0;
-        let standardMatch;
-        let standardIndex = 0;
-        
-        while ((standardMatch = standardCitationRegex.exec(remainingText)) !== null) {
-          // Skip if this is part of a numbered citation (already processed)
-          const preContext = remainingText.substring(Math.max(0, standardMatch.index - 10), standardMatch.index);
-          if (preContext.match(/\[\d+\]$/)) {
-            continue;
-          }
-          
-          // Add text before citation
-          if (standardMatch.index > standardIndex) {
-            parts.push(
-              <span key={`text-standard-${count}`}>
-                {remainingText.substring(standardIndex, standardMatch.index)}
-              </span>
-            );
-          }
-          
-          // Extract information
-          const filename = standardMatch[1];
-          const page = standardMatch[2];
-          
-          // Find the citation in our citations list or create index
-          const citationInfo = citationInfos.find(c => c.fileName === filename && !c.isNumbered);
-          const citationIndex = citationInfo ? citationInfo.index : count + 1;
-          
-          // Add the citation with compact or full format
-          parts.push(
-            <span 
-              key={`citation-standard-${count}`}
-              className="citation-link"
-              data-citation="true"
-              data-citation-text={filename}
-              data-page={page || ''}
-              onClick={() => onCitationClicked(filename, page)}
-              style={{ 
-                color: themeStyles.primaryColor, 
-                cursor: 'pointer', 
-                fontWeight: 500,
-                backgroundColor: `${themeStyles.primaryColor}10`,
-                padding: '1px 4px',
-                borderRadius: '3px',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {compactCitationDisplay 
-                ? `[${citationIndex}]` 
-                : standardMatch[0]
-              }
-            </span>
-          );
-          
-          standardIndex = standardMatch.index + standardMatch[0].length;
-          count++;
-        }
-        
-        // Add any remaining text after standard citations
-        if (standardIndex < remainingText.length) {
-          parts.push(
-            <span key={`text-final-${count}`}>
-              {remainingText.substring(standardIndex)}
-            </span>
-          );
-        }
-      }
-      
-      return <>{parts}</>;
-    }
-  };
-
   // Setup click handler for citations in the answer content
   useEffect(() => {
     if (!contentRef.current) return;
@@ -1020,27 +726,12 @@ export default function FastRAG({
       // Find all citation references
       const target = event.target;
       
-      // Handle numbered citations [1][filename.pdf]
-      if (target.classList.contains('numbered-citation') || target.closest('.numbered-citation')) {
-        const citation = target.classList.contains('numbered-citation') ? target : target.closest('.numbered-citation');
+      // Handle Azure inline citations
+      if (target.classList.contains('azure-citation') || target.closest('.azure-citation')) {
+        const citation = target.classList.contains('azure-citation') ? target : target.closest('.azure-citation');
         if (!citation) return;
         
-        const index = citation.getAttribute('data-index');
         const filename = citation.getAttribute('data-filename');
-        const page = citation.getAttribute('data-page');
-        
-        if (filename) {
-          console.log(`Clicked on numbered citation [${index}][${filename}], page: ${page}`);
-          onCitationClicked(filename, page);
-        }
-      }
-      
-      // Handle regular citations [filename.pdf]
-      if (target.classList.contains('citation-link') || target.closest('.citation-link')) {
-        const citation = target.classList.contains('citation-link') ? target : target.closest('.citation-link');
-        if (!citation) return;
-        
-        const filename = citation.getAttribute('data-citation-text');
         const page = citation.getAttribute('data-page');
         
         if (filename) {
@@ -1052,46 +743,13 @@ export default function FastRAG({
           );
           
           if (matchingDoc) {
-            console.log(`Clicked on citation: ${filename}, page: ${page}`);
-            // Pass the filename directly instead of the ID
-            onCitationClicked(filename, page);
+            console.log(`Clicked on Azure citation: ${matchingDoc.id}, page: ${page}`);
+            onCitationClicked(matchingDoc.id, page);
           } else {
-            // If no matching document, use the filename as a citation ID
-            console.log(`Clicked on citation: ${filename}, page: ${page}`);
+            // If no matching document, just use the filename as a citation ID
+            console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
             onCitationClicked(filename, page);
           }
-        }
-      }
-      
-      // Handle Azure inline citations for backward compatibility
-      if (target.classList.contains('azure-citation') || target.closest('.azure-citation')) {
-        const citation = target.classList.contains('azure-citation') ? target : target.closest('.azure-citation');
-        if (!citation) return;
-        
-        const filename = citation.getAttribute('data-filename');
-        const page = citation.getAttribute('data-page');
-        
-        if (filename) {
-          console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
-          onCitationClicked(filename, page);
-        }
-      }
-      
-      // Handle citation references in the citation list
-      if (target.classList.contains('citation-ref') || target.closest('.citation-ref')) {
-        const citation = target.classList.contains('citation-ref') ? target : target.closest('.citation-ref');
-        if (!citation) return;
-        
-        const id = citation.getAttribute('data-id');
-        const filename = citation.getAttribute('data-filename');
-        const page = citation.getAttribute('data-page');
-        
-        if (filename) {
-          console.log(`Clicked on citation reference: ${filename}, page: ${page}`);
-          onCitationClicked(filename, page);
-        } else if (id) {
-          console.log(`Clicked on citation reference: ${id}, page: ${page}`);
-          onCitationClicked(id, page);
         }
       }
     };
@@ -1417,11 +1075,6 @@ export default function FastRAG({
       console.error("Copy failed:", err);
     }
   };
-  
-  // Handle citation display toggle
-  const toggleCitationDisplay = () => {
-    setCompactCitationDisplay(prev => !prev);
-  };
 
   const getCurrentDocument = useCallback(() => {
     if (!currentDocumentId) return null;
@@ -1660,41 +1313,13 @@ export default function FastRAG({
                 transition={{ duration: 0.3 }}
                 className="p-4"
               >
-                {/* Citation display toggle */}
-                {citationInfos.length > 0 && (
-                  <div className="flex justify-end mb-2">
-                    <button
-                      className="text-xs px-2 py-1 rounded flex items-center"
-                      onClick={toggleCitationDisplay}
-                      style={{
-                        backgroundColor: `${themeStyles.primaryColor}10`,
-                        color: themeStyles.primaryColor
-                      }}
-                    >
-                      {compactCitationDisplay ? 'Show Full Citations' : 'Show Numbered Citations'}
-                    </button>
-                  </div>
-                )}
-                
                 <div
                   id={answerElementId}
                   ref={contentRef}
                   className="prose max-w-none"
                   style={{ color: themeStyles.textColor }}
                 >
-                  {/* If we have processed markdown, use ReactMarkdown */}
-                  {processedMarkdown ? (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
-                      components={MarkdownComponents}
-                    >
-                      {processedMarkdown}
-                    </ReactMarkdown>
-                  ) : (
-                    // Otherwise use the parsed HTML
-                    <div dangerouslySetInnerHTML={{ __html: parsedAnswerHtml || (typeof content === 'string' ? content : '') }} />
-                  )}
+                  <div dangerouslySetInnerHTML={{ __html: parsedAnswerHtml || (typeof content === 'string' ? content : '') }} />
                 </div>
 
                 {isStreaming && (
@@ -1727,8 +1352,8 @@ export default function FastRAG({
                                 return;
                               }
                               
-                              // Otherwise use the filename for citation panel
-                              onCitationClicked(citation.fileName || citation.id, citation.page);
+                              // Otherwise use the citation ID for citation panel
+                              onCitationClicked(citation.id);
                             }}
                             style={{ color: themeStyles.primaryColor }}
                           >
@@ -2004,39 +1629,7 @@ export default function FastRAG({
                               borderColor: themeStyles.borderColor
                             }}
                           >
-                            {source.excerpts && source.excerpts.length > 0 && (
-                              <div className="mb-3">
-                                <h4 className="text-xs font-medium mb-1">Excerpts:</h4>
-                                <div 
-                                  className="text-xs p-2 rounded bg-gray-50 dark:bg-gray-800 overflow-auto max-h-32"
-                                  style={{
-                                    backgroundColor: `${themeStyles.backgroundColor}`,
-                                    color: themeStyles.textColor
-                                  }}
-                                >
-                                  {source.excerpts.map((excerpt, i) => (
-                                    <div key={i} className="mb-2 last:mb-0">
-                                      {excerpt}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
                             <div className="flex justify-end mt-3 space-x-2">
-                              <button
-                                className="text-xs px-2 py-1 rounded flex items-center"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // Use fileName instead of id for citation
-                                  onCitationClicked(source.fileName);
-                                }}
-                                style={{
-                                  backgroundColor: `${themeStyles.secondaryColor}20`,
-                                  color: themeStyles.secondaryColor
-                                }}
-                              >
-                                View Document
-                              </button>
                               <button
                                 className="text-xs px-2 py-1 rounded flex items-center"
                                 onClick={(e) => {
@@ -2317,108 +1910,18 @@ export default function FastRAG({
         )}
       </AnimatePresence>
 
-      {/* Add custom styling for citations and markdown */}
+      {/* Add custom styling for Azure citations */}
       <style jsx global>{`
-        /* Citation styling */
-        .citation-link {
-          color: ${themeStyles.primaryColor};
-          font-weight: 500;
-          cursor: pointer;
-          text-decoration: none;
-          background-color: ${`${themeStyles.primaryColor}10`};
-          padding: 1px 4px;
-          border-radius: 3px;
-          white-space: nowrap;
-        }
-        
-        .citation-link:hover {
-          text-decoration: underline;
-          background-color: ${`${themeStyles.primaryColor}20`};
-        }
-        
-        /* Numbered citation styling */
-        .numbered-citation {
-          color: ${themeStyles.primaryColor};
-          font-weight: 500;
-          cursor: pointer;
-          text-decoration: none;
-          background-color: ${`${themeStyles.primaryColor}10`};
-          padding: 1px 4px;
-          border-radius: 3px;
-          white-space: nowrap;
-        }
-        
-        .numbered-citation:hover {
-          text-decoration: underline;
-          background-color: ${`${themeStyles.primaryColor}20`};
-        }
-        
         /* Azure citation styling */
         .azure-citation {
           color: ${themeStyles.primaryColor};
           font-weight: 500;
           cursor: pointer;
           text-decoration: none;
-          background-color: ${`${themeStyles.primaryColor}10`};
-          padding: 1px 4px;
-          border-radius: 3px;
         }
         
         .azure-citation:hover {
           text-decoration: underline;
-          background-color: ${`${themeStyles.primaryColor}20`};
-        }
-        
-        /* Citation reference styling */
-        .citation-ref {
-          color: ${themeStyles.primaryColor};
-          cursor: pointer;
-        }
-        
-        .citation-ref:hover {
-          text-decoration: underline;
-        }
-
-        /* Enhance markdown styling */
-        .prose {
-          /* Make sure paragraphs have proper spacing */
-          & p {
-            margin-top: 1.25em;
-            margin-bottom: 1.25em;
-          }
-          
-          /* Style lists properly */
-          & ul {
-            list-style-type: disc;
-            padding-left: 1.5em;
-            margin-top: 1em;
-            margin-bottom: 1em;
-          }
-          
-          & ol {
-            list-style-type: decimal;
-            padding-left: 1.5em;
-            margin-top: 1em;
-            margin-bottom: 1em;
-          }
-          
-          /* Make headings distinct */
-          & h1, & h2, & h3, & h4, & h5, & h6 {
-            font-weight: 600;
-            margin-top: 1.5em;
-            margin-bottom: 0.5em;
-          }
-          
-          /* Make bold text actually bold */
-          & strong {
-            font-weight: 700;
-            color: inherit;
-          }
-          
-          /* Make italic text actually italic */
-          & em {
-            font-style: italic;
-          }
         }
       `}</style>
     </motion.div>
