@@ -826,7 +826,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
             <Link href="/" className="text-lg font-medium cursor-pointer">
-              <div className="relative h-[50px] w-[200px]">
+              {/* <div className="relative h-[50px] w-[200px]">
                 <img
                   src={imgError ? '/defaultLogo.png' : organizationLogo}
                   alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
@@ -835,7 +835,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   onError={() => setImgError(true)}
                   priority
                 />
-              </div>
+              </div> */}
             </Link>
               <motion.div
                 className="flex items-center gap-6"
