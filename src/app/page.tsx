@@ -111,20 +111,20 @@ function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHan
     const fetchQuestions = async () => {
       try {
         setLoading(true);
-        
+
         if (!organization?.id) {
           throw new Error('Organization ID not available');
         }
-        
+
         // Fetch questions for this organization
         const { data: questionData, error: questionError } = await supabase
           .from('sample_questions')
           .select('question')
           .eq('organization_id', organization.id)
           .order('created_at', { ascending: false });
-          
+
         if (questionError) throw questionError;
-        
+
         if (questionData && questionData.length > 0) {
           setQuestions(questionData.map(item => item.question));
         } else {
@@ -138,7 +138,7 @@ function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHan
       } catch (err: any) {
         console.error('Error fetching questions:', err);
         setError(err.message);
-        
+
         // Fallback to default questions if there's an error
         setQuestions([
           "What contracts are available for review?",
@@ -149,7 +149,7 @@ function SampleQuestions({ chatRef }: { chatRef: React.RefObject<ImprovedChatHan
         setLoading(false);
       }
     };
-    
+
     fetchQuestions();
   }, [organization?.id]);
 
@@ -288,7 +288,7 @@ export default function Page() {
   const [useStorageFallback, setUseStorageFallback] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [useDeepRag, setUseDeepRag] = useState(false);
-  
+
   // State for Swingle Collins report modals
   const [showPolicyComparisonModal, setShowPolicyComparisonModal] = useState(false);
   const [showPolicyExcelModal, setShowPolicyExcelModal] = useState(false);
@@ -296,13 +296,13 @@ export default function Page() {
   const [showTriaModal, setShowTriaModal] = useState(false);
   const [policyNumber, setPolicyNumber] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
-  
+
   // Sample company list for dropdowns
   const companyList = [
-    "Company A", 
-    "Company B", 
-    "Company C", 
-    "Company D", 
+    "Company A",
+    "Company B",
+    "Company C",
+    "Company D",
     "Company E"
   ];
 
@@ -368,7 +368,7 @@ export default function Page() {
     } catch (error) {
       console.error("Error initializing settings:", error);
     }
-    
+
     return defaultSettings;
   });
 
@@ -396,7 +396,7 @@ export default function Page() {
       try {
         const isStorageAvailable = contextManager.isStorageAvailable();
         setUseStorageFallback(!isStorageAvailable);
-        
+
         // Initialize UI with existing context if available
         const context = contextManager.getCurrentContext();
         if (context.length > 0) {
@@ -405,9 +405,17 @@ export default function Page() {
             content: msg.content,
             timestamp: msg.timestamp
           }));
-          
+
           setChatHistory(formattedMessages);
-          setConversationStarted(formattedMessages.length > 0);
+          // Set conversation started only if we have actual messages
+          if (formattedMessages.length > 0) {
+            setConversationStarted(true);
+          } else {
+            setConversationStarted(false);
+          }
+        } else {
+          // Explicitly set to false if no context
+          setConversationStarted(false);
         }
       } catch (error) {
         console.error("Error checking storage compatibility:", error);
@@ -416,7 +424,7 @@ export default function Page() {
         setIsLoading(false);
       }
     };
-    
+
     // Delay storage check to ensure browser is ready
     const timeoutId = setTimeout(checkStorageCompat, 100);
     return () => clearTimeout(timeoutId);
@@ -439,7 +447,7 @@ export default function Page() {
           }
         }
       };
-      
+
       // Delay loading to ensure browser is ready
       const timeoutId = setTimeout(loadRagSettings, 200);
       return () => clearTimeout(timeoutId);
@@ -459,7 +467,7 @@ export default function Page() {
         }
       }
     };
-    
+
     // Delay saving to ensure browser is ready
     const timeoutId = setTimeout(saveSettings, 300);
     return () => clearTimeout(timeoutId);
@@ -486,7 +494,7 @@ export default function Page() {
         }
       }
     };
-    
+
     // Delay saving to ensure browser is ready
     const timeoutId = setTimeout(saveRagSettings, 300);
     return () => clearTimeout(timeoutId);
@@ -551,7 +559,7 @@ export default function Page() {
   // Helper function to clean message content
   const cleanMessageContent = (content: string | undefined): string => {
     if (!content) return '';
-    
+
     // Check if the content has the specific pattern with "Response" and "Answer"
     if (content.includes("Response") && content.includes("Answer")) {
       // Extract just the answer portion
@@ -559,21 +567,21 @@ export default function Page() {
       if (answerMatch && answerMatch[1] && answerMatch[1].trim()) {
         return answerMatch[1].trim();
       }
-      
+
       // If that doesn't work, try to strip the "Response" section
       const responseMatch = content.match(/([\s\S]*?)(?:\s*Response\s*\n)/i);
       if (responseMatch && responseMatch[1] && responseMatch[1].trim()) {
         return responseMatch[1].trim().replace(/^Answer\s*\n/i, '');
       }
     }
-    
+
     // If content starts with "AnswerSources" or similar format,
     // clean it up to just get the main content
     if (content.startsWith("AnswerSources")) {
       const cleanedContent = content.replace(/^AnswerSources.*?\n/i, '');
       return cleanedContent;
     }
-    
+
     // Default case: return the original content
     return content;
   };
@@ -589,25 +597,48 @@ export default function Page() {
 
   // Clear chat functionality
   const clearChat = () => {
+    // First clear all states
     setChatHistory([]);
-    setConversationStarted(false);
     setIsStreaming(false);
     setContractAnalysisResults(null);
     setShowAnalysisPanel(false);
     setShowContractPanel(false);
     setCurrentMessageForAnalysis(null);
-    
+
     // Clear conversation context
     try {
       contextManager.clearContext();
     } catch (error) {
       console.error("Error clearing context:", error);
     }
+
+    // Set conversationStarted to false AFTER clearing everything else
+    // This ensures the sample questions will be displayed again
+    setConversationStarted(false);
+
+    // Force a re-render to ensure sample questions appear
+    setTimeout(() => {
+      console.log("Conversation started:", false);
+    }, 50);
   };
 
   // Handle profile navigation
   const handleProfileNav = () => {
     router.push('/profile');
+  };
+  interface HandleValueChangeProps {
+    value: string;
+  }
+
+  const handleValueChange = (value: HandleValueChangeProps["value"]) => {
+    if (value === "tria") {
+      // Open the PDF file in a new tab when "TRIA Report" is selected
+      window.open("/August Real Estate TRIA report.pdf", "_blank");
+    } else {
+      // Handle other selections as needed
+      console.log(`Selected: ${value}`);
+      // You can add routing or other actions for other report types here
+    }
   };
 
   // Handle logout
@@ -623,27 +654,27 @@ export default function Page() {
   // Enhanced citation click handler that detects various citation formats
   const handleCitationClicked = (filePath: string, pageNumber?: number | string) => {
     console.log(`Citation clicked: ${filePath}, page: ${pageNumber || 'N/A'}`);
-    
+
     // Handle various citation formats
     let normalizedPath = filePath;
-    
+
     // Extract filename from citation format with brackets [filename.pdf]
     if (filePath.startsWith('[') && filePath.endsWith(']')) {
       normalizedPath = filePath.substring(1, filePath.length - 1);
     }
-    
+
     // If there's a "#page=" in the path, extract the page number
     if (!pageNumber && normalizedPath.includes('#page=')) {
       const parts = normalizedPath.split('#page=');
       normalizedPath = parts[0];
       pageNumber = parseInt(parts[1]);
     }
-    
+
     // Clean up file extensions if they're repeated
     if (normalizedPath.endsWith('.msg.msg')) {
       normalizedPath = normalizedPath.replace('.msg.msg', '.msg');
     }
-    
+
     // Set active citation and show the panel
     setActiveCitation(normalizedPath);
     setAnalysisTabKey(AnalysisPanelTabs.CitationTab);
@@ -676,7 +707,7 @@ export default function Page() {
       chatRef.current.submitMessage(question);
     }
   };
-  
+
   // Optional: Add a handler for image clicks from FastRAG
   const handleImageClicked = (imageUrl: string, documentId: string, pageIndex: number) => {
     console.log(`Image clicked: ${imageUrl} from document ${documentId}, page ${pageIndex}`);
@@ -701,7 +732,7 @@ export default function Page() {
       // Update UI state
       setChatHistory(prev => [...prev, newMessage]);
       setMostRecentUserMessage(content);
-      
+
       // Add to conversation context
       contextManager.addMessage('user', content);
 
@@ -719,7 +750,7 @@ export default function Page() {
     try {
       // Clean the content before storing it
       const cleanedContent = cleanMessageContent(content);
-      
+
       // Create a message with all available data
       const newMessage: ChatMessage = {
         role: 'assistant',
@@ -734,11 +765,11 @@ export default function Page() {
         result: metadata?.result,
         rawResponse: metadata
       };
-    
+
       // Update UI state
       setChatHistory(prev => [...prev, newMessage]);
       setCurrentMessageForAnalysis(newMessage);
-      
+
       // Add to conversation context
       contextManager.addMessage('assistant', cleanedContent);
     } catch (error) {
@@ -825,18 +856,18 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
             transition={{ duration: 0.5 }}
           >
             <nav className="h-14 px-4 flex items-center justify-between max-w-7xl mx-auto">
-            <Link href="/" className="text-lg font-medium cursor-pointer">
-              {/* <div className="relative h-[50px] w-[200px]">
-                <img
-                  src={imgError ? '/defaultLogo.png' : organizationLogo}
-                  alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
-                  fill
-                  style={{ objectFit: 'contain' }}
-                  onError={() => setImgError(true)}
-                  priority
-                />
-              </div> */}
-            </Link>
+              <Link href="/" className="text-lg font-medium cursor-pointer">
+                {/* <div className="relative h-[50px] w-[200px]">
+                  <img
+                    src={imgError ? '/defaultLogo.png' : organizationLogo}
+                    alt={organization?.name ? `${organization.name} Logo` : 'Organization Logo'}
+                    fill
+                    style={{ objectFit: 'contain' }}
+                    onError={() => setImgError(true)}
+                    priority
+                  />
+                </div> */}
+              </Link>
               <motion.div
                 className="flex items-center gap-6"
                 initial={{ opacity: 0 }}
@@ -856,7 +887,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     </span>
                   </motion.div>
                 )}
-                
+
                 {/* User info, profile and logout */}
                 {user && (
                   <motion.div
@@ -907,23 +938,11 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                   onToggle={handleRAGToggle}
                   onBucketSelect={handleBucketSelect}
                 />
-                
+
                 {/* Swingle Collins Special Reports - Only shown for Swingle Collins organization */}
                 {organization?.name === 'Swingle Collins' && (
                   <div className="flex items-center ml-4">
-                    <Select
-                      onValueChange={(value) => {
-                        if (value === "policy_comparison") {
-                          setShowPolicyComparisonModal(true);
-                        } else if (value === "policy_excel") {
-                          setShowPolicyExcelModal(true);
-                        } else if (value === "safeguard") {
-                          setShowSafeguardModal(true);
-                        } else if (value === "tria") {
-                          setShowTriaModal(true);
-                        }
-                      }}
-                    >
+                    <Select onValueChange={handleValueChange}>
                       <SelectTrigger className="h-8 bg-blue-600 text-white border-none hover:bg-blue-700">
                         <SelectValue placeholder="Special Reports" />
                       </SelectTrigger>
@@ -994,7 +1013,8 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
 
           {/* Main Content - Add padding to account for fixed navbars */}
           <main className="flex-1 flex flex-col items-center px-4 py-16 bg-[#F5F5F5] mt-24">
-            {!conversationStarted && (
+            {/* Show welcome screen when conversation hasn't started */}
+            {!conversationStarted && chatHistory.length === 0 && (
               <>
                 <motion.div
                   className="text-center mb-6"
@@ -1017,7 +1037,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                     transition={{ delay: 0.9, duration: 0.5 }}
                   >
                     Ask anything or try an example
-                  </motion.p> 
+                  </motion.p>
                 </motion.div>
 
                 {/* Dynamic Sample Questions Component */}
@@ -1130,7 +1150,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                 {/* Chat Input */}
                 <motion.div
                   className="w-full max-w-7xl flex justify-center mb-4"
-                  initial={conversationStarted ? { opacity: 1 } : { opacity: 0, y: 20 }}
+                  initial={{ opacity: 1 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5 }}
                 >
@@ -1275,7 +1295,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       // Example of what might happen:
                       // 1. Call an API to get the Excel file
                       // 2. Trigger browser download
-                      
+
                       // Example of triggering a download (would need the actual file URL)
                       // const a = document.createElement('a');
                       // a.href = `https://your-api.com/reports/excel/${policyNumber}`;
@@ -1283,7 +1303,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
                       // document.body.appendChild(a);
                       // a.click();
                       // document.body.removeChild(a);
-                      
+
                       setShowPolicyExcelModal(false);
                     }}
                     disabled={!policyNumber}
@@ -1385,7 +1405,7 @@ Please try uploading the contract again or provide a different format (PDF, DOCX
               </div>
             </SheetContent>
           </Sheet>
-          
+
           {/* Add custom styling for FastRAG and citations */}
           <style jsx global>{`
             /* Citation styling */

@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, ImageIcon, FileText } from "lucide-react";
 
 // Import the AnswerParser functionality
 import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, CitationInfo } from "./AnswerParser";
@@ -13,6 +13,8 @@ import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, Cita
 // Import our custom components
 import AnswerHeader from "./AnswerHeader";
 import DocumentDetail from "./DocumentDetail";
+import ImageViewer from "./ImageViewer";
+import XRayAnalysis from "./XRayAnalysis";
 import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
 
 // Import types
@@ -57,6 +59,7 @@ export default function FastRAG({
   onSupportingContentClicked = () => { },
   onFollowupQuestionClicked = () => { },
   onRefreshClicked = () => { },
+  onImageClicked = () => { },
   showFollowupQuestions = false,
   enableAdvancedFeatures = false,
   theme = 'light',
@@ -88,17 +91,27 @@ export default function FastRAG({
   const [isCopied, setIsCopied] = useState(false);
   const [currentDocumentId, setCurrentDocumentId] = useState(null);
   const [expandedDocs, setExpandedDocs] = useState(new Set());
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedSourceId, setSelectedSourceId] = useState(null);
+  const [imageViewMode, setImageViewMode] = useState('grid');
+  const [imageSortBy, setImageSortBy] = useState('document');
+  const [activeXrayChunk, setActiveXrayChunk] = useState(null);
+  const [xrayViewMode, setXrayViewMode] = useState('summary');
+  const [xrayContentFilter, setXrayContentFilter] = useState(null);
   const [citationInfos, setCitationInfos] = useState([]);
   const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
-  const [processedMarkdown, setProcessedMarkdown] = useState('');
-  const [originalContent, setOriginalContent] = useState('');
+  const [isXRayLoading, setIsXRayLoading] = useState(false);
   const [hasAzureThoughtProcess, setHasAzureThoughtProcess] = useState(false);
   const [hasSupportingContent, setHasSupportingContent] = useState(false);
   const [supportingContent, setSupportingContent] = useState([]);
   const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
-  const [compactCitationDisplay, setCompactCitationDisplay] = useState(true); // Toggle for citation display format
+  const [compactCitationDisplay, setCompactCitationDisplay] = useState(true);
+  const [processedMarkdown, setProcessedMarkdown] = useState('');
+  const [originalContent, setOriginalContent] = useState('');
   
+  // Track which documents have already been analyzed to avoid duplicate analysis
+  const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
   // We'll use a ref for documents to avoid render loops
   const documentsRef = useRef([]);
   // Use state for forcing updates after document changes
@@ -106,6 +119,7 @@ export default function FastRAG({
 
   // References
   const contentRef = useRef(null);
+  const imageViewerRef = useRef(null);
   const answerElementId = `answer-content-${index}`;
 
   // Theme styling
@@ -135,8 +149,8 @@ export default function FastRAG({
     
     // Recursively check for the property in nested objects
     const results = [];
-    const processObject = (o, path = '', depth = 0) => {
-      if (!o || typeof o !== 'object' || depth > 10) return; // Prevent too deep recursion
+    const processObject = (o, path = '') => {
+      if (!o || typeof o !== 'object') return;
       
       // Skip checking arrays of primitives to avoid excessive processing
       if (Array.isArray(o) && o.length > 0 && typeof o[0] !== 'object') return;
@@ -151,29 +165,17 @@ export default function FastRAG({
             if (stopAtFirst) return o[key];
           }
           
-          // Check if the key contains any of our target keys (for properties like "message.thought_process")
-          for (const targetKey of keys) {
-            if (key.includes(targetKey)) {
-              const currentPath = path ? `${path}.${key}` : key;
-              console.log(`Found partial match property '${key}' containing '${targetKey}' at path '${currentPath}':`, o[key]);
-              results.push({ path: currentPath, value: o[key] });
-              if (stopAtFirst) return o[key];
-            }
-          }
-          
           // Recursively process nested objects if not a circular reference
           if (o[key] && typeof o[key] === 'object' && o[key] !== o) {
             const currentPath = path ? `${path}.${key}` : key;
-            const result = processObject(o[key], currentPath, depth + 1);
-            if (stopAtFirst && result !== undefined) return result;
+            processObject(o[key], currentPath);
           }
         }
       }
     };
     
-    const result = processObject(obj);
-    if (stopAtFirst && result !== undefined) return result;
-    return results;
+    processObject(obj);
+    return stopAtFirst ? null : results;
   }, []);
 
   // Extract sources from answer - memoized to avoid unnecessary recalculations
@@ -199,6 +201,14 @@ export default function FastRAG({
         url: source.url || source.sourceUrl,
       };
 
+      // Handle document images
+      normalizedSource.pageImages = source.pageImages || source.images || source.pages || [];
+      normalizedSource.thumbnails = source.thumbnails || source.pageImages || source.images || [];
+      normalizedSource.imageLabels = source.imageLabels || source.pageLabels || [];
+      normalizedSource.pageCount = source.pageCount ||
+        (source.pageImages ? source.pageImages.length : 0) ||
+        (source.pages ? source.pages.length : 0);
+
       // Extract all types of text content
       normalizedSource.excerpts = [];
       
@@ -212,6 +222,115 @@ export default function FastRAG({
 
       if (source.text) normalizedSource.excerpts.push(source.text);
       if (source.content) normalizedSource.excerpts.push(source.content);
+
+      // Extract X-Ray data with improved JSON parsing
+      if (source.xray) {
+        try {
+          // Handle the case where the entire xray field might be a stringified JSON
+          let xrayData = source.xray;
+          if (typeof source.xray === 'string' && source.xray.trim().startsWith('{')) {
+            try {
+              xrayData = JSON.parse(source.xray);
+            } catch (e) {
+              console.warn('Failed to parse X-Ray data as JSON string', e);
+            }
+          }
+
+          // Initialize normalized xray data
+          let parsedSummary = xrayData.summary;
+          let parsedKeywords = xrayData.keywords;
+          let parsedChunks = xrayData.chunks || [];
+
+          // Try to parse summary if it's a JSON string
+          if (typeof parsedSummary === 'string' && parsedSummary.trim().startsWith('{')) {
+            try {
+              const summaryObj = JSON.parse(parsedSummary);
+              parsedSummary = summaryObj.summary || summaryObj.Summary || summaryObj.text || summaryObj.content || parsedSummary;
+              // If keywords weren't already set but are in the JSON, use those
+              if (!parsedKeywords && (summaryObj.keywords || summaryObj.Keywords)) {
+                parsedKeywords = summaryObj.keywords || summaryObj.Keywords;
+              }
+            } catch (e) {
+              console.warn('Failed to parse X-Ray summary as JSON', e);
+            }
+          }
+
+          // Ensure keywords is a string
+          if (Array.isArray(parsedKeywords)) {
+            parsedKeywords = parsedKeywords.join(', ');
+          }
+
+          // Process chunks - this is where the JSON parsing needs improvement
+          if (parsedChunks && Array.isArray(parsedChunks)) {
+            parsedChunks = parsedChunks.map(chunk => {
+              const processedChunk = { ...chunk };
+
+              // Parse text field if it looks like JSON
+              if (chunk.text && typeof chunk.text === 'string') {
+                if (chunk.text.trim().startsWith('{')) {
+                  try {
+                    const parsedText = JSON.parse(chunk.text);
+
+                    // Store the original text for reference
+                    processedChunk.originalText = chunk.text;
+
+                    // Set parsed data for reference
+                    processedChunk.parsedData = parsedText;
+
+                    // If we have structured data, use it for display
+                    if (parsedText.summary || parsedText.Summary) {
+                      processedChunk.sectionSummary = processedChunk.sectionSummary ||
+                        parsedText.summary ||
+                        parsedText.Summary;
+                    }
+
+                    // Extract JSON data if present
+                    if (parsedText.data || parsedText.Data) {
+                      processedChunk.json = processedChunk.json ||
+                        parsedText.data ||
+                        parsedText.Data;
+                    }
+
+                    // Keep original text in text field for compatibility
+                  } catch (e) {
+                    // If parsing fails, keep the original text
+                    console.warn('Failed to parse chunk text as JSON', e);
+                  }
+                }
+              }
+
+              // Parse JSON field if it's a string
+              if (chunk.json && typeof chunk.json === 'string') {
+                try {
+                  processedChunk.json = JSON.parse(chunk.json);
+                } catch (e) {
+                  console.warn('Failed to parse chunk.json as JSON', e);
+                }
+              }
+
+              return processedChunk;
+            });
+          }
+
+          normalizedSource.xray = {
+            summary: parsedSummary,
+            keywords: parsedKeywords,
+            language: xrayData.language,
+            chunks: parsedChunks
+          };
+        } catch (e) {
+          console.error('Error processing X-Ray data', e);
+          // Keep the original data if parsing fails
+          normalizedSource.xray = {
+            summary: source.xray.summary,
+            keywords: typeof source.xray.keywords === 'object' ?
+              (source.xray.keywords?.join(', ') || '') :
+              (source.xray.keywords || ''),
+            language: source.xray.language,
+            chunks: source.xray.chunks || []
+          };
+        }
+      }
 
       // Extract highlights
       normalizedSource.highlights = source.highlights || [];
@@ -227,6 +346,17 @@ export default function FastRAG({
       // If no excerpts but have context, use that
       if (normalizedSource.excerpts.length === 0 && source.documentContext) {
         normalizedSource.excerpts.push(source.documentContext);
+      }
+
+      // If no excerpts but have X-Ray text chunks, use those
+      if (normalizedSource.excerpts.length === 0 && normalizedSource.xray?.chunks) {
+        const textChunks = normalizedSource.xray.chunks
+          .filter(chunk => chunk.text)
+          .map(chunk => chunk.text);
+
+        if (textChunks.length > 0) {
+          normalizedSource.excerpts.push(...textChunks);
+        }
       }
 
       // Deduplicate excerpts
@@ -271,53 +401,12 @@ export default function FastRAG({
     
     console.log("Extracting Azure content deeply");
     
-    // EXPANDED: Check for thought process using more possible keys and additional logic
-    const thoughtProcessKeys = [
-      'thought_process', 'thoughtProcess', 'thoughts', 'reasoning', 'rationalization', 
-      'rationale', 'thinking', 'analysis', 'systemMessage', 'contextThought', 'contextAnalysis',
-      'messageContext', 'context', 'thoughtStream', 'aiThoughts', 'internalMonologue'
-    ];
+    // First check for thought process using multiple possible keys
+    const thoughtProcessKeys = ['thought_process', 'thoughtProcess', 'thoughts', 'reasoning', 'rationalization'];
+    const thoughtResult = deepExtract(answer, thoughtProcessKeys, true);
     
-    // First attempt: Direct property extraction
-    let thoughtResult = deepExtract(answer, thoughtProcessKeys, true);
-    
-    // Second attempt: Check if there's a message property containing thought process
-    if (!thoughtResult && answer.message) {
-      thoughtResult = deepExtract(answer.message, thoughtProcessKeys, true);
-    }
-    
-    // Third attempt: Check if there's a content array with messages that might have thought process
-    if (!thoughtResult && answer.content && Array.isArray(answer.content)) {
-      // Look for system or assistant messages that might contain thought process
-      for (const message of answer.content) {
-        if (message.role === 'system' || message.role === 'assistant' || message.role === 'thinking') {
-          const content = message.content || message.text || message.value;
-          if (content && typeof content === 'string' && content.length > 50) {
-            // This might be a thought process if it's substantial content
-            thoughtResult = content;
-            console.log("Found potential thought process in message:", content.substring(0, 100) + "...");
-            break;
-          }
-        }
-      }
-    }
-    
-    // NEW: Check for a 'context' object that might contain a thought process
-    if (!thoughtResult && answer.context) {
-      if (typeof answer.context === 'string' && answer.context.length > 50) {
-        thoughtResult = answer.context;
-      } else if (typeof answer.context === 'object') {
-        thoughtResult = deepExtract(answer.context, thoughtProcessKeys, true);
-      }
-    }
-    
-    // If we found a thought process, format and save it
     if (thoughtResult) {
-      console.log("Found thought process:", 
-        typeof thoughtResult === 'string' 
-          ? thoughtResult.substring(0, 100) + "..." 
-          : thoughtResult);
-      
+      console.log("Found thought process:", thoughtResult);
       const formattedThought = typeof thoughtResult === 'string' 
         ? thoughtResult 
         : JSON.stringify(thoughtResult, null, 2);
@@ -326,19 +415,12 @@ export default function FastRAG({
       setAzureThoughtProcess(formattedThought);
     }
     
-    // EXPANDED: Check for supporting content using more possible keys and additional logic
-    const supportingContentKeys = [
-      'supporting_content', 'supportingContent', 'evidence', 'citations', 'sources',
-      'research', 'retrieval', 'context', 'sourceContext', 'contentContext', 'referenceContext',
-      'citations', 'references', 'groundingEvidence', 'retrievalResults'
-    ];
-    
-    // First attempt: Direct property extraction for supporting content
+    // Check for supporting content using multiple possible keys
+    const supportingContentKeys = ['supporting_content', 'supportingContent', 'evidence', 'citations', 'sources'];
     const contentResults = deepExtract(answer, supportingContentKeys);
     
-    let foundContent = false;
     for (const result of contentResults) {
-      if (Array.isArray(result.value) && result.value.length > 0) {
+      if (Array.isArray(result.value)) {
         // Format the content into a uniform structure
         const formattedContent = result.value.map((item, idx) => {
           // If the array contains strings, wrap them in objects
@@ -366,62 +448,10 @@ export default function FastRAG({
           console.log("Found supporting content:", formattedContent);
           setHasSupportingContent(true);
           setSupportingContent(formattedContent);
-          foundContent = true;
           break; // Use the first matching array we find
         }
       }
     }
-    
-    // NEW: If no supporting content found yet, check if we can build it from the sources/citations
-    if (!foundContent && documentsRef.current.length > 0) {
-      const sourcesWithExcerpts = documentsRef.current.filter(source => 
-        source.excerpts && source.excerpts.length > 0
-      );
-      
-      if (sourcesWithExcerpts.length > 0) {
-        const formattedContent = sourcesWithExcerpts.map((source, idx) => ({
-          title: source.fileName || `Supporting Content ${idx + 1}`,
-          content: source.excerpts[0], // Use the first excerpt
-          source: source.fileName
-        }));
-        
-        console.log("Built supporting content from sources:", formattedContent);
-        setHasSupportingContent(true);
-        setSupportingContent(formattedContent);
-        foundContent = true;
-      }
-    }
-    
-    // NEW: As a last resort, if we have citations but they don't have content
-    if (!foundContent && answer.citations && Array.isArray(answer.citations) && answer.citations.length > 0) {
-      // Try to match citations with documents to extract content
-      const formattedContent = answer.citations.map((citation, idx) => {
-        const sourceTitle = citation.title || citation.source || citation.fileName || `Citation ${idx + 1}`;
-        
-        // Try to find matching document
-        const matchingDoc = documentsRef.current.find(doc => 
-          doc.fileName === sourceTitle || 
-          doc.id === citation.id ||
-          (doc.fileName && sourceTitle.includes(doc.fileName))
-        );
-        
-        return {
-          title: sourceTitle,
-          content: citation.content || citation.text || 
-                 (matchingDoc && matchingDoc.excerpts && matchingDoc.excerpts.length > 0 
-                    ? matchingDoc.excerpts[0] 
-                    : "No content available"),
-          source: sourceTitle
-        };
-      });
-      
-      if (formattedContent.length > 0) {
-        console.log("Built supporting content from citations:", formattedContent);
-        setHasSupportingContent(true);
-        setSupportingContent(formattedContent);
-      }
-    }
-    
   }, [answer, deepExtract]);
 
   // Initialize Azure content when the component mounts
@@ -446,26 +476,15 @@ export default function FastRAG({
     }
   }, [answer, extractAzureContent]);
 
-  // Extract content from answer
+  // Utility functions
   const extractContent = useCallback(() => {
     if (!answer) return '';
     if (typeof answer === 'string') return answer;
-    if (answer.content) {
-      if (typeof answer.content === 'string') return answer.content;
-      // If content is an array (like OpenAI messages), try to find assistant message
-      if (Array.isArray(answer.content)) {
-        const assistantMessage = answer.content.find(msg => msg.role === 'assistant');
-        if (assistantMessage) {
-          return assistantMessage.content || '';
-        }
-      }
-      return JSON.stringify(answer.content, null, 2);
-    }
+    if (answer.content) return typeof answer.content === 'string' ? answer.content : JSON.stringify(answer.content, null, 2);
     if (answer.answer) {
       return typeof answer.answer === 'string' ? answer.answer : JSON.stringify(answer.answer, null, 2);
     }
     if (answer.response) return typeof answer.response === 'string' ? answer.response : JSON.stringify(answer.response, null, 2);
-    if (answer.message) return typeof answer.message === 'string' ? answer.message : JSON.stringify(answer.message, null, 2);
     return JSON.stringify(answer, null, 2);
   }, [answer]);
 
@@ -481,22 +500,57 @@ export default function FastRAG({
     // - [filename.pdf]
     // - [filename.pdf#page=2]
     // - [some text] that ends with .pdf, .docx, etc.
+    // - [1][filename.pdf] - numbered citation format
     const extractedCitations = [];
     
-    // This regex handles various citation formats including those at the end of sentences
-    // It looks for text inside square brackets that contains file extensions
-    const citationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
+    // This regex handles both regular and numbered citation formats
+    const numberedCitationRegex = /\[(\d+)\]\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
+    const standardCitationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
     
     let match;
     let counter = 1;
     
-    // First collect all citations
-    while ((match = citationRegex.exec(content)) !== null) {
+    // First look for numbered citations [1][filename.pdf]
+    while ((match = numberedCitationRegex.exec(content)) !== null) {
+      const fullMatch = match[0];
+      const number = parseInt(match[1]);
+      const filename = match[2];
+      const page = match[3] ? parseInt(match[3]) : null;
+      
+      if (filename) {
+        extractedCitations.push({
+          id: `citation-${number}`,
+          fileName: filename,
+          page: page,
+          index: number,
+          text: fullMatch,
+          position: match.index,
+          length: fullMatch.length,
+          isNumbered: true
+        });
+      }
+    }
+    
+    // Then look for standard citations [filename.pdf]
+    // First, reset the lastIndex of the regex
+    standardCitationRegex.lastIndex = 0;
+    
+    while ((match = standardCitationRegex.exec(content)) !== null) {
+      // Skip if this is part of a numbered citation (already processed)
+      // Check if there's a "[number]" before this citation
+      const preContext = content.substring(Math.max(0, match.index - 10), match.index);
+      if (preContext.match(/\[\d+\]$/)) {
+        continue; // Skip this match as it's part of a numbered citation
+      }
+      
       const fullMatch = match[0];
       const filename = match[1];
       const page = match[2] ? parseInt(match[2]) : null;
       
-      if (filename) {
+      // Check if this filename is already in a numbered citation
+      const existingCitation = extractedCitations.find(c => c.fileName === filename && c.isNumbered);
+      
+      if (filename && !existingCitation) {
         extractedCitations.push({
           id: `citation-${counter}`,
           fileName: filename,
@@ -504,7 +558,8 @@ export default function FastRAG({
           index: counter,
           text: fullMatch,
           position: match.index,
-          length: fullMatch.length
+          length: fullMatch.length,
+          isNumbered: false
         });
         counter++;
       }
@@ -512,12 +567,11 @@ export default function FastRAG({
     
     // If we found citations, save them
     if (extractedCitations.length > 0) {
+      // Sort by index to ensure proper numbering
+      extractedCitations.sort((a, b) => a.index - b.index);
       setCitationInfos(extractedCitations);
       console.log("Extracted citations:", extractedCitations);
     }
-    
-    // Process markdown and prepare it for rendering
-    // We handle citation transformation in the custom renderer component
     
     // Fix common markdown issues
     let processedContent = content;
@@ -533,7 +587,6 @@ export default function FastRAG({
     return processedContent;
   }, []);
 
-  // Extract thought process from answer
   const extractThoughtProcess = useCallback(() => {
     let reasoning = '';
     if (!answer) return reasoning;
@@ -557,25 +610,10 @@ export default function FastRAG({
     }
     else if (answer.systemMessage) { reasoning = answer.systemMessage; }
     else if (answer.reasoning) { reasoning = answer.reasoning; }
-    else if (answer.rationale) { reasoning = answer.rationale; }
-    else if (answer.context && typeof answer.context === 'string' && answer.context.length > 50) { 
-      reasoning = answer.context; 
-    }
-    
-    // NEW: Check content array for system or thinking messages
-    if (!reasoning && answer.content && Array.isArray(answer.content)) {
-      for (const message of answer.content) {
-        if ((message.role === 'system' || message.role === 'thinking') && message.content) {
-          reasoning = message.content;
-          break;
-        }
-      }
-    }
     
     return reasoning;
   }, [answer]);
 
-  // Extract supporting content from answer
   const extractSupportingContent = useCallback(() => {
     if (!answer) return [];
     
@@ -601,25 +639,9 @@ export default function FastRAG({
       }
     }
     
-    // NEW: Try to build supporting content from sources if available
-    if (documentsRef.current && documentsRef.current.length > 0) {
-      const sourcesWithExcerpts = documentsRef.current.filter(source => 
-        source.excerpts && source.excerpts.length > 0
-      );
-      
-      if (sourcesWithExcerpts.length > 0) {
-        return sourcesWithExcerpts.map((source, index) => ({
-          title: source.fileName || `Source ${index + 1}`,
-          content: source.excerpts[0], // Use the first excerpt
-          source: source.fileName
-        }));
-      }
-    }
-    
     return [];
   }, [answer]);
 
-  // Extract followup questions from answer
   const extractFollowupQuestions = useCallback(() => {
     if (!answer) return [];
     if (answer.followupQuestions && Array.isArray(answer.followupQuestions)) {
@@ -639,11 +661,38 @@ export default function FastRAG({
     }
   }, [isCopied]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showImageViewer && imageViewerRef.current && !imageViewerRef.current.contains(event.target)) {
+        setShowImageViewer(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [showImageViewer]);
+
   // Initialize documents ref when component mounts or when source data changes
   useEffect(() => {
     // Directly set the ref value without causing re-renders
     documentsRef.current = extractAllSources();
     console.log("Documents extracted:", documentsRef.current.length);
+
+    // Check if any documents have X-Ray data and mark them as analyzed
+    const newAnalyzedIds = new Set(analyzedDocumentIds);
+    documentsRef.current.forEach(source => {
+      if (source.xray && (
+        source.xray.summary ||
+        source.xray.keywords ||
+        (source.xray.chunks && source.xray.chunks.length > 0)
+      )) {
+        newAnalyzedIds.add(source.id);
+      }
+    });
+
+    // Only update state if there are new analyzed documents
+    if (newAnalyzedIds.size !== analyzedDocumentIds.size) {
+      setAnalyzedDocumentIds(newAnalyzedIds);
+    }
 
     // Extract and process the content
     const content = extractContent();
@@ -651,25 +700,53 @@ export default function FastRAG({
 
     // Trigger a re-render to update the sources
     setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, processContent]);
+  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds, processContent]);
 
   // Parse the answer content using AnswerParser when the component mounts or answer changes
   useEffect(() => {
     if (!answer) return;
     
-    // Check for inline Azure citations [FILENAME.pdf#page=NUMBER]
+    // Process the content to extract citations
     const content = extractContent();
-    const hasInlineAzureCitations = typeof content === 'string' && 
-      /\[.*?\.(?:pdf|docx|xlsx|txt)(?:#page=\d+)?\]/i.test(content);
     
-    if (hasInlineAzureCitations) {
-      // For inline Azure citations, create HTML with clickable links
-      let htmlContent = content;
+    // Check for different citation formats
+    const hasInlineAzureCitations = typeof content === 'string' && 
+      /\[.*?\.(?:pdf|docx|xlsx|txt|msg)(?:#page=\d+)?\]/i.test(content);
+      
+    const hasNumberedCitations = typeof content === 'string' && 
+      /\[\d+\]\[.*?\.(?:pdf|docx|xlsx|txt|msg)(?:#page=\d+)?\]/i.test(content);
+    
+    // Transform the text content to include clickable citations
+    let htmlContent = '';
+    
+    if (hasInlineAzureCitations || hasNumberedCitations) {
+      // Format the content with properly styled citations
+      htmlContent = content;
       if (typeof htmlContent === 'string') {
-        // Replace [FILENAME.pdf#page=NUMBER] with clickable spans
-        htmlContent = htmlContent.replace(/\[(.*?)(?:#page=(\d+))?\]/g, (match, filename, page) => {
+        // First, handle the numbered citation format [1][filename.pdf]
+        htmlContent = htmlContent.replace(/\[(\d+)\]\[(.*?)(?:#page=(\d+))?\]/g, (match, number, filename, page) => {
           if (filename && filename.includes('.')) {
-            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: #e53e3e; cursor: pointer; font-weight: 500;">${match}</span>`;
+            return `<span class="numbered-citation" data-index="${number}" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">[${number}]</span>`;
+          }
+          return match;
+        });
+        
+        // Then handle standard citation format [filename.pdf]
+        htmlContent = htmlContent.replace(/\[(.*?)(?:#page=(\d+))?\]/g, (match, filename, page) => {
+          // Skip if this is inside a numbered citation (already processed)
+          if (match.match(/^\[\d+\]$/)) return match;
+          
+          if (filename && filename.includes('.')) {
+            // Find if we have a citation info for this file
+            const citationInfo = citationInfos.find(c => c.fileName === filename);
+            const citationNumber = citationInfo ? citationInfo.index : '';
+            
+            // Display as numbered citation if in compact mode
+            if (compactCitationDisplay && citationNumber) {
+              return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">[${citationNumber}]</span>`;
+            }
+            
+            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500; background-color: ${themeStyles.primaryColor}10; padding: 1px 4px; border-radius: 3px;">${match}</span>`;
           }
           return match;
         });
@@ -691,8 +768,34 @@ export default function FastRAG({
       
       setCitationInfos(azureCitations);
       
-      // For this case, just use the raw content since citations are handled separately
-      setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
+      // Convert Azure citations to HTML with proper styling
+      htmlContent = content;
+      
+      // Since the text doesn't contain citation markers, we'll append a citation list
+      let citationListHtml = '';
+      
+      if (azureCitations.length > 0) {
+        citationListHtml = '<div class="mt-4 pt-4 border-t" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0;">';
+        citationListHtml += '<h4 class="text-sm font-medium mb-2">Citations</h4>';
+        citationListHtml += '<ol class="list-decimal pl-5 space-y-1">';
+        
+        azureCitations.forEach(citation => {
+          citationListHtml += `<li id="citation-${citation.index}" class="text-sm">`;
+          citationListHtml += `<span class="citation-ref" data-id="${citation.id}" data-filename="${citation.fileName}" data-page="${citation.page || ''}" style="color: ${themeStyles.primaryColor}; cursor: pointer; font-weight: 500;">`;
+          citationListHtml += `${citation.fileName || citation.id}`;
+          citationListHtml += '</span>';
+          if (citation.page) {
+            citationListHtml += ` (page ${citation.page})`;
+          }
+          citationListHtml += '</li>';
+        });
+        
+        citationListHtml += '</ol></div>';
+      }
+      
+      // Combine the content with the citation list
+      htmlContent = `<div>${typeof content === 'string' ? content : ''}${citationListHtml}</div>`;
+      setParsedAnswerHtml(htmlContent);
     } else {
       // Parse the answer using the AnswerParser module for non-specific formats
       try {
@@ -741,7 +844,7 @@ export default function FastRAG({
         setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
       }
     }
-  }, [answer, isStreaming, onCitationClicked, extractContent]);
+  }, [answer, isStreaming, onCitationClicked, extractContent, citationInfos, compactCitationDisplay, themeStyles.primaryColor, processContent]);
   
   // Custom components for ReactMarkdown
   const MarkdownComponents = {
@@ -764,43 +867,53 @@ export default function FastRAG({
     text: ({ children }) => {
       if (typeof children !== 'string') return <>{children}</>;
       
-      // Regex to find citations - matches both PDF and MSG extensions
-      const citationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
+      // Regex to find both numbered and standard citations
+      const numberedCitationRegex = /\[(\d+)\]\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
+      const standardCitationRegex = /\[(.*?(?:\.pdf|\.docx|\.xlsx|\.msg|\.txt).*?)(?:#page=(\d+))?\]/g;
       
       // If no citations, just return the text
-      if (!citationRegex.test(children)) return <>{children}</>;
+      if (!numberedCitationRegex.test(children) && !standardCitationRegex.test(children)) return <>{children}</>;
       
       // Split the text by citations
       const parts = [];
       let lastIndex = 0;
       let count = 0;
       
-      // Reset regex
-      citationRegex.lastIndex = 0;
+      // Process text to find all citation patterns
+      let currentText = children;
+      let currentIndex = 0;
       
-      while ((match = citationRegex.exec(children)) !== null) {
+      // First, handle numbered citations [1][filename.pdf]
+      numberedCitationRegex.lastIndex = 0;
+      let numberedMatch;
+      
+      while ((numberedMatch = numberedCitationRegex.exec(currentText)) !== null) {
         // Add text before citation
-        if (match.index > lastIndex) {
+        if (numberedMatch.index > currentIndex) {
           parts.push(
-            <span key={`text-${count}`}>
-              {children.substring(lastIndex, match.index)}
+            <span key={`text-numbered-${count}`}>
+              {currentText.substring(currentIndex, numberedMatch.index)}
             </span>
           );
         }
         
-        // Add the citation as a clickable span
-        const filename = match[1];
-        const page = match[2];
+        // Extract information
+        const number = numberedMatch[1];
+        const filename = numberedMatch[2];
+        const page = numberedMatch[3];
         
         // Find the citation in our citations list
-        const citationInfo = citationInfos.find(c => c.fileName === filename);
-        const citationIndex = citationInfo ? citationInfo.index : count + 1;
+        const citationInfo = citationInfos.find(c => 
+          c.fileName === filename || (c.index === parseInt(number) && c.isNumbered)
+        );
         
-        // Add the citation with compact or full format
+        // Add the citation with number format regardless of display preference for numbered citations
         parts.push(
           <span 
-            key={`citation-${count}`}
-            className="citation-link"
+            key={`citation-numbered-${count}`}
+            className="numbered-citation"
+            data-citation="true"
+            data-index={number}
             data-filename={filename}
             data-page={page || ''}
             onClick={() => onCitationClicked(filename, page)}
@@ -814,24 +927,85 @@ export default function FastRAG({
               whiteSpace: 'nowrap'
             }}
           >
-            {compactCitationDisplay 
-              ? `[${citationIndex}]` 
-              : match[0]
-            }
+            {`[${number}]`}
           </span>
         );
         
-        lastIndex = match.index + match[0].length;
+        currentIndex = numberedMatch.index + numberedMatch[0].length;
         count++;
       }
       
-      // Add any remaining text
-      if (lastIndex < children.length) {
-        parts.push(
-          <span key={`text-${count}`}>
-            {children.substring(lastIndex)}
-          </span>
-        );
+      // Add remaining text after numbered citations
+      if (currentIndex < currentText.length) {
+        const remainingText = currentText.substring(currentIndex);
+        
+        // Now process standard citations [filename.pdf] in the remaining text
+        standardCitationRegex.lastIndex = 0;
+        let standardMatch;
+        let standardIndex = 0;
+        
+        while ((standardMatch = standardCitationRegex.exec(remainingText)) !== null) {
+          // Skip if this is part of a numbered citation (already processed)
+          const preContext = remainingText.substring(Math.max(0, standardMatch.index - 10), standardMatch.index);
+          if (preContext.match(/\[\d+\]$/)) {
+            continue;
+          }
+          
+          // Add text before citation
+          if (standardMatch.index > standardIndex) {
+            parts.push(
+              <span key={`text-standard-${count}`}>
+                {remainingText.substring(standardIndex, standardMatch.index)}
+              </span>
+            );
+          }
+          
+          // Extract information
+          const filename = standardMatch[1];
+          const page = standardMatch[2];
+          
+          // Find the citation in our citations list or create index
+          const citationInfo = citationInfos.find(c => c.fileName === filename && !c.isNumbered);
+          const citationIndex = citationInfo ? citationInfo.index : count + 1;
+          
+          // Add the citation with compact or full format
+          parts.push(
+            <span 
+              key={`citation-standard-${count}`}
+              className="citation-link"
+              data-citation="true"
+              data-citation-text={filename}
+              data-page={page || ''}
+              onClick={() => onCitationClicked(filename, page)}
+              style={{ 
+                color: themeStyles.primaryColor, 
+                cursor: 'pointer', 
+                fontWeight: 500,
+                backgroundColor: `${themeStyles.primaryColor}10`,
+                padding: '1px 4px',
+                borderRadius: '3px',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {compactCitationDisplay 
+                ? `[${citationIndex}]` 
+                : standardMatch[0]
+              }
+            </span>
+          );
+          
+          standardIndex = standardMatch.index + standardMatch[0].length;
+          count++;
+        }
+        
+        // Add any remaining text after standard citations
+        if (standardIndex < remainingText.length) {
+          parts.push(
+            <span key={`text-final-${count}`}>
+              {remainingText.substring(standardIndex)}
+            </span>
+          );
+        }
       }
       
       return <>{parts}</>;
@@ -846,12 +1020,27 @@ export default function FastRAG({
       // Find all citation references
       const target = event.target;
       
-      // Handle citations
+      // Handle numbered citations [1][filename.pdf]
+      if (target.classList.contains('numbered-citation') || target.closest('.numbered-citation')) {
+        const citation = target.classList.contains('numbered-citation') ? target : target.closest('.numbered-citation');
+        if (!citation) return;
+        
+        const index = citation.getAttribute('data-index');
+        const filename = citation.getAttribute('data-filename');
+        const page = citation.getAttribute('data-page');
+        
+        if (filename) {
+          console.log(`Clicked on numbered citation [${index}][${filename}], page: ${page}`);
+          onCitationClicked(filename, page);
+        }
+      }
+      
+      // Handle regular citations [filename.pdf]
       if (target.classList.contains('citation-link') || target.closest('.citation-link')) {
         const citation = target.classList.contains('citation-link') ? target : target.closest('.citation-link');
         if (!citation) return;
         
-        const filename = citation.getAttribute('data-filename');
+        const filename = citation.getAttribute('data-citation-text');
         const page = citation.getAttribute('data-page');
         
         if (filename) {
@@ -883,7 +1072,26 @@ export default function FastRAG({
         const page = citation.getAttribute('data-page');
         
         if (filename) {
+          console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
           onCitationClicked(filename, page);
+        }
+      }
+      
+      // Handle citation references in the citation list
+      if (target.classList.contains('citation-ref') || target.closest('.citation-ref')) {
+        const citation = target.classList.contains('citation-ref') ? target : target.closest('.citation-ref');
+        if (!citation) return;
+        
+        const id = citation.getAttribute('data-id');
+        const filename = citation.getAttribute('data-filename');
+        const page = citation.getAttribute('data-page');
+        
+        if (filename) {
+          console.log(`Clicked on citation reference: ${filename}, page: ${page}`);
+          onCitationClicked(filename, page);
+        } else if (id) {
+          console.log(`Clicked on citation reference: ${id}, page: ${page}`);
+          onCitationClicked(id, page);
         }
       }
     };
@@ -898,6 +1106,190 @@ export default function FastRAG({
       }
     };
   }, [onCitationClicked]);
+
+  // Utility functions
+  const fetchUpdatedDocument = useCallback(async (documentId) => {
+    try {
+      console.log("Fetching document:", documentId);
+      const response = await fetch(`/api/groundx/xray?documentId=${documentId}`);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch document: ${response.status}`);
+      }
+
+      const xrayData = await response.json();
+      console.log("Fetched X-Ray data:", xrayData);
+
+      // Deep check the response structure
+      let finalXrayData = xrayData.xray;
+      if (!finalXrayData) {
+        console.warn("X-Ray data missing in response:", xrayData);
+        // Try to find xray data in other response properties
+        finalXrayData = xrayData.data || xrayData.result || xrayData;
+      }
+
+      if (!finalXrayData) {
+        console.error("Could not find X-Ray data in the response");
+        setIsXRayLoading(false);
+        return;
+      }
+
+      // Format keywords if they're an array
+      if (Array.isArray(finalXrayData.keywords)) {
+        finalXrayData.keywords = finalXrayData.keywords.join(', ');
+      }
+
+      // Update the document in our ref
+      const updatedDocs = documentsRef.current.map(doc =>
+        doc.id === documentId
+          ? {
+            ...doc,
+            xray: {
+              ...finalXrayData,
+              keywords: finalXrayData.keywords || '',
+              chunks: finalXrayData.chunks || [],
+              summary: finalXrayData.summary || ''
+            }
+          }
+          : doc
+      );
+
+      // Log what we're updating
+      console.log("Updating document with X-Ray data:",
+        documentId,
+        "Has summary:", !!finalXrayData.summary,
+        "Has keywords:", !!finalXrayData.keywords,
+        "Chunks:", finalXrayData.chunks?.length || 0);
+
+      // Update the ref and force a re-render
+      documentsRef.current = updatedDocs;
+
+      // Mark this document as analyzed
+      setAnalyzedDocumentIds(prev => new Set([...prev, documentId]));
+
+      // Force a re-render
+      setForceUpdate(prev => prev + 1);
+      setIsXRayLoading(false);
+
+    } catch (error) {
+      console.error("Error fetching updated document:", error);
+      setIsXRayLoading(false);
+    }
+  }, []);
+
+  const handleStartXRayAnalysis = useCallback(async (documentId) => {
+    // Skip if already analyzed or currently loading
+    if (analyzedDocumentIds.has(documentId) || isXRayLoading) return;
+
+    console.log("Starting X-Ray analysis for document:", documentId);
+    try {
+      setIsXRayLoading(true);
+
+      // Call your API to start X-Ray analysis
+      console.log("Making API call to start X-Ray analysis");
+      const response = await fetch('/api/groundx/xray', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId,
+          action: 'refresh'
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("API response not OK:", response.status, errorData);
+        throw new Error(`Failed to start X-Ray analysis: ${response.status}`);
+      }
+
+      const responseData = await response.json();
+      console.log("X-Ray analysis API response:", responseData);
+
+      // If the response has xray data directly, use it without making another fetch
+      if (responseData.xray) {
+        console.log("X-Ray data found in response, updating document directly");
+
+        // Format keywords if they're an array
+        let keywordsString = responseData.xray.keywords;
+        if (Array.isArray(responseData.xray.keywords)) {
+          keywordsString = responseData.xray.keywords.join(', ');
+        }
+
+        // Update the document in our ref
+        documentsRef.current = documentsRef.current.map(doc =>
+          doc.id === documentId
+            ? {
+              ...doc,
+              xray: {
+                ...responseData.xray,
+                keywords: keywordsString,
+                chunks: responseData.xray.chunks || [],
+                summary: responseData.xray.summary || ''
+              }
+            }
+            : doc
+        );
+
+        // Mark this document as analyzed and update loading state
+        setAnalyzedDocumentIds(prev => new Set([...prev, documentId]));
+
+        // Force a re-render
+        setForceUpdate(prev => prev + 1);
+        setIsXRayLoading(false);
+      } else {
+        // Fetch updated document with X-Ray data
+        console.log("Fetching updated document");
+        await fetchUpdatedDocument(documentId);
+      }
+
+      console.log("X-Ray analysis completed successfully");
+    } catch (error) {
+      console.error('Error during X-Ray analysis:', error);
+      setIsXRayLoading(false);
+    }
+  }, [analyzedDocumentIds, isXRayLoading, fetchUpdatedDocument]);
+
+  // When activeTab changes to 'xray', check if the selected source needs analysis
+  useEffect(() => {
+    if (activeTab === 'xray') {
+      // Log the current state of documents and X-Ray data
+      console.log("X-Ray tab active, documents:", documentsRef.current.length);
+      const xrayDocs = documentsRef.current.filter(doc =>
+        doc.xray && (doc.xray.summary || doc.xray.keywords || (doc.xray.chunks && doc.xray.chunks.length > 0))
+      );
+      console.log("Documents with X-Ray data:", xrayDocs.length);
+
+      // If no document is selected but we have documents, select the first one
+      if (!selectedSourceId && documentsRef.current.length > 0) {
+        setSelectedSourceId(documentsRef.current[0].id);
+        console.log("Auto-selecting first document:", documentsRef.current[0].id);
+      }
+
+      // If a source is selected but hasn't been analyzed yet, trigger analysis
+      if (selectedSourceId && !analyzedDocumentIds.has(selectedSourceId)) {
+        const selectedSource = documentsRef.current.find(s => s.id === selectedSourceId);
+        if (selectedSource) {
+          console.log("Checking if document needs analysis:", selectedSourceId);
+          const hasXrayData = selectedSource.xray && (
+            selectedSource.xray.summary ||
+            selectedSource.xray.keywords ||
+            (selectedSource.xray.chunks && selectedSource.xray.chunks.length > 0)
+          );
+
+          if (!hasXrayData) {
+            console.log("Starting analysis for document:", selectedSourceId);
+            handleStartXRayAnalysis(selectedSourceId);
+          } else {
+            console.log("Document already has X-Ray data:", selectedSourceId);
+            // Mark as analyzed even if we didn't trigger the analysis
+            setAnalyzedDocumentIds(prev => new Set([...prev, selectedSourceId]));
+          }
+        }
+      }
+    }
+  }, [activeTab, selectedSourceId, analyzedDocumentIds, handleStartXRayAnalysis]);
 
   // Utility functions
   const getRelevanceExplanation = (source) => {
@@ -930,17 +1322,92 @@ export default function FastRAG({
     setCurrentDocumentId(source.id);
   };
 
-  const getCurrentDocument = useCallback(() => {
-    if (!currentDocumentId) return null;
+  const handleImageClick = (source, imageIndex) => {
+    if (!source || !source.pageImages || !source.pageImages.length) return;
+    setSelectedSourceId(source.id);
+    setSelectedImageIndex(imageIndex);
+    setShowImageViewer(true);
+    if (onImageClicked) {
+      onImageClicked(source.pageImages[imageIndex], source.id, imageIndex);
+    }
+  };
+
+  const navigateImage = (direction) => {
+    if (!selectedSourceId) return;
     // Use the documents ref instead of calling extractAllSources()
-    return documentsRef.current.find(s => s.id === currentDocumentId);
-  }, [currentDocumentId]);
+    const currentSource = documentsRef.current.find(s => s.id === selectedSourceId);
+    if (!currentSource || !currentSource.pageImages || !currentSource.pageImages.length) return;
+    const totalImages = currentSource.pageImages.length;
+
+    if (direction === 'prev') {
+      setSelectedImageIndex(prev => (prev > 0 ? prev - 1 : totalImages - 1));
+    } else {
+      setSelectedImageIndex(prev => (prev < totalImages - 1 ? prev + 1 : 0));
+    }
+  };
+
+  const getAllImages = useCallback(() => {
+    // Use the documents ref instead of calling extractAllSources()
+    const allImages = [];
+
+    documentsRef.current.forEach(source => {
+      if (source.pageImages && source.pageImages.length) {
+        source.pageImages.forEach((url, index) => {
+          allImages.push({
+            url, sourceId: source.id, index, source
+          });
+        });
+      }
+    });
+
+    if (imageSortBy === 'relevance') {
+      return allImages.sort((a, b) => (b.source.score || 0) - (a.source.score || 0));
+    }
+    return allImages;
+  }, [imageSortBy]);
+
+  const getAllXrayChunks = useCallback(() => {
+    // Use the documents ref instead of calling extractAllSources()
+    let allChunks = [];
+
+    documentsRef.current.forEach(source => {
+      if (source.xray?.chunks && source.xray.chunks.length) {
+        source.xray.chunks.forEach(chunk => {
+          allChunks.push({
+            chunk, sourceId: source.id, source
+          });
+        });
+      }
+    });
+
+    if (xrayContentFilter) {
+      allChunks = allChunks.filter(item =>
+        item.chunk.contentType?.includes(xrayContentFilter)
+      );
+    }
+
+    return allChunks;
+  }, [xrayContentFilter]);
+
+  const hasXrayData = useCallback(() => {
+    // Use the documents ref instead of calling extractAllSources()
+    const result = documentsRef.current.some(source => {
+      // Deep check for any xray data
+      if (!source.xray) return false;
+
+      return source.xray.summary ||
+        source.xray.keywords ||
+        (source.xray.chunks && source.xray.chunks.length > 0);
+    });
+
+    return result;
+  }, [forceUpdate]); // Re-evaluate when forceUpdate changes
 
   const handleCopyToClipboard = () => {
-    // Copy the original content without citation formatting
+    const contentToCopy = extractContent();
     try {
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(originalContent)
+        navigator.clipboard.writeText(contentToCopy)
           .then(() => setIsCopied(true))
           .catch(err => {
             console.error("Copy failed:", err);
@@ -950,11 +1417,17 @@ export default function FastRAG({
       console.error("Copy failed:", err);
     }
   };
-
+  
   // Handle citation display toggle
   const toggleCitationDisplay = () => {
     setCompactCitationDisplay(prev => !prev);
   };
+
+  const getCurrentDocument = useCallback(() => {
+    if (!currentDocumentId) return null;
+    // Use the documents ref instead of calling extractAllSources()
+    return documentsRef.current.find(s => s.id === currentDocumentId);
+  }, [currentDocumentId]);
 
   // Get extracted data - use memoized callbacks to avoid unnecessary calculations
   const content = extractContent();
@@ -963,6 +1436,8 @@ export default function FastRAG({
   const extractedSupportingContent = extractSupportingContent();
   const sources = documentsRef.current;
   const currentDocument = getCurrentDocument();
+  const allImages = getAllImages();
+  const allXrayChunks = getAllXrayChunks();
   
   // Check if we have thought process either from Azure state or extraction
   const hasThoughts = hasAzureThoughtProcess || (thoughtProcess && thoughtProcess.length > 0);
@@ -973,6 +1448,8 @@ export default function FastRAG({
     (extractedSupportingContent && extractedSupportingContent.length > 0);
   
   const hasSources = sources && sources.length > 0;
+  const hasImages = allImages.length > 0;
+  const xrayAvailable = hasXrayData();
 
   // Animation variants
   const containerVariants = {
@@ -1012,8 +1489,8 @@ export default function FastRAG({
         isCopied={isCopied}
         hasThoughts={hasThoughts}
         hasSources={hasSources}
-        hasXray={false} // Disabled X-Ray
-        hasImages={false} // Disabled Images
+        hasXray={xrayAvailable}
+        hasImages={hasImages}
         handleCopyToClipboard={handleCopyToClipboard}
         onThoughtProcessClicked={onThoughtProcessClicked}
         onSupportingContentClicked={onSupportingContentClicked}
@@ -1025,13 +1502,30 @@ export default function FastRAG({
       {currentDocument && (
         <DocumentDetail
           document={currentDocument}
+          handleImageClick={handleImageClick}
           setCurrentDocumentId={setCurrentDocumentId}
           setActiveTab={setActiveTab}
+          setActiveXrayChunk={setActiveXrayChunk}
           themeStyles={themeStyles}
           getRelevanceExplanation={getRelevanceExplanation}
           onCitationClicked={onCitationClicked}
+          onStartXRayAnalysis={handleStartXRayAnalysis}
+          isXRayLoading={isXRayLoading}
+          isAnalyzed={analyzedDocumentIds.has(currentDocument.id)}
         />
       )}
+
+      {/* Image Viewer Modal */}
+      <ImageViewer
+        showImageViewer={showImageViewer}
+        setShowImageViewer={setShowImageViewer}
+        imageViewerRef={imageViewerRef}
+        sources={sources}
+        selectedSourceId={selectedSourceId}
+        selectedImageIndex={selectedImageIndex}
+        navigateImage={navigateImage}
+        themeStyles={themeStyles}
+      />
 
       {/* Tab navigation */}
       {expanded && (
@@ -1101,6 +1595,52 @@ export default function FastRAG({
                 Sources ({sources.length})
               </button>
             )}
+
+            {/* X-Ray Tab */}
+            {(xrayAvailable || sources.length > 0) && (
+              <button
+                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'xray'
+                    ? 'border-b-2'
+                    : 'hover:border-gray-300'
+                  }`}
+                onClick={() => {
+                  setActiveTab('xray');
+                  // If no source is selected, select the first one
+                  if (!selectedSourceId && sources.length > 0) {
+                    setSelectedSourceId(sources[0].id);
+                  }
+                }}
+                style={{
+                  color: activeTab === 'xray' ? themeStyles.xrayColor : themeStyles.textColor,
+                  borderColor: activeTab === 'xray' ? themeStyles.xrayColor : 'transparent'
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  <path d="M12 12 6 6" />
+                  <path d="M12 6v6" />
+                  <path d="M21 9V3h-6" />
+                </svg>
+                X-Ray Analysis
+              </button>
+            )}
+
+            {hasImages && (
+              <button
+                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'images'
+                    ? 'border-b-2'
+                    : 'hover:border-gray-300'
+                  }`}
+                onClick={() => setActiveTab('images')}
+                style={{
+                  color: activeTab === 'images' ? themeStyles.accentColor : themeStyles.textColor,
+                  borderColor: activeTab === 'images' ? themeStyles.accentColor : 'transparent'
+                }}
+              >
+                <ImageIcon size={14} className="mr-1" />
+                Images ({allImages.length})
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1142,13 +1682,19 @@ export default function FastRAG({
                   className="prose max-w-none"
                   style={{ color: themeStyles.textColor }}
                 >
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={MarkdownComponents}
-                  >
-                    {processedMarkdown || content}
-                  </ReactMarkdown>
+                  {/* If we have processed markdown, use ReactMarkdown */}
+                  {processedMarkdown ? (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                      components={MarkdownComponents}
+                    >
+                      {processedMarkdown}
+                    </ReactMarkdown>
+                  ) : (
+                    // Otherwise use the parsed HTML
+                    <div dangerouslySetInnerHTML={{ __html: parsedAnswerHtml || (typeof content === 'string' ? content : '') }} />
+                  )}
                 </div>
 
                 {isStreaming && (
@@ -1181,8 +1727,8 @@ export default function FastRAG({
                                 return;
                               }
                               
-                              // Use fileName instead of id for citation click handler
-                              onCitationClicked(citation.fileName, citation.page);
+                              // Otherwise use the filename for citation panel
+                              onCitationClicked(citation.fileName || citation.id, citation.page);
                             }}
                             style={{ color: themeStyles.primaryColor }}
                           >
@@ -1386,6 +1932,30 @@ export default function FastRAG({
                                 <span className="truncate font-medium" title={source.fileName}>
                                   {source.fileName}
                                 </span>
+
+                                {source.pageImages && source.pageImages.length > 0 && (
+                                  <span
+                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
+                                    style={{
+                                      backgroundColor: `${themeStyles.accentColor}20`,
+                                      color: themeStyles.accentColor
+                                    }}
+                                  >
+                                    {source.pageImages.length} {source.pageImages.length === 1 ? 'page' : 'pages'}
+                                  </span>
+                                )}
+
+                                {source.xray && (
+                                  <span
+                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
+                                    style={{
+                                      backgroundColor: `${themeStyles.xrayColor}20`,
+                                      color: themeStyles.xrayColor
+                                    }}
+                                  >
+                                    X-Ray
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center text-xs opacity-70 mt-0.5 space-x-2">
@@ -1489,6 +2059,260 @@ export default function FastRAG({
                 </div>
               </motion.div>
             )}
+
+            {/* X-Ray tab */}
+            {activeTab === 'xray' && (
+              <XRayAnalysis
+                xrayViewMode={xrayViewMode}
+                setXrayViewMode={setXrayViewMode}
+                xrayContentFilter={xrayContentFilter}
+                setXrayContentFilter={setXrayContentFilter}
+                activeXrayChunk={activeXrayChunk}
+                setActiveXrayChunk={setActiveXrayChunk}
+                selectedSourceId={selectedSourceId}
+                setSelectedSourceId={setSelectedSourceId}
+                sources={sources}
+                allXrayChunks={allXrayChunks}
+                onCitationClicked={onCitationClicked}
+                themeStyles={themeStyles}
+                isXRayLoading={isXRayLoading}
+                onStartXRayAnalysis={handleStartXRayAnalysis}
+              />
+            )}
+
+            {/* Images tab */}
+            {activeTab === 'images' && hasImages && (
+              <motion.div
+                key="images-tab"
+                variants={tabAnimation}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.3 }}
+                className="p-4"
+              >
+                <div
+                  className="p-4 rounded-lg border"
+                  style={{
+                    backgroundColor: `${themeStyles.accentColor}10`,
+                    borderColor: `${themeStyles.accentColor}30`
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3
+                      className="text-lg font-medium flex items-center"
+                      style={{ color: themeStyles.accentColor }}
+                    >
+                      <ImageIcon size={18} className="mr-2" />
+                      Document Images
+                    </h3>
+
+                    <div className="flex gap-2">
+                      <span
+                        className="px-2 py-1 text-xs rounded-full flex items-center"
+                        style={{
+                          backgroundColor: `${themeStyles.accentColor}20`,
+                          color: themeStyles.accentColor
+                        }}
+                      >
+                        {allImages.length} {allImages.length === 1 ? 'Image' : 'Images'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* View controls */}
+                  <div className="mb-4 flex gap-2">
+                    <div className="rounded-md overflow-hidden border flex"
+                      style={{ borderColor: themeStyles.borderColor }}
+                    >
+                      <button
+                        onClick={() => setImageViewMode('grid')}
+                        className={`px-3 py-1 text-sm ${imageViewMode === 'grid' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageViewMode === 'grid'
+                            ? `${themeStyles.accentColor}20`
+                            : 'transparent',
+                          color: imageViewMode === 'grid'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Grid View
+                      </button>
+                      <button
+                        onClick={() => setImageViewMode('single')}
+                        className={`px-3 py-1 text-sm ${imageViewMode === 'single' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageViewMode === 'single'
+                            ? `${themeStyles.accentColor}20`
+                            : 'transparent',
+                          color: imageViewMode === 'single'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Document View
+                      </button>
+                    </div>
+
+                    <div className="rounded-md overflow-hidden border flex"
+                      style={{ borderColor: themeStyles.borderColor }}
+                    >
+                      <button
+                        onClick={() => setImageSortBy('document')}
+                        className={`px-3 py-1 text-sm ${imageSortBy === 'document' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageSortBy === 'document'
+                            ? `${themeStyles.accentColor}20`
+                            : 'transparent',
+                          color: imageSortBy === 'document'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Sort by Document
+                      </button>
+                      <button
+                        onClick={() => setImageSortBy('relevance')}
+                        className={`px-3 py-1 text-sm ${imageSortBy === 'relevance' ? 'font-medium' : ''}`}
+                        style={{
+                          backgroundColor: imageSortBy === 'relevance'
+                            ? `${themeStyles.accentColor}20`
+                            : 'transparent',
+                          color: imageSortBy === 'relevance'
+                            ? themeStyles.accentColor
+                            : themeStyles.textColor
+                        }}
+                      >
+                        Sort by Relevance
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Grid View */}
+                  {imageViewMode === 'grid' && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {allImages.map((image, index) => (
+                        <div
+                          key={index}
+                          onClick={() => {
+                            setSelectedSourceId(image.sourceId);
+                            setSelectedImageIndex(image.index);
+                            setShowImageViewer(true);
+                          }}
+                          className="relative border rounded overflow-hidden cursor-pointer group"
+                          style={{
+                            aspectRatio: '3/4',
+                            borderColor: themeStyles.borderColor
+                          }}
+                        >
+                          <img
+                            src={image.url}
+                            alt={`Page ${image.index + 1} of ${image.source.fileName}`}
+                            className="w-full h-full object-cover object-top"
+                            loading="eager"
+                          />
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200">
+                            <div className="absolute top-2 right-2 p-1 rounded-full bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-200">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-0 group-hover:opacity-100 transition-all duration-200">
+                                <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 0 0 1.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 0 0-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 0 0 5.34-1.48l.27.28v.79l4.25 4.25c.41.41 1.08.41 1.49 0 .41-.41.41-1.08 0-1.49L15.5 14z"></path>
+                                <path d="M9.5 9.5v3M11 11H8"></path>
+                              </svg>
+                            </div>
+                          </div>
+                          <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-black bg-opacity-40 text-white">
+                            <div className="text-xs font-medium truncate">
+                              {image.source.imageLabels?.[image.index] || `Page ${image.index + 1}`}
+                            </div>
+                            <div className="text-xs opacity-80 truncate">
+                              {image.source.fileName}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Document View */}
+                  {imageViewMode === 'single' && (
+                    <div className="space-y-6">
+                      {sources
+                        .filter(source => source.pageImages && source.pageImages.length > 0)
+                        .sort((a, b) => {
+                          if (imageSortBy === 'relevance') {
+                            return (b.score || 0) - (a.score || 0);
+                          }
+                          return 0;
+                        })
+                        .map((source, sourceIndex) => (
+                          <div
+                            key={`source-${sourceIndex}`}
+                            className="rounded-md border overflow-hidden"
+                            style={{
+                              backgroundColor: themeStyles.cardBackground,
+                              borderColor: themeStyles.borderColor
+                            }}
+                          >
+                            <div className="p-3 border-b flex items-center justify-between"
+                              style={{ borderColor: themeStyles.borderColor }}
+                            >
+                              <div className="flex items-center">
+                                <h4 className="ml-2 font-medium text-sm">
+                                  {source.fileName}
+                                </h4>
+                                {source.score !== undefined && (
+                                  <span
+                                    className="ml-2 px-1.5 py-0.5 text-xs rounded-full"
+                                    style={{
+                                      backgroundColor: `${themeStyles.secondaryColor}20`,
+                                      color: themeStyles.secondaryColor
+                                    }}
+                                  >
+                                    Score: {(source.score * 100).toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                              <div
+                                className="text-xs"
+                                style={{ color: themeStyles.accentColor }}
+                              >
+                                {source.pageImages?.length} {source.pageImages?.length === 1 ? 'page' : 'pages'}
+                              </div>
+                            </div>
+
+                            <div className="p-4">
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                {source.pageImages?.map((imageUrl, imgIndex) => (
+                                  <div
+                                    key={imgIndex}
+                                    onClick={() => handleImageClick(source, imgIndex)}
+                                    className="relative border rounded overflow-hidden cursor-pointer group"
+                                    style={{
+                                      aspectRatio: '3/4',
+                                      borderColor: themeStyles.borderColor
+                                    }}
+                                  >
+                                    <img
+                                      src={imageUrl}
+                                      alt={source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1} of ${source.fileName}`}
+                                      className="w-full h-full object-cover object-top"
+                                      loading="eager"
+                                    />
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200" />
+                                    <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
+                                      {source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1}`}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
           </>
         )}
       </AnimatePresence>
@@ -1512,15 +2336,46 @@ export default function FastRAG({
           background-color: ${`${themeStyles.primaryColor}20`};
         }
         
-        /* Backward compatibility for Azure citations */
+        /* Numbered citation styling */
+        .numbered-citation {
+          color: ${themeStyles.primaryColor};
+          font-weight: 500;
+          cursor: pointer;
+          text-decoration: none;
+          background-color: ${`${themeStyles.primaryColor}10`};
+          padding: 1px 4px;
+          border-radius: 3px;
+          white-space: nowrap;
+        }
+        
+        .numbered-citation:hover {
+          text-decoration: underline;
+          background-color: ${`${themeStyles.primaryColor}20`};
+        }
+        
+        /* Azure citation styling */
         .azure-citation {
           color: ${themeStyles.primaryColor};
           font-weight: 500;
           cursor: pointer;
           text-decoration: none;
+          background-color: ${`${themeStyles.primaryColor}10`};
+          padding: 1px 4px;
+          border-radius: 3px;
         }
         
         .azure-citation:hover {
+          text-decoration: underline;
+          background-color: ${`${themeStyles.primaryColor}20`};
+        }
+        
+        /* Citation reference styling */
+        .citation-ref {
+          color: ${themeStyles.primaryColor};
+          cursor: pointer;
+        }
+        
+        .citation-ref:hover {
           text-decoration: underline;
         }
 
