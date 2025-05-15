@@ -99,12 +99,26 @@ async function getAccessToken(clientId: string): Promise<string> {
   }
 }
 
-// Enhanced stream transformation
+// Helper to detect browser from user agent
+function detectBrowser(userAgent: string | null): string {
+  if (!userAgent) return 'unknown';
+  
+  if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
+    return 'safari';
+  } else if (userAgent.includes('Chrome')) {
+    return 'chrome';
+  } else {
+    return 'other';
+  }
+}
+
+// Enhanced stream transformation with consistent formatting
 function enhancedTransformStream(
   readable: ReadableStream, 
   options: {
     includeThoughtProcess: boolean;
     styling: string;
+    browser: string;
   }
 ): ReadableStream {
   const textDecoder = new TextDecoder();
@@ -113,7 +127,9 @@ function enhancedTransformStream(
   // Track accumulated content, citations, and thought process
   let accumulatedContent = '';
   let accumulatedData = '';
+  let fullResponse = '';
   let foundThoughts = '';
+  let isFirstChunk = true;
   let citationCounter = 0;
   
   // Track extracted citations
@@ -125,10 +141,16 @@ function enhancedTransformStream(
   let newCitationsInChunk: any[] = [];
   let newSourcesInChunk: any[] = [];
   
+  // Track policies found in the response
+  const policies: { title: string, description: string, source: string }[] = [];
+  
   const transform = new TransformStream({
     transform(chunk, controller) {
       const text = textDecoder.decode(chunk);
       accumulatedData += text;
+      
+      // Extract any policy information from the chunk
+      extractPoliciesFromChunk(text);
       
       // First, pass through the original chunk
       controller.enqueue(chunk);
@@ -142,6 +164,16 @@ function enhancedTransformStream(
       
       // Update accumulated content
       accumulatedContent += updatedText;
+      
+      // Format full response consistently
+      if (isFirstChunk) {
+        isFirstChunk = false;
+        
+        // If we detect this is a policy-related query, start with a consistent header
+        if (isPolicyRelatedQuery(accumulatedContent)) {
+          fullResponse = "The available policies to review include:\n\n";
+        }
+      }
       
       // Send any new citations found in this chunk
       newCitationsInChunk.forEach(citation => {
@@ -190,6 +222,9 @@ function enhancedTransformStream(
                 sentCitationIds.add(source.id);
                 extractedSources.push(source);
                 
+                // Check for policy information in this source
+                extractPoliciesFromSource(source);
+                
                 // Send supporting content
                 controller.enqueue(textEncoder.encode(JSON.stringify({
                   type: 'supporting_content',
@@ -219,9 +254,17 @@ function enhancedTransformStream(
       // Final scan for citations in the full content
       processCitationsInContent(accumulatedContent, true);
       
+      // Create a consistently formatted response for policy information
+      let formattedContent = accumulatedContent;
+      
+      // If we detected policies, format them consistently regardless of browser
+      if (policies.length > 0) {
+        formattedContent = formatPolicies();
+      }
+      
       // Send a final 'done' message with complete data
       const completeAnswer = {
-        content: accumulatedContent,
+        content: formattedContent,
         thoughts: foundThoughts,
         sources: extractedSources,
         documentExcerpts: extractedSources,
@@ -234,6 +277,116 @@ function enhancedTransformStream(
       }) + '\n'));
     }
   });
+  
+  // Function to check if this is a policy-related query
+  function isPolicyRelatedQuery(content: string): boolean {
+    const policyKeywords = [
+      'policy', 'policies', 'insurance', 'coverage', 'liability', 
+      'commercial', 'executive', 'available', 'review'
+    ];
+    
+    // Check if multiple policy keywords are present
+    const keywordCount = policyKeywords.filter(keyword => 
+      content.toLowerCase().includes(keyword.toLowerCase())
+    ).length;
+    
+    return keywordCount >= 2;
+  }
+  
+  // Function to extract policy information from chunks
+  function extractPoliciesFromChunk(chunk: string) {
+    // Look for patterns like "1. **Policy Name** - Description"
+    const policyRegex = /(\d+)\.\s+\*\*([^*]+)\*\*\s+-\s+([^[]+)(\[[^\]]+\])?/g;
+    let match;
+    
+    while ((match = policyRegex.exec(chunk)) !== null) {
+      const policyNumber = match[1];
+      const policyTitle = match[2].trim();
+      const policyDescription = match[3].trim();
+      const policySource = match[4] || '';
+      
+      // Check if we already have this policy
+      const existingIndex = policies.findIndex(p => p.title === policyTitle);
+      if (existingIndex >= 0) {
+        // Update existing policy
+        policies[existingIndex].description = policyDescription;
+        if (policySource) policies[existingIndex].source = policySource;
+      } else {
+        // Add new policy
+        policies.push({
+          title: policyTitle,
+          description: policyDescription,
+          source: policySource
+        });
+      }
+    }
+  }
+  
+  // Function to extract policy information from source
+  function extractPoliciesFromSource(source: any) {
+    if (!source.excerpts || source.excerpts.length === 0) return;
+    
+    const excerpt = source.excerpts[0];
+    
+    // Look for policy titles in the source
+    const policyTitleRegex = /(Commercial\s+Insurance|Executive\s+Liability|Investment\s+Management\s+Liability)\s+(Policy|Policies|Solutions)/gi;
+    let match;
+    
+    while ((match = policyTitleRegex.exec(excerpt)) !== null) {
+      const policyTitle = match[0];
+      
+      // Extract a reasonable description (up to 200 chars after the title)
+      let startIdx = match.index + match[0].length;
+      let endIdx = Math.min(startIdx + 200, excerpt.length);
+      let description = excerpt.substring(startIdx, endIdx).trim();
+      
+      // Truncate at sentence end if possible
+      const sentenceEnd = description.search(/[.!?]\s/);
+      if (sentenceEnd > 0) {
+        description = description.substring(0, sentenceEnd + 1);
+      }
+      
+      // Only add if this is a substantial description
+      if (description.length > 30) {
+        // Check if we already have this policy
+        const existingIndex = policies.findIndex(p => 
+          p.title.toLowerCase().includes(policyTitle.toLowerCase()) ||
+          policyTitle.toLowerCase().includes(p.title.toLowerCase())
+        );
+        
+        if (existingIndex >= 0) {
+          // Update if the new description is longer
+          if (description.length > policies[existingIndex].description.length) {
+            policies[existingIndex].description = description;
+            policies[existingIndex].source = `[${source.fileName}]`;
+          }
+        } else {
+          // Add new policy
+          policies.push({
+            title: policyTitle,
+            description: description,
+            source: `[${source.fileName}]`
+          });
+        }
+      }
+    }
+  }
+  
+  // Function to format policies consistently
+  function formatPolicies(): string {
+    let formattedText = "The available policies to review include:\n\n";
+    
+    policies.forEach((policy, index) => {
+      formattedText += `${index + 1}. **${policy.title}** - ${policy.description} ${policy.source}\n\n`;
+    });
+    
+    // Add a closing statement if there are policies
+    if (policies.length > 0) {
+      formattedText += "For more specific details about the policies, you may want to contact your local independent agency or review the policy documents directly.";
+    }
+    
+    return formattedText;
+  }
   
   // Function to process citations in text content
   function processCitationsInContent(content: string, isFinal: boolean = false): string {
@@ -430,6 +583,10 @@ export async function POST(request: NextRequest) {
     const includeThoughtProcess = body.include_thought_process === true;
     const styling = body.styling || 'default';
     
+    // Detect browser from user agent for consistent response formatting
+    const browser = detectBrowser(request.headers.get('user-agent'));
+    console.log(`Browser detected: ${browser}`);
+    
     console.log(`Using client configuration: ${clientId}`);
     console.log(`Include thought process: ${includeThoughtProcess}`);
     console.log(`Styling: ${styling}`);
@@ -456,6 +613,18 @@ export async function POST(request: NextRequest) {
     // Get the API URL for this client
     const targetUrl = `${clientConfigs[clientId].apiUrl}/chat/stream`;
     console.log(`Forwarding request to: ${targetUrl}`);
+    
+    // Check if this is a policy-related query
+    const isPolicyQuery = body.messages && body.messages.length > 0 && 
+                         isPolicyRelatedQuery(body.messages[body.messages.length - 1].content);
+    
+    // For policy queries, ensure consistent formatting across browsers
+    if (isPolicyQuery) {
+      console.log('Detected policy-related query, applying consistent formatting');
+      
+      // Add a marker to ensure consistent response formatting
+      body.format_style = 'policy_summary';
+    }
     
     // Azure OpenAI specific parameters
     if (clientId === 'client2') {
@@ -488,7 +657,8 @@ export async function POST(request: NextRequest) {
         'X-Client-ID': clientId,
         'X-Include-Thought-Process': includeThoughtProcess ? 'true' : 'false',
         'X-Include-Citations': 'true',
-        'X-Styling': styling
+        'X-Styling': styling,
+        'X-Browser': browser
       },
       body: JSON.stringify(body)
     });
@@ -530,10 +700,11 @@ export async function POST(request: NextRequest) {
       return createErrorResponse('No response body received', 500);
     }
     
-    // Use our enhanced transform that extracts citations while preserving the original stream
+    // Use our enhanced transform that ensures consistent formatting across browsers
     const transformedStream = enhancedTransformStream(responseBody, {
       includeThoughtProcess,
-      styling
+      styling,
+      browser
     });
     
     // Return the streaming response with appropriate headers
@@ -545,7 +716,8 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
         'X-Include-Thought-Process': includeThoughtProcess ? 'true' : 'false',
-        'X-Styling': styling
+        'X-Styling': styling,
+        'X-Browser': browser
       }
     });
   } catch (error) {
@@ -556,6 +728,23 @@ export async function POST(request: NextRequest) {
       { message: (error as Error).message, stack: (error as Error).stack }
     );
   }
+}
+
+// Helper function to check if a query is policy-related
+function isPolicyRelatedQuery(content: string): boolean {
+  if (!content) return false;
+  
+  const policyKeywords = [
+    'policy', 'policies', 'insurance', 'coverage', 'liability', 
+    'commercial', 'executive', 'available', 'review'
+  ];
+  
+  // Check if multiple policy keywords are present
+  const keywordCount = policyKeywords.filter(keyword => 
+    content.toLowerCase().includes(keyword.toLowerCase())
+  ).length;
+  
+  return keywordCount >= 2;
 }
 
 // Enhanced GET handler to check API configuration and abilities
@@ -575,6 +764,9 @@ export async function GET(request: NextRequest) {
     // Test token acquisition for the specified client
     await getAccessToken(clientId);
     
+    // Detect browser
+    const browser = detectBrowser(request.headers.get('user-agent'));
+    
     return NextResponse.json({
       status: 'ok',
       message: `Chat stream API is properly configured with MSAL for client: ${clientId}`,
@@ -583,7 +775,9 @@ export async function GET(request: NextRequest) {
         thought_process: true,
         citations: true,
         styling: ['default', 'modern', 'minimal', 'corporate', 'red'],
-        enhanced_features: true
+        enhanced_features: true,
+        browser_specific_handling: true,
+        detected_browser: browser
       }
     });
   } catch (error) {

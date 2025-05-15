@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, ImageIcon, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText } from "lucide-react";
 
 // Import the AnswerParser functionality
 import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, CitationInfo } from "./AnswerParser";
@@ -13,8 +13,6 @@ import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, Cita
 // Import our custom components
 import AnswerHeader from "./AnswerHeader";
 import DocumentDetail from "./DocumentDetail";
-import ImageViewer from "./ImageViewer";
-import XRayAnalysis from "./XRayAnalysis";
 import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
 
 // Import types
@@ -59,7 +57,6 @@ export default function FastRAG({
   onSupportingContentClicked = () => { },
   onFollowupQuestionClicked = () => { },
   onRefreshClicked = () => { },
-  onImageClicked = () => { },
   showFollowupQuestions = false,
   enableAdvancedFeatures = false,
   theme = 'light',
@@ -91,24 +88,14 @@ export default function FastRAG({
   const [isCopied, setIsCopied] = useState(false);
   const [currentDocumentId, setCurrentDocumentId] = useState(null);
   const [expandedDocs, setExpandedDocs] = useState(new Set());
-  const [showImageViewer, setShowImageViewer] = useState(false);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedSourceId, setSelectedSourceId] = useState(null);
-  const [imageViewMode, setImageViewMode] = useState('grid');
-  const [imageSortBy, setImageSortBy] = useState('document');
-  const [activeXrayChunk, setActiveXrayChunk] = useState(null);
-  const [xrayViewMode, setXrayViewMode] = useState('summary');
-  const [xrayContentFilter, setXrayContentFilter] = useState(null);
   const [citationInfos, setCitationInfos] = useState([]);
   const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
-  const [isXRayLoading, setIsXRayLoading] = useState(false);
   const [hasAzureThoughtProcess, setHasAzureThoughtProcess] = useState(false);
   const [hasSupportingContent, setHasSupportingContent] = useState(false);
   const [supportingContent, setSupportingContent] = useState([]);
   const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
   
-  // Track which documents have already been analyzed to avoid duplicate analysis
-  const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
   // We'll use a ref for documents to avoid render loops
   const documentsRef = useRef([]);
   // Use state for forcing updates after document changes
@@ -116,7 +103,6 @@ export default function FastRAG({
 
   // References
   const contentRef = useRef(null);
-  const imageViewerRef = useRef(null);
   const answerElementId = `answer-content-${index}`;
 
   // Theme styling
@@ -198,14 +184,6 @@ export default function FastRAG({
         url: source.url || source.sourceUrl,
       };
 
-      // Handle document images
-      normalizedSource.pageImages = source.pageImages || source.images || source.pages || [];
-      normalizedSource.thumbnails = source.thumbnails || source.pageImages || source.images || [];
-      normalizedSource.imageLabels = source.imageLabels || source.pageLabels || [];
-      normalizedSource.pageCount = source.pageCount ||
-        (source.pageImages ? source.pageImages.length : 0) ||
-        (source.pages ? source.pages.length : 0);
-
       // Extract all types of text content
       normalizedSource.excerpts = [];
       
@@ -219,115 +197,6 @@ export default function FastRAG({
 
       if (source.text) normalizedSource.excerpts.push(source.text);
       if (source.content) normalizedSource.excerpts.push(source.content);
-
-      // Extract X-Ray data with improved JSON parsing
-      if (source.xray) {
-        try {
-          // Handle the case where the entire xray field might be a stringified JSON
-          let xrayData = source.xray;
-          if (typeof source.xray === 'string' && source.xray.trim().startsWith('{')) {
-            try {
-              xrayData = JSON.parse(source.xray);
-            } catch (e) {
-              console.warn('Failed to parse X-Ray data as JSON string', e);
-            }
-          }
-
-          // Initialize normalized xray data
-          let parsedSummary = xrayData.summary;
-          let parsedKeywords = xrayData.keywords;
-          let parsedChunks = xrayData.chunks || [];
-
-          // Try to parse summary if it's a JSON string
-          if (typeof parsedSummary === 'string' && parsedSummary.trim().startsWith('{')) {
-            try {
-              const summaryObj = JSON.parse(parsedSummary);
-              parsedSummary = summaryObj.summary || summaryObj.Summary || summaryObj.text || summaryObj.content || parsedSummary;
-              // If keywords weren't already set but are in the JSON, use those
-              if (!parsedKeywords && (summaryObj.keywords || summaryObj.Keywords)) {
-                parsedKeywords = summaryObj.keywords || summaryObj.Keywords;
-              }
-            } catch (e) {
-              console.warn('Failed to parse X-Ray summary as JSON', e);
-            }
-          }
-
-          // Ensure keywords is a string
-          if (Array.isArray(parsedKeywords)) {
-            parsedKeywords = parsedKeywords.join(', ');
-          }
-
-          // Process chunks - this is where the JSON parsing needs improvement
-          if (parsedChunks && Array.isArray(parsedChunks)) {
-            parsedChunks = parsedChunks.map(chunk => {
-              const processedChunk = { ...chunk };
-
-              // Parse text field if it looks like JSON
-              if (chunk.text && typeof chunk.text === 'string') {
-                if (chunk.text.trim().startsWith('{')) {
-                  try {
-                    const parsedText = JSON.parse(chunk.text);
-
-                    // Store the original text for reference
-                    processedChunk.originalText = chunk.text;
-
-                    // Set parsed data for reference
-                    processedChunk.parsedData = parsedText;
-
-                    // If we have structured data, use it for display
-                    if (parsedText.summary || parsedText.Summary) {
-                      processedChunk.sectionSummary = processedChunk.sectionSummary ||
-                        parsedText.summary ||
-                        parsedText.Summary;
-                    }
-
-                    // Extract JSON data if present
-                    if (parsedText.data || parsedText.Data) {
-                      processedChunk.json = processedChunk.json ||
-                        parsedText.data ||
-                        parsedText.Data;
-                    }
-
-                    // Keep original text in text field for compatibility
-                  } catch (e) {
-                    // If parsing fails, keep the original text
-                    console.warn('Failed to parse chunk text as JSON', e);
-                  }
-                }
-              }
-
-              // Parse JSON field if it's a string
-              if (chunk.json && typeof chunk.json === 'string') {
-                try {
-                  processedChunk.json = JSON.parse(chunk.json);
-                } catch (e) {
-                  console.warn('Failed to parse chunk.json as JSON', e);
-                }
-              }
-
-              return processedChunk;
-            });
-          }
-
-          normalizedSource.xray = {
-            summary: parsedSummary,
-            keywords: parsedKeywords,
-            language: xrayData.language,
-            chunks: parsedChunks
-          };
-        } catch (e) {
-          console.error('Error processing X-Ray data', e);
-          // Keep the original data if parsing fails
-          normalizedSource.xray = {
-            summary: source.xray.summary,
-            keywords: typeof source.xray.keywords === 'object' ?
-              (source.xray.keywords?.join(', ') || '') :
-              (source.xray.keywords || ''),
-            language: source.xray.language,
-            chunks: source.xray.chunks || []
-          };
-        }
-      }
 
       // Extract highlights
       normalizedSource.highlights = source.highlights || [];
@@ -343,17 +212,6 @@ export default function FastRAG({
       // If no excerpts but have context, use that
       if (normalizedSource.excerpts.length === 0 && source.documentContext) {
         normalizedSource.excerpts.push(source.documentContext);
-      }
-
-      // If no excerpts but have X-Ray text chunks, use those
-      if (normalizedSource.excerpts.length === 0 && normalizedSource.xray?.chunks) {
-        const textChunks = normalizedSource.xray.chunks
-          .filter(chunk => chunk.text)
-          .map(chunk => chunk.text);
-
-        if (textChunks.length > 0) {
-          normalizedSource.excerpts.push(...textChunks);
-        }
       }
 
       // Deduplicate excerpts
@@ -559,38 +417,11 @@ export default function FastRAG({
     }
   }, [isCopied]);
 
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (showImageViewer && imageViewerRef.current && !imageViewerRef.current.contains(event.target)) {
-        setShowImageViewer(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => { document.removeEventListener('mousedown', handleClickOutside); };
-  }, [showImageViewer]);
-
   // Initialize documents ref when component mounts or when source data changes
   useEffect(() => {
     // Directly set the ref value without causing re-renders
     documentsRef.current = extractAllSources();
     console.log("Documents extracted:", documentsRef.current.length);
-
-    // Check if any documents have X-Ray data and mark them as analyzed
-    const newAnalyzedIds = new Set(analyzedDocumentIds);
-    documentsRef.current.forEach(source => {
-      if (source.xray && (
-        source.xray.summary ||
-        source.xray.keywords ||
-        (source.xray.chunks && source.xray.chunks.length > 0)
-      )) {
-        newAnalyzedIds.add(source.id);
-      }
-    });
-
-    // Only update state if there are new analyzed documents
-    if (newAnalyzedIds.size !== analyzedDocumentIds.size) {
-      setAnalyzedDocumentIds(newAnalyzedIds);
-    }
 
     // Check for Azure format inline citations in the content
     const content = extractContent();
@@ -626,7 +457,7 @@ export default function FastRAG({
 
     // Trigger a re-render to update the sources
     setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds]);
+  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources]);
 
   // Parse the answer content using AnswerParser when the component mounts or answer changes
   useEffect(() => {
@@ -743,10 +574,11 @@ export default function FastRAG({
           );
           
           if (matchingDoc) {
-            console.log(`Clicked on Azure citation: ${matchingDoc.id}, page: ${page}`);
-            onCitationClicked(matchingDoc.id, page);
+            console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
+            // FIXED: Pass the filename directly instead of the ID
+            onCitationClicked(filename, page);
           } else {
-            // If no matching document, just use the filename as a citation ID
+            // If no matching document, use the filename as a citation ID
             console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
             onCitationClicked(filename, page);
           }
@@ -764,190 +596,6 @@ export default function FastRAG({
       }
     };
   }, [onCitationClicked]);
-
-  // Utility functions
-  const fetchUpdatedDocument = useCallback(async (documentId) => {
-    try {
-      console.log("Fetching document:", documentId);
-      const response = await fetch(`/api/groundx/xray?documentId=${documentId}`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch document: ${response.status}`);
-      }
-
-      const xrayData = await response.json();
-      console.log("Fetched X-Ray data:", xrayData);
-
-      // Deep check the response structure
-      let finalXrayData = xrayData.xray;
-      if (!finalXrayData) {
-        console.warn("X-Ray data missing in response:", xrayData);
-        // Try to find xray data in other response properties
-        finalXrayData = xrayData.data || xrayData.result || xrayData;
-      }
-
-      if (!finalXrayData) {
-        console.error("Could not find X-Ray data in the response");
-        setIsXRayLoading(false);
-        return;
-      }
-
-      // Format keywords if they're an array
-      if (Array.isArray(finalXrayData.keywords)) {
-        finalXrayData.keywords = finalXrayData.keywords.join(', ');
-      }
-
-      // Update the document in our ref
-      const updatedDocs = documentsRef.current.map(doc =>
-        doc.id === documentId
-          ? {
-            ...doc,
-            xray: {
-              ...finalXrayData,
-              keywords: finalXrayData.keywords || '',
-              chunks: finalXrayData.chunks || [],
-              summary: finalXrayData.summary || ''
-            }
-          }
-          : doc
-      );
-
-      // Log what we're updating
-      console.log("Updating document with X-Ray data:",
-        documentId,
-        "Has summary:", !!finalXrayData.summary,
-        "Has keywords:", !!finalXrayData.keywords,
-        "Chunks:", finalXrayData.chunks?.length || 0);
-
-      // Update the ref and force a re-render
-      documentsRef.current = updatedDocs;
-
-      // Mark this document as analyzed
-      setAnalyzedDocumentIds(prev => new Set([...prev, documentId]));
-
-      // Force a re-render
-      setForceUpdate(prev => prev + 1);
-      setIsXRayLoading(false);
-
-    } catch (error) {
-      console.error("Error fetching updated document:", error);
-      setIsXRayLoading(false);
-    }
-  }, []);
-
-  const handleStartXRayAnalysis = useCallback(async (documentId) => {
-    // Skip if already analyzed or currently loading
-    if (analyzedDocumentIds.has(documentId) || isXRayLoading) return;
-
-    console.log("Starting X-Ray analysis for document:", documentId);
-    try {
-      setIsXRayLoading(true);
-
-      // Call your API to start X-Ray analysis
-      console.log("Making API call to start X-Ray analysis");
-      const response = await fetch('/api/groundx/xray', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documentId,
-          action: 'refresh'
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error("API response not OK:", response.status, errorData);
-        throw new Error(`Failed to start X-Ray analysis: ${response.status}`);
-      }
-
-      const responseData = await response.json();
-      console.log("X-Ray analysis API response:", responseData);
-
-      // If the response has xray data directly, use it without making another fetch
-      if (responseData.xray) {
-        console.log("X-Ray data found in response, updating document directly");
-
-        // Format keywords if they're an array
-        let keywordsString = responseData.xray.keywords;
-        if (Array.isArray(responseData.xray.keywords)) {
-          keywordsString = responseData.xray.keywords.join(', ');
-        }
-
-        // Update the document in our ref
-        documentsRef.current = documentsRef.current.map(doc =>
-          doc.id === documentId
-            ? {
-              ...doc,
-              xray: {
-                ...responseData.xray,
-                keywords: keywordsString,
-                chunks: responseData.xray.chunks || [],
-                summary: responseData.xray.summary || ''
-              }
-            }
-            : doc
-        );
-
-        // Mark this document as analyzed and update loading state
-        setAnalyzedDocumentIds(prev => new Set([...prev, documentId]));
-
-        // Force a re-render
-        setForceUpdate(prev => prev + 1);
-        setIsXRayLoading(false);
-      } else {
-        // Fetch updated document with X-Ray data
-        console.log("Fetching updated document");
-        await fetchUpdatedDocument(documentId);
-      }
-
-      console.log("X-Ray analysis completed successfully");
-    } catch (error) {
-      console.error('Error during X-Ray analysis:', error);
-      setIsXRayLoading(false);
-    }
-  }, [analyzedDocumentIds, isXRayLoading, fetchUpdatedDocument]);
-
-  // When activeTab changes to 'xray', check if the selected source needs analysis
-  useEffect(() => {
-    if (activeTab === 'xray') {
-      // Log the current state of documents and X-Ray data
-      console.log("X-Ray tab active, documents:", documentsRef.current.length);
-      const xrayDocs = documentsRef.current.filter(doc =>
-        doc.xray && (doc.xray.summary || doc.xray.keywords || (doc.xray.chunks && doc.xray.chunks.length > 0))
-      );
-      console.log("Documents with X-Ray data:", xrayDocs.length);
-
-      // If no document is selected but we have documents, select the first one
-      if (!selectedSourceId && documentsRef.current.length > 0) {
-        setSelectedSourceId(documentsRef.current[0].id);
-        console.log("Auto-selecting first document:", documentsRef.current[0].id);
-      }
-
-      // If a source is selected but hasn't been analyzed yet, trigger analysis
-      if (selectedSourceId && !analyzedDocumentIds.has(selectedSourceId)) {
-        const selectedSource = documentsRef.current.find(s => s.id === selectedSourceId);
-        if (selectedSource) {
-          console.log("Checking if document needs analysis:", selectedSourceId);
-          const hasXrayData = selectedSource.xray && (
-            selectedSource.xray.summary ||
-            selectedSource.xray.keywords ||
-            (selectedSource.xray.chunks && selectedSource.xray.chunks.length > 0)
-          );
-
-          if (!hasXrayData) {
-            console.log("Starting analysis for document:", selectedSourceId);
-            handleStartXRayAnalysis(selectedSourceId);
-          } else {
-            console.log("Document already has X-Ray data:", selectedSourceId);
-            // Mark as analyzed even if we didn't trigger the analysis
-            setAnalyzedDocumentIds(prev => new Set([...prev, selectedSourceId]));
-          }
-        }
-      }
-    }
-  }, [activeTab, selectedSourceId, analyzedDocumentIds, handleStartXRayAnalysis]);
 
   // Utility functions
   const getRelevanceExplanation = (source) => {
@@ -980,86 +628,11 @@ export default function FastRAG({
     setCurrentDocumentId(source.id);
   };
 
-  const handleImageClick = (source, imageIndex) => {
-    if (!source || !source.pageImages || !source.pageImages.length) return;
-    setSelectedSourceId(source.id);
-    setSelectedImageIndex(imageIndex);
-    setShowImageViewer(true);
-    if (onImageClicked) {
-      onImageClicked(source.pageImages[imageIndex], source.id, imageIndex);
-    }
-  };
-
-  const navigateImage = (direction) => {
-    if (!selectedSourceId) return;
+  const getCurrentDocument = useCallback(() => {
+    if (!currentDocumentId) return null;
     // Use the documents ref instead of calling extractAllSources()
-    const currentSource = documentsRef.current.find(s => s.id === selectedSourceId);
-    if (!currentSource || !currentSource.pageImages || !currentSource.pageImages.length) return;
-    const totalImages = currentSource.pageImages.length;
-
-    if (direction === 'prev') {
-      setSelectedImageIndex(prev => (prev > 0 ? prev - 1 : totalImages - 1));
-    } else {
-      setSelectedImageIndex(prev => (prev < totalImages - 1 ? prev + 1 : 0));
-    }
-  };
-
-  const getAllImages = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
-    const allImages = [];
-
-    documentsRef.current.forEach(source => {
-      if (source.pageImages && source.pageImages.length) {
-        source.pageImages.forEach((url, index) => {
-          allImages.push({
-            url, sourceId: source.id, index, source
-          });
-        });
-      }
-    });
-
-    if (imageSortBy === 'relevance') {
-      return allImages.sort((a, b) => (b.source.score || 0) - (a.source.score || 0));
-    }
-    return allImages;
-  }, [imageSortBy]);
-
-  const getAllXrayChunks = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
-    let allChunks = [];
-
-    documentsRef.current.forEach(source => {
-      if (source.xray?.chunks && source.xray.chunks.length) {
-        source.xray.chunks.forEach(chunk => {
-          allChunks.push({
-            chunk, sourceId: source.id, source
-          });
-        });
-      }
-    });
-
-    if (xrayContentFilter) {
-      allChunks = allChunks.filter(item =>
-        item.chunk.contentType?.includes(xrayContentFilter)
-      );
-    }
-
-    return allChunks;
-  }, [xrayContentFilter]);
-
-  const hasXrayData = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
-    const result = documentsRef.current.some(source => {
-      // Deep check for any xray data
-      if (!source.xray) return false;
-
-      return source.xray.summary ||
-        source.xray.keywords ||
-        (source.xray.chunks && source.xray.chunks.length > 0);
-    });
-
-    return result;
-  }, [forceUpdate]); // Re-evaluate when forceUpdate changes
+    return documentsRef.current.find(s => s.id === currentDocumentId);
+  }, [currentDocumentId]);
 
   const handleCopyToClipboard = () => {
     const contentToCopy = extractContent();
@@ -1076,12 +649,6 @@ export default function FastRAG({
     }
   };
 
-  const getCurrentDocument = useCallback(() => {
-    if (!currentDocumentId) return null;
-    // Use the documents ref instead of calling extractAllSources()
-    return documentsRef.current.find(s => s.id === currentDocumentId);
-  }, [currentDocumentId]);
-
   // Get extracted data - use memoized callbacks to avoid unnecessary calculations
   const content = extractContent();
   const thoughtProcess = extractThoughtProcess();
@@ -1089,8 +656,6 @@ export default function FastRAG({
   const extractedSupportingContent = extractSupportingContent();
   const sources = documentsRef.current;
   const currentDocument = getCurrentDocument();
-  const allImages = getAllImages();
-  const allXrayChunks = getAllXrayChunks();
   
   // Check if we have thought process either from Azure state or extraction
   const hasThoughts = hasAzureThoughtProcess || (thoughtProcess && thoughtProcess.length > 0);
@@ -1101,8 +666,6 @@ export default function FastRAG({
     (extractedSupportingContent && extractedSupportingContent.length > 0);
   
   const hasSources = sources && sources.length > 0;
-  const hasImages = allImages.length > 0;
-  const xrayAvailable = hasXrayData();
 
   // Animation variants
   const containerVariants = {
@@ -1142,8 +705,8 @@ export default function FastRAG({
         isCopied={isCopied}
         hasThoughts={hasThoughts}
         hasSources={hasSources}
-        hasXray={xrayAvailable}
-        hasImages={hasImages}
+        hasXray={false} // Disabled X-Ray
+        hasImages={false} // Disabled Images
         handleCopyToClipboard={handleCopyToClipboard}
         onThoughtProcessClicked={onThoughtProcessClicked}
         onSupportingContentClicked={onSupportingContentClicked}
@@ -1155,30 +718,13 @@ export default function FastRAG({
       {currentDocument && (
         <DocumentDetail
           document={currentDocument}
-          handleImageClick={handleImageClick}
           setCurrentDocumentId={setCurrentDocumentId}
           setActiveTab={setActiveTab}
-          setActiveXrayChunk={setActiveXrayChunk}
           themeStyles={themeStyles}
           getRelevanceExplanation={getRelevanceExplanation}
           onCitationClicked={onCitationClicked}
-          onStartXRayAnalysis={handleStartXRayAnalysis}
-          isXRayLoading={isXRayLoading}
-          isAnalyzed={analyzedDocumentIds.has(currentDocument.id)}
         />
       )}
-
-      {/* Image Viewer Modal */}
-      <ImageViewer
-        showImageViewer={showImageViewer}
-        setShowImageViewer={setShowImageViewer}
-        imageViewerRef={imageViewerRef}
-        sources={sources}
-        selectedSourceId={selectedSourceId}
-        selectedImageIndex={selectedImageIndex}
-        navigateImage={navigateImage}
-        themeStyles={themeStyles}
-      />
 
       {/* Tab navigation */}
       {expanded && (
@@ -1248,52 +794,6 @@ export default function FastRAG({
                 Sources ({sources.length})
               </button>
             )}
-
-            {/* X-Ray Tab */}
-            {(xrayAvailable || sources.length > 0) && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'xray'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => {
-                  setActiveTab('xray');
-                  // If no source is selected, select the first one
-                  if (!selectedSourceId && sources.length > 0) {
-                    setSelectedSourceId(sources[0].id);
-                  }
-                }}
-                style={{
-                  color: activeTab === 'xray' ? themeStyles.xrayColor : themeStyles.textColor,
-                  borderColor: activeTab === 'xray' ? themeStyles.xrayColor : 'transparent'
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  <path d="M12 12 6 6" />
-                  <path d="M12 6v6" />
-                  <path d="M21 9V3h-6" />
-                </svg>
-                X-Ray Analysis
-              </button>
-            )}
-
-            {hasImages && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'images'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => setActiveTab('images')}
-                style={{
-                  color: activeTab === 'images' ? themeStyles.accentColor : themeStyles.textColor,
-                  borderColor: activeTab === 'images' ? themeStyles.accentColor : 'transparent'
-                }}
-              >
-                <ImageIcon size={14} className="mr-1" />
-                Images ({allImages.length})
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -1352,8 +852,8 @@ export default function FastRAG({
                                 return;
                               }
                               
-                              // Otherwise use the citation ID for citation panel
-                              onCitationClicked(citation.id);
+                              // FIXED: Use fileName instead of id for citation click handler
+                              onCitationClicked(citation.fileName, citation.page);
                             }}
                             style={{ color: themeStyles.primaryColor }}
                           >
@@ -1557,30 +1057,6 @@ export default function FastRAG({
                                 <span className="truncate font-medium" title={source.fileName}>
                                   {source.fileName}
                                 </span>
-
-                                {source.pageImages && source.pageImages.length > 0 && (
-                                  <span
-                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
-                                    style={{
-                                      backgroundColor: `${themeStyles.accentColor}20`,
-                                      color: themeStyles.accentColor
-                                    }}
-                                  >
-                                    {source.pageImages.length} {source.pageImages.length === 1 ? 'page' : 'pages'}
-                                  </span>
-                                )}
-
-                                {source.xray && (
-                                  <span
-                                    className="ml-2 text-xs px-1.5 py-0.5 rounded-full"
-                                    style={{
-                                      backgroundColor: `${themeStyles.xrayColor}20`,
-                                      color: themeStyles.xrayColor
-                                    }}
-                                  >
-                                    X-Ray
-                                  </span>
-                                )}
                               </div>
 
                               <div className="flex items-center text-xs opacity-70 mt-0.5 space-x-2">
@@ -1629,7 +1105,39 @@ export default function FastRAG({
                               borderColor: themeStyles.borderColor
                             }}
                           >
+                            {source.excerpts && source.excerpts.length > 0 && (
+                              <div className="mb-3">
+                                <h4 className="text-xs font-medium mb-1">Excerpts:</h4>
+                                <div 
+                                  className="text-xs p-2 rounded bg-gray-50 dark:bg-gray-800 overflow-auto max-h-32"
+                                  style={{
+                                    backgroundColor: `${themeStyles.backgroundColor}`,
+                                    color: themeStyles.textColor
+                                  }}
+                                >
+                                  {source.excerpts.map((excerpt, i) => (
+                                    <div key={i} className="mb-2 last:mb-0">
+                                      {excerpt}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             <div className="flex justify-end mt-3 space-x-2">
+                              <button
+                                className="text-xs px-2 py-1 rounded flex items-center"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // FIXED: Use fileName instead of id for citation
+                                  onCitationClicked(source.fileName);
+                                }}
+                                style={{
+                                  backgroundColor: `${themeStyles.secondaryColor}20`,
+                                  color: themeStyles.secondaryColor
+                                }}
+                              >
+                                View Document
+                              </button>
                               <button
                                 className="text-xs px-2 py-1 rounded flex items-center"
                                 onClick={(e) => {
@@ -1649,260 +1157,6 @@ export default function FastRAG({
                       </div>
                     ))}
                   </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* X-Ray tab */}
-            {activeTab === 'xray' && (
-              <XRayAnalysis
-                xrayViewMode={xrayViewMode}
-                setXrayViewMode={setXrayViewMode}
-                xrayContentFilter={xrayContentFilter}
-                setXrayContentFilter={setXrayContentFilter}
-                activeXrayChunk={activeXrayChunk}
-                setActiveXrayChunk={setActiveXrayChunk}
-                selectedSourceId={selectedSourceId}
-                setSelectedSourceId={setSelectedSourceId}
-                sources={sources}
-                allXrayChunks={allXrayChunks}
-                onCitationClicked={onCitationClicked}
-                themeStyles={themeStyles}
-                isXRayLoading={isXRayLoading}
-                onStartXRayAnalysis={handleStartXRayAnalysis}
-              />
-            )}
-
-            {/* Images tab */}
-            {activeTab === 'images' && hasImages && (
-              <motion.div
-                key="images-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: `${themeStyles.accentColor}10`,
-                    borderColor: `${themeStyles.accentColor}30`
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h3
-                      className="text-lg font-medium flex items-center"
-                      style={{ color: themeStyles.accentColor }}
-                    >
-                      <ImageIcon size={18} className="mr-2" />
-                      Document Images
-                    </h3>
-
-                    <div className="flex gap-2">
-                      <span
-                        className="px-2 py-1 text-xs rounded-full flex items-center"
-                        style={{
-                          backgroundColor: `${themeStyles.accentColor}20`,
-                          color: themeStyles.accentColor
-                        }}
-                      >
-                        {allImages.length} {allImages.length === 1 ? 'Image' : 'Images'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* View controls */}
-                  <div className="mb-4 flex gap-2">
-                    <div className="rounded-md overflow-hidden border flex"
-                      style={{ borderColor: themeStyles.borderColor }}
-                    >
-                      <button
-                        onClick={() => setImageViewMode('grid')}
-                        className={`px-3 py-1 text-sm ${imageViewMode === 'grid' ? 'font-medium' : ''}`}
-                        style={{
-                          backgroundColor: imageViewMode === 'grid'
-                            ? `${themeStyles.accentColor}20`
-                            : 'transparent',
-                          color: imageViewMode === 'grid'
-                            ? themeStyles.accentColor
-                            : themeStyles.textColor
-                        }}
-                      >
-                        Grid View
-                      </button>
-                      <button
-                        onClick={() => setImageViewMode('single')}
-                        className={`px-3 py-1 text-sm ${imageViewMode === 'single' ? 'font-medium' : ''}`}
-                        style={{
-                          backgroundColor: imageViewMode === 'single'
-                            ? `${themeStyles.accentColor}20`
-                            : 'transparent',
-                          color: imageViewMode === 'single'
-                            ? themeStyles.accentColor
-                            : themeStyles.textColor
-                        }}
-                      >
-                        Document View
-                      </button>
-                    </div>
-
-                    <div className="rounded-md overflow-hidden border flex"
-                      style={{ borderColor: themeStyles.borderColor }}
-                    >
-                      <button
-                        onClick={() => setImageSortBy('document')}
-                        className={`px-3 py-1 text-sm ${imageSortBy === 'document' ? 'font-medium' : ''}`}
-                        style={{
-                          backgroundColor: imageSortBy === 'document'
-                            ? `${themeStyles.accentColor}20`
-                            : 'transparent',
-                          color: imageSortBy === 'document'
-                            ? themeStyles.accentColor
-                            : themeStyles.textColor
-                        }}
-                      >
-                        Sort by Document
-                      </button>
-                      <button
-                        onClick={() => setImageSortBy('relevance')}
-                        className={`px-3 py-1 text-sm ${imageSortBy === 'relevance' ? 'font-medium' : ''}`}
-                        style={{
-                          backgroundColor: imageSortBy === 'relevance'
-                            ? `${themeStyles.accentColor}20`
-                            : 'transparent',
-                          color: imageSortBy === 'relevance'
-                            ? themeStyles.accentColor
-                            : themeStyles.textColor
-                        }}
-                      >
-                        Sort by Relevance
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Grid View */}
-                  {imageViewMode === 'grid' && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {allImages.map((image, index) => (
-                        <div
-                          key={index}
-                          onClick={() => {
-                            setSelectedSourceId(image.sourceId);
-                            setSelectedImageIndex(image.index);
-                            setShowImageViewer(true);
-                          }}
-                          className="relative border rounded overflow-hidden cursor-pointer group"
-                          style={{
-                            aspectRatio: '3/4',
-                            borderColor: themeStyles.borderColor
-                          }}
-                        >
-                          <img
-                            src={image.url}
-                            alt={`Page ${image.index + 1} of ${image.source.fileName}`}
-                            className="w-full h-full object-cover object-top"
-                            loading="eager"
-                          />
-                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200">
-                            <div className="absolute top-2 right-2 p-1 rounded-full bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-200">
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-0 group-hover:opacity-100 transition-all duration-200">
-                                <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 0 0 1.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 0 0-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 0 0 5.34-1.48l.27.28v.79l4.25 4.25c.41.41 1.08.41 1.49 0 .41-.41.41-1.08 0-1.49L15.5 14z"></path>
-                                <path d="M9.5 9.5v3M11 11H8"></path>
-                              </svg>
-                            </div>
-                          </div>
-                          <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-black bg-opacity-40 text-white">
-                            <div className="text-xs font-medium truncate">
-                              {image.source.imageLabels?.[image.index] || `Page ${image.index + 1}`}
-                            </div>
-                            <div className="text-xs opacity-80 truncate">
-                              {image.source.fileName}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Document View */}
-                  {imageViewMode === 'single' && (
-                    <div className="space-y-6">
-                      {sources
-                        .filter(source => source.pageImages && source.pageImages.length > 0)
-                        .sort((a, b) => {
-                          if (imageSortBy === 'relevance') {
-                            return (b.score || 0) - (a.score || 0);
-                          }
-                          return 0;
-                        })
-                        .map((source, sourceIndex) => (
-                          <div
-                            key={`source-${sourceIndex}`}
-                            className="rounded-md border overflow-hidden"
-                            style={{
-                              backgroundColor: themeStyles.cardBackground,
-                              borderColor: themeStyles.borderColor
-                            }}
-                          >
-                            <div className="p-3 border-b flex items-center justify-between"
-                              style={{ borderColor: themeStyles.borderColor }}
-                            >
-                              <div className="flex items-center">
-                                <h4 className="ml-2 font-medium text-sm">
-                                  {source.fileName}
-                                </h4>
-                                {source.score !== undefined && (
-                                  <span
-                                    className="ml-2 px-1.5 py-0.5 text-xs rounded-full"
-                                    style={{
-                                      backgroundColor: `${themeStyles.secondaryColor}20`,
-                                      color: themeStyles.secondaryColor
-                                    }}
-                                  >
-                                    Score: {(source.score * 100).toFixed(1)}%
-                                  </span>
-                                )}
-                              </div>
-                              <div
-                                className="text-xs"
-                                style={{ color: themeStyles.accentColor }}
-                              >
-                                {source.pageImages?.length} {source.pageImages?.length === 1 ? 'page' : 'pages'}
-                              </div>
-                            </div>
-
-                            <div className="p-4">
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                                {source.pageImages?.map((imageUrl, imgIndex) => (
-                                  <div
-                                    key={imgIndex}
-                                    onClick={() => handleImageClick(source, imgIndex)}
-                                    className="relative border rounded overflow-hidden cursor-pointer group"
-                                    style={{
-                                      aspectRatio: '3/4',
-                                      borderColor: themeStyles.borderColor
-                                    }}
-                                  >
-                                    <img
-                                      src={imageUrl}
-                                      alt={source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1} of ${source.fileName}`}
-                                      className="w-full h-full object-cover object-top"
-                                      loading="eager"
-                                    />
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200" />
-                                    <div className="absolute bottom-0 left-0 right-0 text-xs bg-black bg-opacity-50 text-white text-center py-1">
-                                      {source.imageLabels?.[imgIndex] || `Page ${imgIndex + 1}`}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  )}
                 </div>
               </motion.div>
             )}

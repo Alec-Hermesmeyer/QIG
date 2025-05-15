@@ -21,7 +21,7 @@ import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
 import { Source, XRayChunk, EnhancedAnswerProps } from "@/types/types";
 
 // Helper utilities
-export const formatDate = (dateString?: string) => {
+export const formatDate = (dateString) => {
   if (!dateString) return '';
   try {
     const date = new Date(dateString);
@@ -29,9 +29,9 @@ export const formatDate = (dateString?: string) => {
   } catch (e) { return dateString; }
 };
 
-export const getDocumentName = (path?: string) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
+export const getDocumentName = (path) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
 
-export const getDocumentType = (fileName?: string) => {
+export const getDocumentType = (fileName) => {
   if (!fileName) return 'document';
   const extension = fileName.split('.').pop()?.toLowerCase();
 
@@ -65,29 +65,53 @@ export default function DeepRAG({
   theme = 'light',
   customStyles = {}
 }: EnhancedAnswerProps) {
-  // DEBUG: Log the incoming answer object structure
-  useEffect(() => {
-    try {
-      console.log("DeepRAG component mounted with answer:", answer);
-      // Log keys to understand structure
-      if (answer && typeof answer === 'object') {
-        console.log("Answer keys:", Object.keys(answer));
-      }
-    } catch (error) {
-      console.error("Error logging answer structure:", error);
-    }
-  }, [answer]);
+  // State management
+  const [expanded, setExpanded] = useState(true);
+  const [activeTab, setActiveTab] = useState('answer');
+  const [isCopied, setIsCopied] = useState(false);
+  const [currentDocumentId, setCurrentDocumentId] = useState(null);
+  const [expandedDocs, setExpandedDocs] = useState(new Set());
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [selectedSourceId, setSelectedSourceId] = useState(null);
+  const [imageViewMode, setImageViewMode] = useState('grid');
+  const [imageSortBy, setImageSortBy] = useState('document');
+  const [activeXrayChunk, setActiveXrayChunk] = useState(null);
+  const [xrayViewMode, setXrayViewMode] = useState('summary');
+  const [xrayContentFilter, setXrayContentFilter] = useState(null);
+  const [citationInfos, setCitationInfos] = useState([]);
+  const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
+  const [isGroundX, setIsGroundX] = useState(false);
+  const [isXRayLoading, setIsXRayLoading] = useState(false);
+  const [hasThoughtProcess, setHasThoughtProcess] = useState(false);
+  const [thoughtProcess, setThoughtProcess] = useState('');
+  const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
+  const [forceUpdate, setForceUpdate] = useState(0);
+
+  // References
+  const contentRef = useRef(null);
+  const imageViewerRef = useRef(null);
+  const documentsRef = useRef([]);
+  const answerElementId = `answer-content-${index}`;
+
+  // Theme styling
+  const themeStyles = {
+    backgroundColor: theme === 'dark' ? '#1e1e2e' : '#f8f9fa',
+    textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
+    cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
+    borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
+    primaryColor: theme === 'dark' ? '#3a7af3' : '#2563eb', 
+    secondaryColor: theme === 'dark' ? '#2c66d9' : '#1d4ed8', 
+    accentColor: theme === 'dark' ? '#5c92f5' : '#3b82f6', 
+    xrayColor: theme === 'dark' ? '#2563eb' : '#3b82f6', 
+    ...customStyles
+  };
 
   // Function to check if text is from Ground X RAG format
   const isGroundXFormat = useCallback((text) => {
     if (!text || typeof text !== 'string') return false;
-    
-    // Check for common Ground X RAG patterns
     const hasDocumentReferences = text.includes("[Document ");
     const hasNumberedList = !!text.match(/\d+\.\s/);
-    
-    console.log("Ground X detection:", { hasDocumentReferences, hasNumberedList });
-    
     return hasDocumentReferences && hasNumberedList;
   }, []);
 
@@ -129,53 +153,7 @@ export default function DeepRAG({
     });
   }, [themeStyles]);
 
-  // State management
-  const [expanded, setExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState('answer');
-  const [isCopied, setIsCopied] = useState(false);
-  const [currentDocumentId, setCurrentDocumentId] = useState(null);
-  const [expandedDocs, setExpandedDocs] = useState(new Set());
-  const [showImageViewer, setShowImageViewer] = useState(false);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [selectedSourceId, setSelectedSourceId] = useState(null);
-  const [imageViewMode, setImageViewMode] = useState('grid');
-  const [imageSortBy, setImageSortBy] = useState('document');
-  const [activeXrayChunk, setActiveXrayChunk] = useState(null);
-  const [xrayViewMode, setXrayViewMode] = useState('summary');
-  const [xrayContentFilter, setXrayContentFilter] = useState(null);
-  const [citationInfos, setCitationInfos] = useState([]);
-  const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
-  const [isGroundX, setIsGroundX] = useState(false);
-  const [isXRayLoading, setIsXRayLoading] = useState(false);
-  const [hasThoughtProcess, setHasThoughtProcess] = useState(false);
-  const [thoughtProcess, setThoughtProcess] = useState('');
-  
-  // Track which documents have already been analyzed to avoid duplicate analysis
-  const [analyzedDocumentIds, setAnalyzedDocumentIds] = useState(new Set());
-  // We'll use a ref for documents to avoid render loops
-  const documentsRef = useRef([]);
-  // Use state for forcing updates after document changes
-  const [forceUpdate, setForceUpdate] = useState(0);
-
-  // References
-  const contentRef = useRef(null);
-  const imageViewerRef = useRef(null);
-  const answerElementId = `answer-content-${index}`;
-
-  // Theme styling
-  const themeStyles = {
-    backgroundColor: theme === 'dark' ? '#1e1e2e' : '#f8f9fa',
-    textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
-    cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
-    borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
-    primaryColor: theme === 'dark' ? '#3a7af3' : '#2563eb', // Changed to blue for DeepRAG
-    secondaryColor: theme === 'dark' ? '#2c66d9' : '#1d4ed8', // Changed to darker blue
-    accentColor: theme === 'dark' ? '#5c92f5' : '#3b82f6', // Changed to lighter blue
-    xrayColor: theme === 'dark' ? '#2563eb' : '#3b82f6', // Changed to vibrant blue
-    ...customStyles
-  };
-
-  // Extract sources from answer - memoized to avoid unnecessary recalculations
+  // Extract all sources from answer - memoized to avoid unnecessary recalculations
   const extractAllSources = useCallback(() => {
     const allSources = [];
     const sourceMap = new Map();
@@ -220,7 +198,7 @@ export default function DeepRAG({
       if (source.text) normalizedSource.excerpts.push(source.text);
       if (source.content) normalizedSource.excerpts.push(source.content);
 
-      // Extract X-Ray data with improved JSON parsing
+      // Extract X-Ray data
       if (source.xray) {
         try {
           // Handle the case where the entire xray field might be a stringified JSON
@@ -233,91 +211,15 @@ export default function DeepRAG({
             }
           }
 
-          // Initialize normalized xray data
-          let parsedSummary = xrayData.summary;
-          let parsedKeywords = xrayData.keywords;
-          let parsedChunks = xrayData.chunks || [];
-
-          // Try to parse summary if it's a JSON string
-          if (typeof parsedSummary === 'string' && parsedSummary.trim().startsWith('{')) {
-            try {
-              const summaryObj = JSON.parse(parsedSummary);
-              parsedSummary = summaryObj.summary || summaryObj.Summary || summaryObj.text || summaryObj.content || parsedSummary;
-              // If keywords weren't already set but are in the JSON, use those
-              if (!parsedKeywords && (summaryObj.keywords || summaryObj.Keywords)) {
-                parsedKeywords = summaryObj.keywords || summaryObj.Keywords;
-              }
-            } catch (e) {
-              console.warn('Failed to parse X-Ray summary as JSON', e);
-            }
-          }
-
-          // Ensure keywords is a string
-          if (Array.isArray(parsedKeywords)) {
-            parsedKeywords = parsedKeywords.join(', ');
-          }
-
-          // Process chunks - this is where the JSON parsing needs improvement
-          if (parsedChunks && Array.isArray(parsedChunks)) {
-            parsedChunks = parsedChunks.map(chunk => {
-              const processedChunk = { ...chunk };
-
-              // Parse text field if it looks like JSON
-              if (chunk.text && typeof chunk.text === 'string') {
-                if (chunk.text.trim().startsWith('{')) {
-                  try {
-                    const parsedText = JSON.parse(chunk.text);
-
-                    // Store the original text for reference
-                    processedChunk.originalText = chunk.text;
-
-                    // Set parsed data for reference
-                    processedChunk.parsedData = parsedText;
-
-                    // If we have structured data, use it for display
-                    if (parsedText.summary || parsedText.Summary) {
-                      processedChunk.sectionSummary = processedChunk.sectionSummary ||
-                        parsedText.summary ||
-                        parsedText.Summary;
-                    }
-
-                    // Extract JSON data if present
-                    if (parsedText.data || parsedText.Data) {
-                      processedChunk.json = processedChunk.json ||
-                        parsedText.data ||
-                        parsedText.Data;
-                    }
-
-                    // Keep original text in text field for compatibility
-                  } catch (e) {
-                    // If parsing fails, keep the original text
-                    console.warn('Failed to parse chunk text as JSON', e);
-                  }
-                }
-              }
-
-              // Parse JSON field if it's a string
-              if (chunk.json && typeof chunk.json === 'string') {
-                try {
-                  processedChunk.json = JSON.parse(chunk.json);
-                } catch (e) {
-                  console.warn('Failed to parse chunk.json as JSON', e);
-                }
-              }
-
-              return processedChunk;
-            });
-          }
-
           normalizedSource.xray = {
-            summary: parsedSummary,
-            keywords: parsedKeywords,
+            summary: xrayData.summary,
+            keywords: typeof xrayData.keywords === 'object' ? 
+              xrayData.keywords.join(', ') : xrayData.keywords,
             language: xrayData.language,
-            chunks: parsedChunks
+            chunks: xrayData.chunks || []
           };
         } catch (e) {
           console.error('Error processing X-Ray data', e);
-          // Keep the original data if parsing fails
           normalizedSource.xray = {
             summary: source.xray.summary,
             keywords: typeof source.xray.keywords === 'object' ?
@@ -328,9 +230,6 @@ export default function DeepRAG({
           };
         }
       }
-
-      // Extract highlights
-      normalizedSource.highlights = source.highlights || [];
 
       // Extract metadata
       normalizedSource.author = source.author;
@@ -465,10 +364,8 @@ export default function DeepRAG({
 
   // Initialize documents ref when component mounts or when source data changes
   useEffect(() => {
-    // Directly set the ref value without causing re-renders
     documentsRef.current = extractAllSources();
-    console.log("Documents extracted:", documentsRef.current.length);
-
+    
     // Check if any documents have X-Ray data and mark them as analyzed
     const newAnalyzedIds = new Set(analyzedDocumentIds);
     documentsRef.current.forEach(source => {
@@ -488,7 +385,7 @@ export default function DeepRAG({
 
     // Trigger a re-render to update the sources
     setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources, analyzedDocumentIds]);
+  }, [answer, documentExcerpts, searchResults, extractAllSources, analyzedDocumentIds]);
   
   // Check for thought process
   useEffect(() => {
@@ -508,11 +405,7 @@ export default function DeepRAG({
     const groundXFormatDetected = typeof content === 'string' ? isGroundXFormat(content) : false;
     setIsGroundX(groundXFormatDetected);
     
-    console.log("Content format detection - Ground X format:", groundXFormatDetected);
-    
     if (groundXFormatDetected) {
-      console.log("Ground X format detected, processing citations");
-      
       if (typeof content === 'string') {
         // Extract document references in the format [Document X]
         const docReferences = content.match(/\[Document\s+(\d+)\]/g) || [];
@@ -541,7 +434,6 @@ export default function DeepRAG({
           };
         });
         
-        console.log("Ground X format - extracted citations:", extractedCitations.length);
         setCitationInfos(extractedCitations);
       }
       setParsedAnswerHtml("");
@@ -620,11 +512,9 @@ export default function DeepRAG({
             // Check if this document has a source URL
             if (document.url) {
               // If there's a source URL, open it in a new tab
-              console.log(`Opening source URL: ${document.url}`);
               window.open(document.url, '_blank');
             } else {
               // Otherwise, fall back to the citation tab behavior
-              console.log(`Clicked on document reference: ${document.id}`);
               onCitationClicked(document.id);
             }
           }
@@ -643,10 +533,9 @@ export default function DeepRAG({
     };
   }, [onCitationClicked]);
 
-  // Utility functions
+  // Utility functions for X-Ray analysis
   const fetchUpdatedDocument = useCallback(async (documentId) => {
     try {
-      console.log("Fetching document:", documentId);
       const response = await fetch(`/api/groundx/xray?documentId=${documentId}`);
 
       if (!response.ok) {
@@ -654,15 +543,9 @@ export default function DeepRAG({
       }
 
       const xrayData = await response.json();
-      console.log("Fetched X-Ray data:", xrayData);
-
-      // Deep check the response structure
-      let finalXrayData = xrayData.xray;
-      if (!finalXrayData) {
-        console.warn("X-Ray data missing in response:", xrayData);
-        // Try to find xray data in other response properties
-        finalXrayData = xrayData.data || xrayData.result || xrayData;
-      }
+      
+      // Get the X-Ray data from the response
+      let finalXrayData = xrayData.xray || xrayData.data || xrayData.result || xrayData;
 
       if (!finalXrayData) {
         console.error("Could not find X-Ray data in the response");
@@ -690,13 +573,6 @@ export default function DeepRAG({
           : doc
       );
 
-      // Log what we're updating
-      console.log("Updating document with X-Ray data:",
-        documentId,
-        "Has summary:", !!finalXrayData.summary,
-        "Has keywords:", !!finalXrayData.keywords,
-        "Chunks:", finalXrayData.chunks?.length || 0);
-
       // Update the ref and force a re-render
       documentsRef.current = updatedDocs;
 
@@ -717,12 +593,10 @@ export default function DeepRAG({
     // Skip if already analyzed or currently loading
     if (analyzedDocumentIds.has(documentId) || isXRayLoading) return;
 
-    console.log("Starting X-Ray analysis for document:", documentId);
     try {
       setIsXRayLoading(true);
 
-      // Call your API to start X-Ray analysis
-      console.log("Making API call to start X-Ray analysis");
+      // Call API to start X-Ray analysis
       const response = await fetch('/api/groundx/xray', {
         method: 'POST',
         headers: {
@@ -735,18 +609,13 @@ export default function DeepRAG({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error("API response not OK:", response.status, errorData);
         throw new Error(`Failed to start X-Ray analysis: ${response.status}`);
       }
 
       const responseData = await response.json();
-      console.log("X-Ray analysis API response:", responseData);
 
-      // If the response has xray data directly, use it without making another fetch
+      // If the response has xray data directly, use it
       if (responseData.xray) {
-        console.log("X-Ray data found in response, updating document directly");
-
         // Format keywords if they're an array
         let keywordsString = responseData.xray.keywords;
         if (Array.isArray(responseData.xray.keywords)) {
@@ -776,11 +645,8 @@ export default function DeepRAG({
         setIsXRayLoading(false);
       } else {
         // Fetch updated document with X-Ray data
-        console.log("Fetching updated document");
         await fetchUpdatedDocument(documentId);
       }
-
-      console.log("X-Ray analysis completed successfully");
     } catch (error) {
       console.error('Error during X-Ray analysis:', error);
       setIsXRayLoading(false);
@@ -790,24 +656,15 @@ export default function DeepRAG({
   // When activeTab changes to 'xray', check if the selected source needs analysis
   useEffect(() => {
     if (activeTab === 'xray') {
-      // Log the current state of documents and X-Ray data
-      console.log("X-Ray tab active, documents:", documentsRef.current.length);
-      const xrayDocs = documentsRef.current.filter(doc =>
-        doc.xray && (doc.xray.summary || doc.xray.keywords || (doc.xray.chunks && doc.xray.chunks.length > 0))
-      );
-      console.log("Documents with X-Ray data:", xrayDocs.length);
-
       // If no document is selected but we have documents, select the first one
       if (!selectedSourceId && documentsRef.current.length > 0) {
         setSelectedSourceId(documentsRef.current[0].id);
-        console.log("Auto-selecting first document:", documentsRef.current[0].id);
       }
 
       // If a source is selected but hasn't been analyzed yet, trigger analysis
       if (selectedSourceId && !analyzedDocumentIds.has(selectedSourceId)) {
         const selectedSource = documentsRef.current.find(s => s.id === selectedSourceId);
         if (selectedSource) {
-          console.log("Checking if document needs analysis:", selectedSourceId);
           const hasXrayData = selectedSource.xray && (
             selectedSource.xray.summary ||
             selectedSource.xray.keywords ||
@@ -815,10 +672,8 @@ export default function DeepRAG({
           );
 
           if (!hasXrayData) {
-            console.log("Starting analysis for document:", selectedSourceId);
             handleStartXRayAnalysis(selectedSourceId);
           } else {
-            console.log("Document already has X-Ray data:", selectedSourceId);
             // Mark as analyzed even if we didn't trigger the analysis
             setAnalyzedDocumentIds(prev => new Set([...prev, selectedSourceId]));
           }
@@ -870,7 +725,6 @@ export default function DeepRAG({
 
   const navigateImage = (direction) => {
     if (!selectedSourceId) return;
-    // Use the documents ref instead of calling extractAllSources()
     const currentSource = documentsRef.current.find(s => s.id === selectedSourceId);
     if (!currentSource || !currentSource.pageImages || !currentSource.pageImages.length) return;
     const totalImages = currentSource.pageImages.length;
@@ -883,7 +737,6 @@ export default function DeepRAG({
   };
 
   const getAllImages = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
     const allImages = [];
 
     documentsRef.current.forEach(source => {
@@ -903,7 +756,6 @@ export default function DeepRAG({
   }, [imageSortBy]);
 
   const getAllXrayChunks = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
     let allChunks = [];
 
     documentsRef.current.forEach(source => {
@@ -926,18 +778,13 @@ export default function DeepRAG({
   }, [xrayContentFilter]);
 
   const hasXrayData = useCallback(() => {
-    // Use the documents ref instead of calling extractAllSources()
-    const result = documentsRef.current.some(source => {
-      // Deep check for any xray data
+    return documentsRef.current.some(source => {
       if (!source.xray) return false;
-
       return source.xray.summary ||
         source.xray.keywords ||
         (source.xray.chunks && source.xray.chunks.length > 0);
     });
-
-    return result;
-  }, [forceUpdate]); // Re-evaluate when forceUpdate changes
+  }, [forceUpdate]);
 
   const handleCopyToClipboard = () => {
     const contentToCopy = extractContent();
@@ -956,11 +803,10 @@ export default function DeepRAG({
 
   const getCurrentDocument = useCallback(() => {
     if (!currentDocumentId) return null;
-    // Use the documents ref instead of calling extractAllSources()
     return documentsRef.current.find(s => s.id === currentDocumentId);
   }, [currentDocumentId]);
 
-  // Get extracted data - use memoized callbacks to avoid unnecessary calculations
+  // Get extracted data
   const content = extractContent();
   const followupQuestions = extractFollowupQuestions();
   const sources = documentsRef.current;
@@ -1211,7 +1057,6 @@ export default function DeepRAG({
                                   // Check if this document has a source URL
                                   if (document.url) {
                                     // If there's a source URL, open it in a new tab
-                                    console.log(`Opening source URL: ${document.url}`);
                                     window.open(document.url, '_blank');
                                     return;
                                   }
