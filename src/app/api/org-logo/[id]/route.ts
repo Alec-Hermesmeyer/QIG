@@ -4,12 +4,19 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
+// Debug flag - Set to true to enable detailed logging
+const DEBUG = true;
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  if (DEBUG) console.log(`[org-logo] Received request for organization ID: ${params.id}`);
+  
   try {
     const supabase = createRouteHandlerClient({ cookies });
+    
+    if (DEBUG) console.log(`[org-logo] Supabase client created, fetching organization data`);
     
     // Get organization data
     const { data: org, error } = await supabase
@@ -18,25 +25,42 @@ export async function GET(
       .eq('id', params.id)
       .single();
       
-    if (error || !org?.logo_url) {
-      // Redirect to default logo if org not found or no logo
+    if (error) {
+      console.error('[org-logo] Error fetching organization:', error);
       return NextResponse.redirect(new URL('/defaultLogo.png', req.url));
     }
     
+    if (!org?.logo_url) {
+      if (DEBUG) console.log(`[org-logo] No logo URL found for organization ID: ${params.id}`);
+      return NextResponse.redirect(new URL('/defaultLogo.png', req.url));
+    }
+    
+    if (DEBUG) console.log(`[org-logo] Found logo URL: ${org.logo_url}`);
+    
     // If logo_url is already a full path, return it directly
     if (org.logo_url.startsWith('http')) {
+      if (DEBUG) console.log(`[org-logo] Logo is an external URL, redirecting`);
       return NextResponse.redirect(org.logo_url);
     }
+    
+    if (DEBUG) console.log(`[org-logo] Fetching logo from storage bucket: 'organization-logos'`);
     
     // Get the actual image data from storage
     const { data, error: storageError } = await supabase.storage
       .from('organization-logos')
       .download(org.logo_url);
       
-    if (storageError || !data) {
-      // Redirect to default logo if storage error
+    if (storageError) {
+      console.error('[org-logo] Storage error:', storageError);
       return NextResponse.redirect(new URL('/defaultLogo.png', req.url));
     }
+    
+    if (!data) {
+      if (DEBUG) console.log(`[org-logo] No data returned from storage`);
+      return NextResponse.redirect(new URL('/defaultLogo.png', req.url));
+    }
+    
+    if (DEBUG) console.log(`[org-logo] Successfully fetched logo, content type: ${data.type || 'image/png'}`);
     
     // Return the image with proper content type
     return new NextResponse(data, {
@@ -46,7 +70,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Error fetching logo:', error);
+    console.error('[org-logo] Unexpected error:', error);
     return NextResponse.redirect(new URL('/defaultLogo.png', req.url));
   }
 }

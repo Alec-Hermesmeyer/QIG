@@ -4,7 +4,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/AuthContext';
-import Link from 'next/link';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -26,8 +25,6 @@ export default function LoginPage() {
     
     if (error) {
       setError(error.message);
-    } else {
-      router.push('/');
     }
   };
 
@@ -82,10 +79,6 @@ export default function LoginPage() {
             >
               {isLoading ? 'Signing in...' : 'Sign in'}
             </button>
-          </div>
-
-          <div className="text-sm text-center">
-            
           </div>
         </form>
       </div>

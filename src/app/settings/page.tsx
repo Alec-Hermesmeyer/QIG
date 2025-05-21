@@ -9,7 +9,12 @@ export default function SettingsPage() {
   const { isLoading } = useAuth();
   
   if (isLoading) {
-    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+        <span className="ml-3 text-gray-600">Loading...</span>
+      </div>
+    );
   }
   
   return (

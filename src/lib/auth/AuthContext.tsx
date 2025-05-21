@@ -57,60 +57,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isQIGOrganization, setIsQIGOrganization] = useState(false);
   const router = useRouter();
 
- // Fetch profile and organization data
- const fetchUserData = async (userId: string) => {
-  // Get profile
-  const { data: profileData, error: profileError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (profileError) {
-    console.error('Error fetching profile:', profileError);
-    return;
-  }
-
-  setProfile(profileData);
-
-  // If profile has an organization, fetch it
-  if (profileData.organization_id) {
-    const { data: orgData, error: orgError } = await supabase
-      .from('organizations')
+  // Fetch profile and organization data
+  const fetchUserData = async (userId: string) => {
+    // Get profile
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
       .select('*')
-      .eq('id', profileData.organization_id)
+      .eq('id', userId)
       .single();
 
-    if (orgError) {
-      console.error('Error fetching organization:', orgError);
+    if (profileError) {
+      console.error('Error fetching profile:', profileError);
       return;
     }
 
-    setOrganization(orgData);
-    
-    // Use our API route for organization logo
-    if (orgData.id) {
-      setOrganizationLogo(`/api/org-logo/${orgData.id}`);
-    } else {
-      setOrganizationLogo('/defaultLogo.png');
+    setProfile(profileData);
+
+    // If profile has an organization, fetch it
+    if (profileData.organization_id) {
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .select('*')
+        .eq('id', profileData.organization_id)
+        .single();
+
+      if (orgError) {
+        console.error('Error fetching organization:', orgError);
+        return;
+      }
+
+      setOrganization(orgData);
+      
+      // Use our API route for organization logo
+      if (orgData.id) {
+        setOrganizationLogo(`/api/org-logo/${orgData.id}`);
+      } else {
+        setOrganizationLogo('/defaultLogo.png');
+      }
+      
+      // Check if this is the QIG organization
+      const isQIG = orgData.name === 'QIG';
+      setIsQIGOrganization(isQIG);
     }
-    
-    // Check if this is the QIG organization
-    const isQIG = orgData.name === 'QIG';
-    setIsQIGOrganization(isQIG);
-  }
-};
+  };
 
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        setSession(session);
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session);
         
-        if (session?.user) {
-          setUser(session.user);
-          await fetchUserData(session.user.id);
+        if (data.session?.user) {
+          setUser(data.session.user);
+          await fetchUserData(data.session.user.id);
         }
       } catch (error) {
         console.error("Error getting session:", error);
@@ -119,16 +119,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // Add a safety timeout to ensure isLoading is set to false
-    const safetyTimeout = setTimeout(() => {
-      setIsLoading(false);
-    }, 5000); // 5 seconds timeout as a fallback
-
     getInitialSession();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -151,7 +146,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       subscription.unsubscribe();
-      clearTimeout(safetyTimeout);
     };
   }, []);
 
@@ -231,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // First get all profiles in the organization
+      // Get all profiles in the organization
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
         .select(`
@@ -241,37 +235,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           avatar_url,
           organization_id
         `)
-        .eq('organization_id', organization.id)
-        .order('first_name');
+        .eq('organization_id', organization.id);
         
       if (profilesError) throw profilesError;
       
-      // For each profile, get the user from auth.users to get the email
-      const userEmails = await Promise.all(
-        profilesData.map(async (profile) => {
-          try {
-            const { data: userData } = await supabase.auth.admin.getUserById(profile.id);
-            return {
-              id: profile.id,
-              email: userData?.user?.email || null
-            };
-          } catch (err) {
-            console.error(`Error fetching email for user ${profile.id}:`, err);
-            return { id: profile.id, email: null };
-          }
-        })
-      );
-      
-      // Merge the profile data with emails
-      const mergedData = profilesData.map(profile => {
-        const userEmail = userEmails.find(u => u.id === profile.id);
-        return {
-          ...profile,
-          email: userEmail?.email || null
-        };
-      });
-      
-      return { data: mergedData, error: null };
+      return { data: profilesData, error: null };
     } catch (error) {
       console.error('Error in getUsersInOrganization:', error);
       return { data: null, error };
@@ -295,35 +263,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Get all profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
-        .select('*')
-        .order('first_name');
+        .select('*');
         
       if (profilesError) throw profilesError;
       
-      // Get user emails through admin API
-      const userEmails = await Promise.all(
-        profilesData.map(async (profile) => {
-          try {
-            const { data: userData } = await supabase.auth.admin.getUserById(profile.id);
-            return {
-              id: profile.id,
-              email: userData?.user?.email || null
-            };
-          } catch (err) {
-            console.error(`Error fetching email for user ${profile.id}:`, err);
-            return { id: profile.id, email: null };
-          }
-        })
-      );
-      
       // Create merged data with organization names
       const mergedData: UserWithOrganization[] = profilesData.map(profile => {
-        const userEmail = userEmails.find(u => u.id === profile.id);
         const org = orgsData.find(o => o.id === profile.organization_id);
         
         return {
           ...profile,
-          email: userEmail?.email || null,
+          email: null, // We can't get emails without admin API
           organization_name: org?.name || null
         };
       });
@@ -344,8 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('organizations')
-        .select('*')
-        .order('name');
+        .select('*');
         
       if (error) throw error;
       

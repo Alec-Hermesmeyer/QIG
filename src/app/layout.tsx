@@ -21,16 +21,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-          <Sidebar />
-          <div className="flex-1 overflow-auto">
-            <ToastProvider>
-              <AuthProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+              <Sidebar />
+              <div className="flex-1 overflow-auto">
                 {children}
-              </AuthProvider>
-            </ToastProvider>
-          </div>
-        </div>
+              </div>
+            </div>
+          </ToastProvider>
+        </AuthProvider>
       </body>
     </html>
   );

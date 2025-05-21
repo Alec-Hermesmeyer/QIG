@@ -1,35 +1,33 @@
 // lib/supabase/client.ts
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
-// Create client with error handling
-const createClient = () => {
+// Create client with the default configuration - should use cookies by default
+export const supabase = createClientComponentClient();
+
+// Export a method to help check if we have a session on the client side
+export const checkSession = async () => {
   try {
-    return createClientComponentClient();
-  } catch (error) {
-    console.error('Error creating Supabase client:', error);
-    // Return a fallback client that won't cause the app to crash
-    // but will log errors for operations
-    return {
-      auth: {
-        getSession: async () => ({ data: { session: null }, error: null }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-        signInWithPassword: async () => ({ error: new Error('Supabase client failed to initialize') }),
-        signUp: async () => ({ error: new Error('Supabase client failed to initialize') }),
-        signOut: async () => {}
-      },
-      from: () => ({
-        select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
-        insert: () => ({ select: () => ({ single: async () => ({ data: null, error: null }) }) }),
-        update: () => ({ eq: async () => ({ error: null }) })
-      }),
-      storage: {
-        from: () => ({
-          upload: async () => ({ data: null, error: null }),
-          getPublicUrl: () => ({ data: { publicUrl: '' } })
-        })
-      }
-    };
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.error('Error checking session:', error);
+      return null;
+    }
+    return data.session;
+  } catch (err) {
+    console.error('Failed to check session:', err);
+    return null;
   }
 };
 
-export const supabase = createClient();
+// Helper function to clear all auth data (for troubleshooting)
+export const clearAuthData = () => {
+  if (typeof window === 'undefined') return;
+  
+  // Clear Supabase auth data
+  localStorage.removeItem('supabase.auth.token');
+  localStorage.removeItem('supabase.auth.expires_at');
+  localStorage.removeItem('supabase.auth.refresh_token');
+  
+  // Reload the page to ensure everything is reset
+  window.location.reload();
+};

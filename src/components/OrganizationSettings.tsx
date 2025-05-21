@@ -4,10 +4,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { supabase } from '@/lib/supabase/client';
+import { clearAuthData } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/use-toast';
+import { useRouter } from 'next/navigation';
 
 const colorOptions = [
   { name: 'Red', value: 'bg-red-500' },
@@ -31,7 +33,9 @@ export function OrganizationSettings() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   // Load organization data on component mount
   useEffect(() => {
@@ -45,8 +49,25 @@ export function OrganizationSettings() {
       }
       
       setIsLoading(false);
+      setLoadError(null);
+    } else if (!isLoading && user) {
+      // If we're done loading and have a user but no organization
+      setLoadError('Could not load organization data. Please try logging in again.');
+      setIsLoading(false);
     }
-  }, [organization]);
+  }, [organization, isLoading, user]);
+
+  // Safety timeout to ensure we're not stuck loading
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (isLoading) {
+        setIsLoading(false);
+        setLoadError('Timed out waiting for organization data.');
+      }
+    }, 5000);
+    
+    return () => clearTimeout(timeout);
+  }, [isLoading]);
 
   // Handle logo file selection
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,7 +90,14 @@ export function OrganizationSettings() {
 
   // Handle saving all settings
   const handleSaveSettings = async () => {
-    if (!organization) return;
+    if (!organization) {
+      toast({
+        title: "Error saving settings",
+        description: "Organization data is not available. Please try logging in again.",
+        variant: "destructive",
+      });
+      return;
+    }
     
     setIsSaving(true);
     
@@ -120,8 +148,8 @@ export function OrganizationSettings() {
         description: "Organization settings have been updated successfully.",
       });
       
-      // Note: The AuthContext would need a refresh method to update the UI immediately
-      // without requiring a page reload. You might need to add this functionality.
+      // Force refresh the page to reload auth context data
+      window.location.reload();
       
     } catch (error) {
       console.error('Error saving organization settings:', error);
@@ -139,9 +167,43 @@ export function OrganizationSettings() {
     return <div className="flex justify-center py-8">Loading organization settings...</div>;
   }
 
+  if (loadError) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 bg-white rounded-lg shadow">
+        <div className="text-center py-8">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Error Loading Settings</h2>
+          <p className="text-gray-600 mb-6">{loadError}</p>
+          <div className="flex justify-center space-x-4">
+            <Button onClick={() => router.push('/')} variant="outline">
+              Go to Dashboard
+            </Button>
+            <Button 
+              onClick={() => {
+                clearAuthData();
+              }}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              Log Out and Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Only allow QIG or organization admins to access this page
   if (!organization || (!isQIGOrganization && !user)) {
-    return <div className="flex justify-center py-8">You don't have permission to access these settings.</div>;
+    return (
+      <div className="max-w-3xl mx-auto p-6 bg-white rounded-lg shadow">
+        <div className="text-center py-8">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Access Denied</h2>
+          <p className="text-gray-600 mb-6">You don't have permission to access these settings.</p>
+          <Button onClick={() => router.push('/')} variant="outline">
+            Go to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
