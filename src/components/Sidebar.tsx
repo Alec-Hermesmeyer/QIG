@@ -34,7 +34,6 @@ export function Sidebar({ className }: SidebarProps) {
     { name: 'Home', href: '/', icon: Home },
     { name: 'FastRAG', href: '/fast-rag', icon: Sparkles },
     { name: 'DeepRAG', href: '/deep-rag', icon: Zap },
-    { name: 'Documents', href: '/documents', icon: FileText },
     { name: 'Settings', href: '/settings', icon: Settings }
   ];
 

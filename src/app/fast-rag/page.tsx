@@ -347,14 +347,7 @@ export default function FastRAGPage() {
                   Clear Chat
                 </Button>
                 
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  className="text-gray-700 border-gray-300 hover:bg-gray-100"
-                >
-                  <Settings size={16} className="mr-1.5" />
-                  Settings
-                </Button>
+                
               </div>
             </div>
           </div>
