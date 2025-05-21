@@ -454,17 +454,49 @@ export default function FastRAG({ answer, theme = 'light' }: FastRAGProps) {
           }
         }
         
-        // Look for done messages
+        // Look for done messages - FIX: More robust parsing
         const doneMatches = Array.from(rawAnswer.matchAll(/\{"type":"done","answer":([\s\S]*?)\}/g));
         debugLog("Found done matches", doneMatches.length);
         
         for (const match of doneMatches) {
           try {
             debugLog("Processing done match");
-            const answer = JSON.parse(`{"answer":${match[1]}}`).answer;
-            processDoneMessage(answer);
+            
+            // More robust parsing approach
+            let answer;
+            
+            try {
+              // First try to parse the entire match
+              const doneObj = JSON.parse(match[0]);
+              if (doneObj && doneObj.answer) {
+                answer = doneObj.answer;
+              }
+            } catch (parseError) {
+              // If that fails, try to extract just the answer part safely
+              try {
+                // Try to clean the string if needed
+                const cleanedMatch = match[1].replace(/\n/g, '\\n');
+                const wrappedJson = `{"answer":${cleanedMatch}}`;
+                answer = JSON.parse(wrappedJson).answer;
+              } catch (innerError) {
+                // Last resort approach - just extract what we can with regex
+                console.error("Failed to parse done message JSON, using fallback extraction", innerError);
+                
+                // Try to extract content with regex as a fallback
+                const contentMatch = match[1].match(/"content"\s*:\s*"([^"]*)"/);
+                if (contentMatch && contentMatch[1]) {
+                  answer = { content: contentMatch[1] };
+                } else {
+                  throw new Error("Unable to extract answer content");
+                }
+              }
+            }
+            
+            if (answer) {
+              processDoneMessage(answer);
+            }
           } catch (e) {
-            console.error("Error parsing done message:", e);
+            console.error("Error processing done message:", e);
           }
         }
         
