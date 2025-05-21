@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Zap, Sparkles, Home, Settings, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth/AuthContext';
 
 interface SidebarProps {
   className?: string;
@@ -14,6 +15,7 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+  const { organization } = useAuth();
 
   // Check localStorage for user preference on sidebar collapse state
   useEffect(() => {
@@ -54,9 +56,9 @@ export function Sidebar({ className }: SidebarProps) {
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="font-bold text-lg"
+            className="font-bold text-lg truncate"
           >
-            QIG AI
+            {organization?.name || 'Document Intelligence'}
           </motion.div>
         )}
         <motion.button
@@ -105,10 +107,10 @@ export function Sidebar({ className }: SidebarProps) {
       <div className="border-t border-gray-200 dark:border-gray-800 py-2 px-4">
         {!isCollapsed && (
           <div className="text-xs text-gray-500">
-            QIG Intelligent Assistant
+            {organization?.name ? `${organization.name} Assistant` : 'Intelligent Assistant'}
           </div>
         )}
       </div>
     </motion.div>
   );
-} 
+}
