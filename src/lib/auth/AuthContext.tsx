@@ -104,16 +104,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      setSession(session);
-      
-      if (session?.user) {
-        setUser(session.user);
-        await fetchUserData(session.user.id);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        setSession(session);
+        
+        if (session?.user) {
+          setUser(session.user);
+          await fetchUserData(session.user.id);
+        }
+      } catch (error) {
+        console.error("Error getting session:", error);
+      } finally {
+        setIsLoading(false);
       }
-      
-      setIsLoading(false);
     };
+
+    // Add a safety timeout to ensure isLoading is set to false
+    const safetyTimeout = setTimeout(() => {
+      setIsLoading(false);
+    }, 5000); // 5 seconds timeout as a fallback
 
     getInitialSession();
 
@@ -123,21 +132,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         
-        if (session?.user) {
-          await fetchUserData(session.user.id);
-        } else {
-          setProfile(null);
-          setOrganization(null);
-          setOrganizationLogo('/defaultLogo.png');
-          setIsQIGOrganization(false);
+        try {
+          if (session?.user) {
+            await fetchUserData(session.user.id);
+          } else {
+            setProfile(null);
+            setOrganization(null);
+            setOrganizationLogo('/defaultLogo.png');
+            setIsQIGOrganization(false);
+          }
+        } catch (error) {
+          console.error("Error in auth state change:", error);
+        } finally {
+          setIsLoading(false);
         }
-        
-        setIsLoading(false);
       }
     );
 
     return () => {
       subscription.unsubscribe();
+      clearTimeout(safetyTimeout);
     };
   }, []);
 

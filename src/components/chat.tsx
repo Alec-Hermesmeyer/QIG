@@ -149,7 +149,17 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // Keep a record of all messages for the session
-  const [allMessages, setAllMessages] = useState<Array<{ role: string, content: string }>>([]);
+  const [allMessages, setAllMessages] = useState<Array<{ 
+    role: string; 
+    content: string | { 
+      content: string;
+      sources?: any[];
+      searchResults?: any;
+      thoughtProcess?: string;
+      supportingContent?: any[];
+    };
+    searchResults?: any;
+  }>>([]);
   const [lastResponseTimestamp, setLastResponseTimestamp] = useState<number | null>(null);
 
   // Configuration state
@@ -459,7 +469,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   // IMPROVED: Generate a better summary of the response text for TTS
   const generateSummary = (text: string): string => {
     // Bail early for empty or very short text
-    if (!text || text.length < 20) {
+    if (!text || typeof text !== 'string' || text.length < 20) {
       return "I don't have enough information to summarize.";
     }
 
@@ -760,57 +770,44 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       console.log('[ImprovedChat] Using RAG:', shouldUseRAG);
   
       // Determine which API to use
-      let endpoint, requestBody, response;
-      
-      if (shouldUseRAG) {
-        console.log('[ImprovedChat] Using GroundX RAG with bucket:', props.selectedBucketId);
-        
-        // Use the GroundX RAG endpoint
-        endpoint = '/api/groundx/rag';
-        requestBody = {
-          query: userMessage,
-          bucketId: props.selectedBucketId,
-          messages: formattedMessages, // Include conversation history
-          config: {
+      const endpoint = shouldUseRAG ? '/api/groundx/rag' : '/api/chat-stream';
+      const requestBody = shouldUseRAG ? {
+        query: userMessage,
+        bucketId: props.selectedBucketId,
+        messages: formattedMessages,
+        config: {
+          temperature: config.temperature || 0,
+          stream: false // GroundX RAG doesn't support streaming yet
+        }
+      } : {
+        messages: formattedMessages,
+        context: {
+          overrides: {
+            prompt_template: config.promptTemplate,
+            top: 3,
             temperature: config.temperature || 0,
-            stream: config.streamResponse
+            minimum_search_score: config.searchConfig?.minSearchScore || 0,
+            minimum_reranker_score: config.searchConfig?.minRerankerScore || 0,
+            retrieval_mode: config.searchConfig?.retrievalMode || "hybrid",
+            semantic_ranker: config.searchConfig?.useSemanticRanker || true,
+            semantic_captions: config.searchConfig?.useSemanticCaptions || false,
+            query_rewriting: false,
+            suggest_followup_questions: config.suggestFollowUpQuestions || false,
+            use_oid_security_filter: false,
+            use_groups_security_filter: false,
+            vector_fields: ["embedding"],
+            use_gpt4v: false,
+            gpt4v_input: "textAndImages",
+            language: "en"
           }
-        };
-      } else {
-        console.log('[ImprovedChat] Using standard chat API');
-        
-        // Use regular chat API with standard format
-        endpoint = config.streamResponse ? '/api/chat-stream' : '/api/chat';
-        requestBody = {
-          messages: formattedMessages,
-          context: {
-            overrides: {
-              prompt_template: config.promptTemplate,
-              top: 3,
-              temperature: config.temperature || 0,
-              minimum_search_score: config.searchConfig?.minSearchScore || 0,
-              minimum_reranker_score: config.searchConfig?.minRerankerScore || 0,
-              retrieval_mode: config.searchConfig?.retrievalMode || "hybrid",
-              semantic_ranker: config.searchConfig?.useSemanticRanker || true,
-              semantic_captions: config.searchConfig?.useSemanticCaptions || false,
-              query_rewriting: false,
-              suggest_followup_questions: config.suggestFollowUpQuestions || false,
-              use_oid_security_filter: false,
-              use_groups_security_filter: false,
-              vector_fields: ["embedding"],
-              use_gpt4v: false,
-              gpt4v_input: "textAndImages",
-              language: "en"
-            }
-          },
-          session_state: sessionId
-        };
-      }
+        },
+        session_state: sessionId
+      };
   
       console.log('[ImprovedChat] Sending request to:', endpoint);
       
       // Send the request
-      response = await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
@@ -850,13 +847,47 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   };
   const handleNonStreamingRAGResponse = async (response: Response) => {
     const data = await response.json();
+    console.log('[ImprovedChat] Raw RAG response:', data);
+    
     let content = '';
     let searchResults = null;
   
     if (data && data.success) {
-      content = data.response || "No content received from the RAG API.";
-      searchResults = data.searchResults || null;
+      // Handle GroundX RAG response format
+      if (data.response) {
+        console.log('[ImprovedChat] Response data:', data.response);
+        
+        // Handle nested response structure
+        if (typeof data.response === 'object') {
+          // Find the first key that contains the summary
+          const summaryKey = Object.keys(data.response).find(key => 
+            key.toLowerCase().includes('summary') || 
+            key.toLowerCase().includes('proposal')
+          );
+          
+          if (summaryKey) {
+            const summaryData = data.response[summaryKey];
+            // Convert the summary object to a formatted string
+            content = Object.entries(summaryData)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join('\n');
+          } else {
+            // If no summary key found, stringify the entire response
+            content = JSON.stringify(data.response, null, 2);
+          }
+        } else {
+          content = data.response;
+        }
+        
+        searchResults = data.searchResults || null;
+        console.log('[ImprovedChat] Extracted content:', content);
+        console.log('[ImprovedChat] Search results:', searchResults);
+      } else {
+        console.log('[ImprovedChat] No response data found');
+        content = "No content received from the RAG API.";
+      }
     } else {
+      console.log('[ImprovedChat] Error in response:', data.error);
       content = data.error || "Error processing your request with the document search.";
     }
   
@@ -866,9 +897,21 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     // Add response to history with search results
     const messageWithSearchResults = {
       role: 'assistant', 
-      content,
-      searchResults
+      content: {
+        content: content,
+        sources: data.searchResults?.sources?.map((source: any) => ({
+          ...source,
+          hasXray: Boolean(source.hasXray),
+          xray: source.xray || null
+        })) || [],
+        searchResults: searchResults,
+        thoughtProcess: data.thoughts || '',
+        supportingContent: data.searchResults?.sources || []
+      },
+      searchResults: searchResults
     };
+    
+    console.log('[ImprovedChat] Message being added to history:', messageWithSearchResults);
     
     setAllMessages(prev => [...prev, messageWithSearchResults]);
   
@@ -876,10 +919,14 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     if (typeof onAssistantMessage === 'function') {
       if (onAssistantMessage.length > 1) {
         // If the function accepts metadata
-        (onAssistantMessage as (content: string, metadata?: any) => void)(
-          content, 
-          { searchResults }
-        );
+        const metadata = { 
+          searchResults,
+          sources: data.searchResults?.sources || [],
+          thoughtProcess: data.thoughts || '',
+          supportingContent: data.searchResults?.sources || []
+        };
+        console.log('[ImprovedChat] Sending metadata to parent:', metadata);
+        (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
       } else {
         // Basic version that only accepts content
         onAssistantMessage(content);

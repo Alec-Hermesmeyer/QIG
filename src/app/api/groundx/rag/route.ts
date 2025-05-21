@@ -186,37 +186,42 @@ function getSearchCacheKey(bucketId: number, query: string, limit: number): stri
  */
 function extractBestScore(result: SearchResultItem): { score: number, source: string } {
   // Log all potential score fields for debugging
-  console.log('Score fields for document:', {
+  const scoreFields = {
     primaryScore: result.score,
     relevanceScore: result.relevanceScore,
     rankingScore: result.rankingScore,
     metadataScore: result.metadata?.score,
     searchDataScore: result.searchData?.score
+  };
+  
+  console.log('Score fields for document:', {
+    documentId: result.documentId,
+    fileName: result.fileName,
+    ...scoreFields
   });
   
   // Try different possible score locations in order of preference
-  if (typeof result.score === 'number' && result.score > 0) {
-    return { score: result.score, source: 'primary' };
+  const scores = [
+    { value: result.score, source: 'primary' },
+    { value: result.relevanceScore, source: 'relevance' },
+    { value: result.rankingScore, source: 'ranking' },
+    { value: result.metadata?.score, source: 'metadata' },
+    { value: result.searchData?.score, source: 'searchData' }
+  ];
+  
+  // Find the first valid score
+  const validScore = scores.find(s => typeof s.value === 'number' && s.value > 0);
+  
+  if (validScore) {
+    // Normalize score to be between 0 and 1
+    const normalizedScore = Math.min(1, Math.max(0, validScore.value));
+    console.log(`Using ${validScore.source} score: ${normalizedScore}`);
+    return { score: normalizedScore, source: validScore.source };
   }
   
-  if (typeof result.relevanceScore === 'number' && result.relevanceScore > 0) {
-    return { score: result.relevanceScore, source: 'relevance' };
-  }
-  
-  if (typeof result.rankingScore === 'number' && result.rankingScore > 0) {
-    return { score: result.rankingScore, source: 'ranking' };
-  }
-  
-  if (result.metadata && typeof result.metadata.score === 'number' && result.metadata.score > 0) {
-    return { score: result.metadata.score, source: 'metadata' };
-  }
-  
-  if (result.searchData && typeof result.searchData.score === 'number' && result.searchData.score > 0) {
-    return { score: result.searchData.score, source: 'searchData' };
-  }
-  
-  // If no valid score found, calculate a normalized position score
-  return { score: 0, source: 'default' };
+  // If no valid score found, return a default score based on position
+  console.log('No valid score found, using default score');
+  return { score: 0.5, source: 'default' };
 }
 
 /**

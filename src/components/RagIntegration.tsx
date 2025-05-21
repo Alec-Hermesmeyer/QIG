@@ -12,6 +12,7 @@ interface RagResponse {
       id: string;
       fileName: string;
       score: number;
+      sourceUrl?: string;
     }>;
   };
   error?: string;
@@ -136,9 +137,15 @@ export const RagIntegration: React.FC<RagIntegrationProps> = ({
 
     // Format for the EnhancedSupportingContent component
     return {
-      text: searchResults.sources.map(source => 
-        `${source.fileName}: Content from document ID ${source.id} with relevance score ${source.score.toFixed(2)}`
-      )
+      text: searchResults.sources.map(source => {
+        const scoreInfo = source.score !== undefined 
+          ? ` (Relevance: ${(source.score * 100).toFixed(1)}%)`
+          : '';
+        const sourceInfo = source.sourceUrl 
+          ? ` [Source: ${source.sourceUrl}]`
+          : '';
+        return `${source.fileName}${scoreInfo}${sourceInfo}: Content from document ID ${source.id}`;
+      })
     };
   };
 
@@ -235,12 +242,13 @@ export const RagIntegration: React.FC<RagIntegrationProps> = ({
 
       {/* Display supporting content if available */}
       {includeSupportingContent && supportingContent && (
-        <div className="mb-6">
+        <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">Supporting Documents</h3>
           <EnhancedSupportingContent
             supportingContent={supportingContent}
+            highlightTerms={searchTerms}
             onFileClick={handleFileClick}
             onCitationClick={handleCitationClick}
-            highlightTerms={searchTerms}
             useAutoHighlighting={true}
           />
         </div>

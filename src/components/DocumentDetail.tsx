@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { getDocumentType, formatDate } from "./Answer";
 import { Source, XRayChunk } from "@/types/types";
-import { formatScoreDisplay, fixDecimalPointIssue } from "@/utils/scoreUtils";
+import { fixDecimalPointIssue } from "@/utils/scoreUtils";
 
 interface DocumentDetailProps {
   document: Source;
@@ -65,64 +65,11 @@ const getContentTypeIcon = (contentType?: string[]) => {
   return <FileText size={14} className="text-gray-600" />;
 };
 
-// Export the score formatting function so other components can use it
-export const formatScoreDisplay = (score) => {
-  if (score === undefined || score === null) return "N/A";
-  
-  // IMPORTANT: Check for extreme values that indicate decimal point issues
-  const numericScore = typeof score === 'string' ? parseFloat(score) : score;
-  
-  // If score is suspiciously high (>1000), it might be a decimal point error
-  if (numericScore > 1000) {
-    // Try to detect if this is a decimal point error
-    const asString = numericScore.toString();
-    if (asString.length >= 5) {
-      // Attempt to fix by inserting decimal point at a reasonable position
-      // For a score like 11084, convert to 110.84
-      const correctedScore = parseFloat(asString.slice(0, 3) + '.' + asString.slice(3));
-      
-      // Use the corrected score if it seems reasonable
-      if (correctedScore > 0 && correctedScore < 200) {
-        if (correctedScore > 100) {
-          return "High"; // Just show "High" for high percentages
-        }
-        return correctedScore.toFixed(1) + '%';
-      }
-    }
-    return "Very High"; 
-  }
-  
-  // For scores in the 100-1000 range
-  if (numericScore > 100 && numericScore <= 1000) {
-    return "High";
-  }
-  
-  // For scores in the 0-100 range that likely represent percentages
-  if (numericScore >= 1 && numericScore <= 100) {
-    const formattedScore = numericScore.toFixed(1);
-    // If it's very close to a whole number, remove the decimal
-    if (formattedScore.endsWith('.0')) {
-      return formattedScore.split('.')[0] + '%';
-    }
-    return formattedScore + '%';
-  }
-  
-  // If score is 0, return simple 0%
-  if (numericScore === 0) {
-    return "0%";
-  }
-  
-  // For very small scores (near 0 but not 0)
-  if (numericScore < 0.001) {
-    return "<0.1%";
-  }
-  
-  // If score is a decimal (0-1 range)
-  return (numericScore * 100).toFixed(1) + '%';
-};
+// Add type for section names
+type SectionName = 'summary' | 'excerpts' | 'images' | 'xrayChunks' | 'relevance';
 
-// Use the exported function for our local formatting
-const formatScore = formatScoreDisplay;
+// Add type for score
+type Score = number | undefined;
 
 // Animation variants
 const containerVariants = {
@@ -140,6 +87,12 @@ const itemVariants = {
   visible: { opacity: 1, y: 0 }
 };
 
+// Helper function to format score display
+const formatScoreDisplay = (score: Score): string => {
+  if (score === undefined) return 'N/A';
+  return score.toFixed(2);
+};
+
 const DocumentDetail: React.FC<DocumentDetailProps> = ({
   document,
   handleImageClick,
@@ -151,68 +104,52 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
   onCitationClicked,
   onStartXRayAnalysis,
   isXRayLoading = false,
-  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf", // Keep default as fallback
+  documentViewerUrl = "https://upload.groundx.ai/file/a03c889a-fa9f-4864-bcd3-30c7a596156c/75b005ca-0b3b-4960-a856-b2eda367f2fc.pdf",
   isAnalyzed = false
 }) => {
-  // Local loading state for better UX
-  const [localXRayLoading, setLocalXRayLoading] = useState(false);
-  const isLoading = isXRayLoading || localXRayLoading;
-  
-  // State for expandable sections
-  const [expandedSections, setExpandedSections] = useState({
-    summary: true,
-    excerpts: true,
-    images: true,
-    xrayChunks: true,
-    relevance: true
-  });
-
-  // Toggle expanded sections
-  const toggleSection = (section) => {
-    setExpandedSections(prev => ({
-      ...prev,
-      [section]: !prev[section]
-    }));
-  };
-
-  // For debugging: log the document when component mounts
+  // Add logging for debugging
   useEffect(() => {
     console.log("DocumentDetail mounted with document:", document);
-    console.log("Document score:", document.score, typeof document.score);
     
-    // Check if we can find the score in any other property
-    Object.keys(document).forEach(key => {
-      if (typeof document[key] === 'number' && key !== 'id') {
-        console.log(`Found potential score in property "${key}":`, document[key]);
+    // Simple debugging without optional chaining on document properties
+    if (!document) {
+      console.error("No document provided to DocumentDetail");
+    } else {
+      if (!document.id) {
+        console.error("Document missing ID");
       }
-    });
-    
-    // Check if using a custom score property or just no scores
-    if (document.score === 0 || document.score === 0.0) {
-      console.log("Document has a zero score - this could be intentional or could indicate missing data");
+      
+      if (!document.excerpts || document.excerpts.length === 0) {
+        console.warn("Document has no excerpts");
+      }
+      
+      // Log essential properties with safer access
+      console.log("Document essential properties:", {
+        id: document.id || 'missing',
+        fileName: document.fileName || document.title || document.name || 'unnamed',
+        hasText: !!document.text,
+        hasContent: !!document.content,
+        excerptCount: document.excerpts ? document.excerpts.length : 0,
+        hasXray: !!document.xray
+      });
     }
   }, [document]);
 
   // Handle potentially string or number id types
-  const documentId = document.id ? String(document.id) : '';
+  const documentId = document?.id ? String(document.id) : '';
   // Handle required fileName in case it's undefined in the updated type
-  const fileName = document.fileName || document.title || document.name || 'Unknown Document';
+  const fileName = document?.fileName || document?.title || document?.name || 'Unknown Document';
   // Handle potentially empty excerpts array in the updated type
-  const excerpts = document.excerpts || [];
+  const excerpts = document?.excerpts || [];
 
   // Fix the score using our utility function
-  const correctedScore = document.score !== undefined ? fixDecimalPointIssue(document.score) : undefined;
+  const correctedScore = document?.score !== undefined ? fixDecimalPointIssue(document.score) : undefined;
 
   // Function to open document in viewer - check multiple possible URL properties
   const openDocument = () => {
     // Try to find a URL from the document object, checking multiple possible property names
-    const documentUrl = document.sourceURL || 
-                       document.url || 
-                       document.fileUrl || 
-                       document.link || 
-                       document.source ||
-                       document.documentUrl ||
-                       (document.metadata && document.metadata.url) ||
+    const documentUrl = document?.sourceUrl || 
+                       document?.url || 
                        documentViewerUrl;
     
     console.log("Opening document URL:", documentUrl);
@@ -224,10 +161,46 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
     }
   };
 
-  // Helper function for "View in Document" button - still using onCitationClicked
+  // Helper function for "View in Document" button
   const viewInDocument = (id: string) => {
-    onCitationClicked(id);
+    if (onCitationClicked) {
+      onCitationClicked(id);
+    }
   };
+
+  // If no document is provided, show a message
+  if (!document) {
+    return (
+      <div className="p-4 text-center">
+        <p className="text-gray-500">No document selected</p>
+      </div>
+    );
+  }
+
+  // Local loading state for better UX
+  const [localXRayLoading, setLocalXRayLoading] = useState(false);
+  const isLoading = isXRayLoading || localXRayLoading;
+  
+  // State for expandable sections
+  const [expandedSections, setExpandedSections] = useState<Record<SectionName, boolean>>({
+    summary: true,
+    excerpts: true,
+    images: true,
+    xrayChunks: true,
+    relevance: true
+  });
+
+  // Toggle expanded sections
+  const toggleSection = (section: SectionName) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
+
+  // Safely access metadata
+  const metadata = document?.metadata || {};
+  const metadataUrl = (metadata && typeof metadata === 'object' && 'url' in metadata) ? (metadata as { url?: string }).url : undefined;
 
   // Function to handle X-Ray analysis start
   const handleStartXRayAnalysis = async () => {
@@ -820,42 +793,22 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                   
                     <div className="space-y-4">
                       {excerpts.map((excerpt, i) => {
-                        // Calculate relevance score for visual indicator 
-                        // If no score is provided, use position in array (first excerpts are typically more relevant)
-                        const relevanceScore = document.excerptScores 
-                          ? document.excerptScores[i] 
-                          : 1 - (i / Math.max(1, excerpts.length - 1));
-                        
-                        // Determine indicator color based on relevance
-                        const indicatorColor = relevanceScore > 0.8 
-                          ? themeStyles.primaryColor 
-                          : relevanceScore > 0.5 
-                            ? themeStyles.secondaryColor 
-                            : themeStyles.textColor;
-                        
                         // Process paragraph breaks for better readability
                         // Use a regex that preserves periods and handles multiple text patterns
                         let paragraphs = [];
                         try {
                           // First try splitting by periods followed by spaces
                           const tempParagraphs = excerpt.split(/(?<=\. )/).filter(p => p.trim().length > 0);
-                          
                           // If that didn't work well (only one very long paragraph), try alternative approaches
                           if (tempParagraphs.length <= 1 && excerpt.length > 200) {
-                            // Try splitting by double newlines if present
                             if (excerpt.includes("\n\n")) {
                               paragraphs = excerpt.split("\n\n").filter(p => p.trim().length > 0);
-                            } 
-                            // Try splitting by newlines
-                            else if (excerpt.includes("\n")) {
+                            } else if (excerpt.includes("\n")) {
                               paragraphs = excerpt.split("\n").filter(p => p.trim().length > 0);
-                            }
-                            // If still one paragraph, force split approximately every 150 chars at sentence boundaries
-                            else {
+                            } else {
                               paragraphs = [];
                               let current = "";
                               const sentences = excerpt.split(/(?<=\. )/);
-                              
                               for (let sentence of sentences) {
                                 if (current.length + sentence.length > 150 && current.length > 0) {
                                   paragraphs.push(current.trim());
@@ -864,7 +817,6 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                                   current += sentence;
                                 }
                               }
-                              
                               if (current.length > 0) {
                                 paragraphs.push(current.trim());
                               }
@@ -873,26 +825,10 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                             paragraphs = tempParagraphs;
                           }
                         } catch (e) {
-                          // Fallback in case of any errors
                           paragraphs = [excerpt];
                         }
-                        
-                        // Ensure we have at least one paragraph
-                        if (paragraphs.length === 0) {
-                          paragraphs = [excerpt];
-                        }
-                        
                         return (
-                          <motion.div
-                            key={i}
-                            whileHover={{ y: -2, boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)' }}
-                            className="rounded-lg border shadow-sm overflow-visible"
-                            style={{
-                              backgroundColor: themeStyles.cardBackground,
-                              borderColor: themeStyles.borderColor,
-                              width: "100%"
-                            }}
-                          >
+                          <motion.div key={i} variants={itemVariants} className="rounded-lg border shadow-sm overflow-hidden" style={{ borderColor: themeStyles.borderColor }}>
                             {/* Top bar with excerpt number and metadata */}
                             <div 
                               className="p-2 border-b flex items-center justify-between"
@@ -905,8 +841,8 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                                 <div 
                                   className="text-xs font-medium px-2 py-0.5 rounded-md mr-2 flex items-center"
                                   style={{ 
-                                    backgroundColor: `${indicatorColor}15`,
-                                    color: indicatorColor
+                                    backgroundColor: `${themeStyles.primaryColor}15`,
+                                    color: themeStyles.primaryColor
                                   }}
                                 >
                                   <FileText size={10} className="mr-1" />
@@ -947,22 +883,6 @@ const DocumentDetail: React.FC<DocumentDetailProps> = ({
                                   </div>
                                 )}
                               </div>
-                              
-                              {/* Relevance indicator */}
-                              {document.score !== undefined && (
-                                <div className="flex items-center">
-                                  <span 
-                                    className="text-xs px-2 py-0.5 rounded-md flex items-center"
-                                    style={{ 
-                                      backgroundColor: `${themeStyles.secondaryColor}15`,
-                                      color: themeStyles.secondaryColor
-                                    }}
-                                  >
-                                    <DollarSign size={10} className="mr-1" />
-                                    Match: {formatScoreDisplay(document.score)}
-                                  </span>
-                                </div>
-                              )}
                             </div>
                             
                             {/* Excerpt content */}

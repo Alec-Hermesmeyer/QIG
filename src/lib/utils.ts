@@ -24,6 +24,10 @@ export interface SimpleDocument {
   createdAt: Date;
 }
 
+/**
+ * A utility function to merge class names with tailwind classes
+ * Uses clsx for conditional classes and tailwind-merge to resolve conflicts
+ */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

@@ -1,1183 +1,958 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
-import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText } from "lucide-react";
+import { motion } from "framer-motion";
+import { FileText, Brain, Database, Copy, Check, ChevronDown, ChevronUp } from "lucide-react";
 
-// Import the AnswerParser functionality
-import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, CitationInfo } from "./AnswerParser";
+// Simple type definitions
+interface Source {
+  id?: string;
+  fileName?: string;
+  text?: string;
+  content?: string;
+  excerpts?: string[];
+  score?: number;
+}
 
-// Import our custom components
-import AnswerHeader from "./AnswerHeader";
-import DocumentDetail from "./DocumentDetail";
-import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
+interface ChatSource {
+  title: string;
+  content: string;
+  score?: number;
+}
 
-// Import types
-import { Source, XRayChunk, EnhancedAnswerProps } from "@/types/types";
+interface FastRAGProps {
+  answer: any;
+  theme?: 'light' | 'dark';
+}
 
-// Helper utilities
-export const formatDate = (dateString?: string) => {
-  if (!dateString) return '';
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  } catch (e) { return dateString; }
-};
+export default function FastRAG({ answer, theme = 'light' }: FastRAGProps) {
+  // State
+  const [content, setContent] = useState<string>("");
+  const [supportingContent, setSupportingContent] = useState<ChatSource[]>([]);
+  const [thoughtProcess, setThoughtProcess] = useState<string>("");
+  const [hasSupporting, setHasSupporting] = useState(false);
+  const [hasThoughts, setHasThoughts] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("answer");
+  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+  
+  // Track whether we're dealing with a streaming message
+  const isStreaming = useRef<boolean>(false);
+  const previousAnswerRef = useRef<any>(null);
 
-export const getDocumentName = (path?: string) => (!path) ? 'Unknown Document' : path.split('/').pop() || path;
-
-export const getDocumentType = (fileName?: string) => {
-  if (!fileName) return 'document';
-  const extension = fileName.split('.').pop()?.toLowerCase();
-
-  switch (extension) {
-    case 'pdf': return 'pdf';
-    case 'docx': case 'doc': return 'word';
-    case 'xlsx': case 'xls': case 'csv': return 'spreadsheet';
-    case 'txt': return 'text';
-    case 'html': case 'htm': return 'web';
-    case 'json': case 'js': case 'py': return 'code';
-    case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'svg': return 'image';
-    default: return 'document';
-  }
-};
-
-export default function FastRAG({
-  answer,
-  index = 0,
-  isSelected = false,
-  isStreaming = false,
-  searchResults = null,
-  documentExcerpts = [],
-  onCitationClicked = () => { },
-  onThoughtProcessClicked = () => { },
-  onSupportingContentClicked = () => { },
-  onFollowupQuestionClicked = () => { },
-  onRefreshClicked = () => { },
-  showFollowupQuestions = false,
-  enableAdvancedFeatures = false,
-  theme = 'light',
-  customStyles = {}
-}: EnhancedAnswerProps) {
-  // DEBUG: Log the incoming answer object structure
-  useEffect(() => {
-    try {
-      console.log("FastRAG component mounted with answer:", answer);
-      // Log keys to understand structure
-      if (answer && typeof answer === 'object') {
-        console.log("Answer keys:", Object.keys(answer));
-        
-        // Log specific Azure RAG properties if they exist
-        if (answer.thought_process) console.log("thought_process exists:", typeof answer.thought_process);
-        if (answer.thoughtProcess) console.log("thoughtProcess exists:", typeof answer.thoughtProcess);
-        if (answer.supporting_content) console.log("supporting_content exists:", Array.isArray(answer.supporting_content));
-        if (answer.supportingContent) console.log("supportingContent exists:", Array.isArray(answer.supportingContent));
-        if (answer.citations) console.log("citations exists:", Array.isArray(answer.citations));
+  // Debug
+  const debugMode = true;
+  const debugLog = (message: string, data?: any) => {
+    if (debugMode) {
+      if (data) {
+        console.log(`[FastRAG] ${message}:`, data);
+      } else {
+        console.log(`[FastRAG] ${message}`);
       }
+    }
+  };
+  
+  // Parse the answer when it changes
+  useEffect(() => {
+    if (!answer) return;
+    
+    debugLog("Received answer", {
+      type: typeof answer,
+      keys: typeof answer === 'object' ? Object.keys(answer) : 'n/a',
+      hasRaw: typeof answer === 'object' && 'raw' in answer,
+      hasContent: typeof answer === 'object' && 'content' in answer,
+      hasStreaming: typeof answer === 'object' && answer.metadata?.isStreaming
+    });
+    
+    try {
+      // Detect if this is a streaming message
+      isStreaming.current = answer.metadata?.isStreaming === true ||
+                           (typeof answer === 'object' && answer.delta !== undefined);
+      
+      // Don't overwrite the supporting content or thought process if we're still streaming
+      // unless it's the first chunk
+      if (isStreaming.current && previousAnswerRef.current) {
+        debugLog("Processing streaming update");
+        // Just update the content for streaming updates
+        if (typeof answer === 'string') {
+          setContent(answer);
+        } else if (answer.content !== undefined) {
+          setContent(answer.content);
+        } else if (answer.delta !== undefined) {
+          setContent(answer.delta);
+        }
+        
+        // Check if this streaming chunk contains any raw data
+        if (answer.raw) {
+          debugLog("Processing raw data in streaming chunk");
+          processRawData(answer.raw);
+        }
+        
+        // Don't process further for streaming updates to avoid losing state
+        previousAnswerRef.current = answer;
+        return;
+      }
+      
+      // When streaming ends, try to process any raw response data
+      if (!isStreaming.current && answer.raw) {
+        debugLog("Processing raw data in final response");
+        processRawData(answer.raw);
+      }
+      
+      // Extract the main content
+      if (typeof answer === 'string') {
+        // It's a raw string, which might contain JSON
+        debugLog("Processing string answer");
+        parseStringAnswer(answer);
+      } else if (typeof answer === 'object') {
+        // It's already an object
+        debugLog("Processing object answer", Object.keys(answer));
+        parseObjectAnswer(answer);
+      }
+      
+      // Store the current answer for comparison in future updates
+      previousAnswerRef.current = answer;
     } catch (error) {
-      console.error("Error logging answer structure:", error);
+      console.error("Error processing answer:", error);
     }
   }, [answer]);
 
-  // State management
-  const [expanded, setExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState('answer');
-  const [isCopied, setIsCopied] = useState(false);
-  const [currentDocumentId, setCurrentDocumentId] = useState(null);
-  const [expandedDocs, setExpandedDocs] = useState(new Set());
-  const [selectedSourceId, setSelectedSourceId] = useState(null);
-  const [citationInfos, setCitationInfos] = useState([]);
-  const [parsedAnswerHtml, setParsedAnswerHtml] = useState('');
-  const [hasAzureThoughtProcess, setHasAzureThoughtProcess] = useState(false);
-  const [hasSupportingContent, setHasSupportingContent] = useState(false);
-  const [supportingContent, setSupportingContent] = useState([]);
-  const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
-  
-  // We'll use a ref for documents to avoid render loops
-  const documentsRef = useRef([]);
-  // Use state for forcing updates after document changes
-  const [forceUpdate, setForceUpdate] = useState(0);
-
-  // References
-  const contentRef = useRef(null);
-  const answerElementId = `answer-content-${index}`;
-
-  // Theme styling
-  const themeStyles = {
-    backgroundColor: theme === 'dark' ? '#1e1e2e' : '#f8f9fa',
-    textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
-    cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
-    borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
-    primaryColor: theme === 'dark' ? '#ff3f3f' : '#e53e3e', // Changed to red
-    secondaryColor: theme === 'dark' ? '#cc0000' : '#b91c1c', // Changed to darker red
-    accentColor: theme === 'dark' ? '#ff4d4d' : '#f87171', // Changed to lighter red
-    xrayColor: theme === 'dark' ? '#e02020' : '#dc2626', // Changed to vibrant red
-    ...customStyles
-  };
-
-  // Deep extraction utility - looks for properties at any depth in the object
-  const deepExtract = useCallback((obj, keys, stopAtFirst = false) => {
-    if (!obj || typeof obj !== 'object') return null;
+  // Function to process raw API response data
+  const processRawData = (raw: string) => {
+    if (!raw) return;
     
-    // First check for direct property match
-    for (const key of keys) {
-      if (obj[key] !== undefined) {
-        if (stopAtFirst) return obj[key];
-        console.log(`Found property '${key}' at root level:`, obj[key]);
+    debugLog("Raw data length", raw.length);
+    
+    // First split by newlines to process individual JSON objects
+    const lines = raw.split('\n').filter(line => line.trim() !== '');
+    
+    debugLog("JSON objects in raw data", lines.length);
+    
+    // Process each line as a separate JSON object
+    lines.forEach(line => {
+      try {
+        const obj = JSON.parse(line);
+        
+        // Check object type and process accordingly
+        if (obj.type === 'citation' && obj.citation) {
+          debugLog("Found citation", obj.citation);
+          processCitation(obj.citation);
+        }
+        else if (obj.type === 'supporting_content' && obj.source) {
+          debugLog("Found supporting content", obj.source);
+          processSupportingContent(obj.source);
+        }
+        else if (obj.type === 'thought_process' && obj.content) {
+          debugLog("Found thought process", { length: obj.content.length });
+          processThoughtProcess(obj.content);
+        }
+        else if (obj.type === 'done' && obj.answer) {
+          debugLog("Found done message with answer", Object.keys(obj.answer));
+          processDoneMessage(obj.answer);
+        }
+        else if (obj.context?.thoughts) {
+          debugLog("Found context with thoughts", { type: typeof obj.context.thoughts });
+          if (Array.isArray(obj.context.thoughts)) {
+            const formatted = formatThoughts(obj.context.thoughts);
+            setThoughtProcess(formatted);
+            setHasThoughts(true);
+          } else if (typeof obj.context.thoughts === 'string') {
+            setThoughtProcess(obj.context.thoughts);
+            setHasThoughts(true);
+          }
+        }
+        else if (obj.context?.data_points?.text) {
+          debugLog("Found context with data points", { count: obj.context.data_points.text.length });
+          processDataPoints(obj.context.data_points.text);
+        }
+      } catch (e) {
+        // Ignore parsing errors for individual lines
+        // Sometimes raw includes non-JSON data or partial JSON objects
+      }
+    });
+  };
+  
+  // Process citation object
+  const processCitation = (citation: any) => {
+    if (!citation) return;
+    
+    const title = citation.fileName || citation.id || 'Citation';
+    const content = citation.text || '';
+    
+    setSupportingContent(prev => {
+      // Check for duplicates
+      const exists = prev.some(source => source.title === title && source.content === content);
+      if (exists) return prev;
+      
+      return [...prev, { title, content, score: citation.score }];
+    });
+    
+    setHasSupporting(true);
+  };
+  
+  // Process supporting content object
+  const processSupportingContent = (source: any) => {
+    if (!source) return;
+    
+    const title = source.fileName || source.id || 'Source';
+    let content = '';
+    
+    if (source.excerpts && Array.isArray(source.excerpts)) {
+      content = source.excerpts.join('\n\n');
+    } else if (source.text) {
+      content = source.text;
+    } else if (source.content) {
+      content = source.content;
+    }
+    
+    // Only process if we have content
+    if (content) {
+      setSupportingContent(prev => {
+        // Check for duplicates
+        const exists = prev.some(existingSource => 
+          existingSource.title === title && existingSource.content === content);
+        if (exists) return prev;
+        
+        return [...prev, { title, content, score: source.score }];
+      });
+      
+      setHasSupporting(true);
+    }
+  };
+  
+  // Process thought process content
+  const processThoughtProcess = (thoughts: string) => {
+    if (!thoughts) return;
+    
+    setThoughtProcess(thoughts);
+    setHasThoughts(true);
+  };
+  
+  // Process done message
+  const processDoneMessage = (answer: any) => {
+    // Extract the main content if available
+    if (answer.content) {
+      setContent(answer.content);
+    }
+    
+    // Extract thought process
+    if (answer.thoughts) {
+      if (typeof answer.thoughts === 'string') {
+        setThoughtProcess(answer.thoughts);
+        setHasThoughts(true);
+      } else if (Array.isArray(answer.thoughts)) {
+        setThoughtProcess(formatThoughts(answer.thoughts));
+        setHasThoughts(true);
+      } else if (answer.context?.thoughts) {
+        if (typeof answer.context.thoughts === 'string') {
+          setThoughtProcess(answer.context.thoughts);
+          setHasThoughts(true);
+        } else if (Array.isArray(answer.context.thoughts)) {
+          setThoughtProcess(formatThoughts(answer.context.thoughts));
+          setHasThoughts(true);
+        }
       }
     }
     
-    // Recursively check for the property in nested objects
-    const results = [];
-    const processObject = (o, path = '') => {
-      if (!o || typeof o !== 'object') return;
-      
-      // Skip checking arrays of primitives to avoid excessive processing
-      if (Array.isArray(o) && o.length > 0 && typeof o[0] !== 'object') return;
-      
-      for (const key in o) {
-        if (Object.prototype.hasOwnProperty.call(o, key)) {
-          // Check if this key matches any of our target keys
-          if (keys.includes(key)) {
-            const currentPath = path ? `${path}.${key}` : key;
-            console.log(`Found property '${key}' at path '${currentPath}':`, o[key]);
-            results.push({ path: currentPath, value: o[key] });
-            if (stopAtFirst) return o[key];
-          }
-          
-          // Recursively process nested objects if not a circular reference
-          if (o[key] && typeof o[key] === 'object' && o[key] !== o) {
-            const currentPath = path ? `${path}.${key}` : key;
-            processObject(o[key], currentPath);
-          }
-        }
-      }
-    };
+    // Extract supporting content
+    if (answer.sources && Array.isArray(answer.sources)) {
+      processSources(answer.sources);
+    } else if (answer.documentExcerpts && Array.isArray(answer.documentExcerpts)) {
+      processSources(answer.documentExcerpts);
+    } else if (answer.citations && Array.isArray(answer.citations)) {
+      answer.citations.forEach((citation: any) => processCitation(citation));
+    }
+  };
+  
+  // Process data points from context
+  const processDataPoints = (dataPoints: string[]) => {
+    if (!dataPoints || !Array.isArray(dataPoints)) return;
     
-    processObject(obj);
-    return stopAtFirst ? null : results;
-  }, []);
-
-  // Extract sources from answer - memoized to avoid unnecessary recalculations
-  const extractAllSources = useCallback(() => {
-    const allSources = [];
-    const sourceMap = new Map();
-
-    const processSource = (source, index) => {
-      if (!source) return;
-
-      const sourceId = source.id || source.documentId || source.fileId ||
-        (source.fileName ? `file-${source.fileName}` : `source-${index}`);
-
-      if (!sourceId) return;
-      const strSourceId = String(sourceId);
-      if (sourceMap.has(strSourceId)) return;
-
-      const normalizedSource = {
-        id: strSourceId,
-        fileName: source.fileName || source.name || source.title || `Document ${strSourceId}`,
-        score: source.score || source.relevanceScore || source.confidenceScore || 0,
-        excerpts: [],
-        url: source.url || source.sourceUrl,
-      };
-
-      // Extract all types of text content
-      normalizedSource.excerpts = [];
+    const sources = dataPoints.map((text, index) => {
+      // Try to parse filename and content from format like "filename.pdf: content"
+      const parts = text.match(/^([^:]+):\s(.+)$/s);
+      
+      if (parts) {
+        return {
+          title: parts[1].trim(),
+          content: parts[2].trim()
+        };
+      } else {
+        return {
+          title: `Source ${index + 1}`,
+          content: text
+        };
+      }
+    });
+    
+    if (sources.length > 0) {
+      setSupportingContent(prev => {
+        // Filter out duplicates
+        const allSources = [...prev, ...sources];
+        const uniqueTitles = new Set();
+        return allSources.filter(source => {
+          const key = `${source.title}:${source.content.substring(0, 50)}`;
+          if (uniqueTitles.has(key)) return false;
+          uniqueTitles.add(key);
+          return true;
+        });
+      });
+      
+      setHasSupporting(true);
+    }
+  };
+  
+  // Process array of sources
+  const processSources = (sources: any[]) => {
+    if (!sources || !Array.isArray(sources)) return;
+    
+    const processedSources = sources.map((source, index) => {
+      const title = source.fileName || source.title || `Source ${index + 1}`;
+      let content = '';
       
       if (source.excerpts && Array.isArray(source.excerpts)) {
-        normalizedSource.excerpts.push(...source.excerpts.filter(e => e !== null && e !== undefined));
-      }
-
-      if (source.snippets && Array.isArray(source.snippets)) {
-        normalizedSource.excerpts.push(...source.snippets.filter(s => s !== null && s !== undefined));
-      }
-
-      if (source.text) normalizedSource.excerpts.push(source.text);
-      if (source.content) normalizedSource.excerpts.push(source.content);
-
-      // Extract highlights
-      normalizedSource.highlights = source.highlights || [];
-
-      // Extract metadata
-      normalizedSource.author = source.author;
-      normalizedSource.datePublished = source.datePublished;
-      normalizedSource.url = source.url || source.sourceUrl;
-      normalizedSource.fileSize = source.fileSize;
-      normalizedSource.type = source.type || getDocumentType(source.fileName);
-      normalizedSource.metadata = { ...source.metadata };
-
-      // If no excerpts but have context, use that
-      if (normalizedSource.excerpts.length === 0 && source.documentContext) {
-        normalizedSource.excerpts.push(source.documentContext);
-      }
-
-      // Deduplicate excerpts
-      if (normalizedSource.excerpts.length > 0) {
-        const uniqueExcerpts = [...new Set(normalizedSource.excerpts)];
-        normalizedSource.excerpts = uniqueExcerpts;
-      }
-
-      allSources.push(normalizedSource);
-      sourceMap.set(strSourceId, true);
-    };
-
-    // Check different locations where sources might be stored
-    if (documentExcerpts && Array.isArray(documentExcerpts)) {
-      documentExcerpts.forEach(processSource);
-    }
-
-    if (searchResults && searchResults.sources && Array.isArray(searchResults.sources)) {
-      searchResults.sources.forEach(processSource);
-    }
-
-    if (answer && answer.sources && Array.isArray(answer.sources)) {
-      answer.sources.forEach(processSource);
-    }
-
-    if (answer && answer.documents) {
-      const documents = Array.isArray(answer.documents) ? answer.documents : [answer.documents];
-      documents.forEach(processSource);
-    }
-
-    // Handle Azure RAG search results format
-    if (answer && answer.search && answer.search.results && Array.isArray(answer.search.results)) {
-      answer.search.results.forEach(processSource);
-    }
-
-    return allSources;
-  }, [answer, documentExcerpts, searchResults]);
-
-  // Extract Azure-specific content using deep search
-  const extractAzureContent = useCallback(() => {
-    if (!answer) return;
-    
-    console.log("Extracting Azure content deeply");
-    
-    // First check for thought process using multiple possible keys
-    const thoughtProcessKeys = ['thought_process', 'thoughtProcess', 'thoughts', 'reasoning', 'rationalization'];
-    const thoughtResult = deepExtract(answer, thoughtProcessKeys, true);
-    
-    if (thoughtResult) {
-      console.log("Found thought process:", thoughtResult);
-      const formattedThought = typeof thoughtResult === 'string' 
-        ? thoughtResult 
-        : JSON.stringify(thoughtResult, null, 2);
-      
-      setHasAzureThoughtProcess(true);
-      setAzureThoughtProcess(formattedThought);
-    }
-    
-    // Check for supporting content using multiple possible keys
-    const supportingContentKeys = ['supporting_content', 'supportingContent', 'evidence', 'citations', 'sources'];
-    const contentResults = deepExtract(answer, supportingContentKeys);
-    
-    for (const result of contentResults) {
-      if (Array.isArray(result.value)) {
-        // Format the content into a uniform structure
-        const formattedContent = result.value.map((item, idx) => {
-          // If the array contains strings, wrap them in objects
-          if (typeof item === 'string') {
-            return {
-              title: `Supporting Content ${idx + 1}`,
-              content: item,
-              source: 'Document'
-            };
-          }
-          
-          // If it's already an object, normalize it
-          if (typeof item === 'object') {
-            return {
-              title: item.title || item.name || item.source || `Supporting Content ${idx + 1}`,
-              content: item.content || item.text || item.excerpt || item.snippet || '',
-              source: item.source || item.document || item.url || ''
-            };
-          }
-          
-          return null;
-        }).filter(Boolean);
-        
-        if (formattedContent.length > 0) {
-          console.log("Found supporting content:", formattedContent);
-          setHasSupportingContent(true);
-          setSupportingContent(formattedContent);
-          break; // Use the first matching array we find
-        }
-      }
-    }
-  }, [answer, deepExtract]);
-
-  // Initialize Azure content when the component mounts
-  useEffect(() => {
-    if (!answer) return;
-    
-    console.log("Initializing Azure content extraction");
-    try {
-      // Extract data from answer object
-      extractAzureContent();
-      
-      // Logging what was found
-      setTimeout(() => {
-        console.log("Content extraction status:");
-        console.log("- Has thought process:", hasAzureThoughtProcess);
-        console.log("- Has supporting content:", hasSupportingContent);
-        console.log("- Supporting content items:", supportingContent.length);
-      }, 100); // Delay to ensure the state is updated
-      
-    } catch (error) {
-      console.error("Error extracting Azure content:", error);
-    }
-  }, [answer, extractAzureContent]);
-
-  // Utility functions
-  const extractContent = useCallback(() => {
-    if (!answer) return '';
-    if (typeof answer === 'string') return answer;
-    if (answer.content) return typeof answer.content === 'string' ? answer.content : JSON.stringify(answer.content, null, 2);
-    if (answer.answer) {
-      return typeof answer.answer === 'string' ? answer.answer : JSON.stringify(answer.answer, null, 2);
-    }
-    if (answer.response) return typeof answer.response === 'string' ? answer.response : JSON.stringify(answer.response, null, 2);
-    return JSON.stringify(answer, null, 2);
-  }, [answer]);
-
-  const extractThoughtProcess = useCallback(() => {
-    let reasoning = '';
-    if (!answer) return reasoning;
-    
-    // Check for Azure specific thought process format first
-    if (answer.thought_process) {
-      return typeof answer.thought_process === 'string' ? answer.thought_process : JSON.stringify(answer.thought_process, null, 2);
-    }
-    
-    // Try alternative property names for thought process
-    if (answer.thoughtProcess) {
-      return typeof answer.thoughtProcess === 'string' ? answer.thoughtProcess : JSON.stringify(answer.thoughtProcess, null, 2);
-    }
-    
-    // Handle other formats
-    if (answer.thoughts) {
-      reasoning = typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
-    }
-    else if (answer.result?.thoughts) {
-      reasoning = typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
-    }
-    else if (answer.systemMessage) { reasoning = answer.systemMessage; }
-    else if (answer.reasoning) { reasoning = answer.reasoning; }
-    
-    return reasoning;
-  }, [answer]);
-
-  const extractSupportingContent = useCallback(() => {
-    if (!answer) return [];
-    
-    // Azure specific supporting content
-    if (answer.supporting_content && Array.isArray(answer.supporting_content)) {
-      return answer.supporting_content;
-    }
-    
-    // Try alternative property names
-    if (answer.supportingContent && Array.isArray(answer.supportingContent)) {
-      return answer.supportingContent;
-    }
-    
-    // Try to convert citations to supporting content if they have content or text
-    if (answer.citations && Array.isArray(answer.citations)) {
-      const contentCitations = answer.citations.filter(c => c.content || c.text);
-      if (contentCitations.length > 0) {
-        return contentCitations.map((citation, index) => ({
-          title: citation.title || citation.source || `Citation ${index + 1}`,
-          content: citation.content || citation.text || '',
-          source: citation.source || citation.title || ''
-        }));
-      }
-    }
-    
-    return [];
-  }, [answer]);
-
-  const extractFollowupQuestions = useCallback(() => {
-    if (!answer) return [];
-    if (answer.followupQuestions && Array.isArray(answer.followupQuestions)) {
-      return answer.followupQuestions;
-    }
-    if (answer.suggestedQuestions && Array.isArray(answer.suggestedQuestions)) {
-      return answer.suggestedQuestions;
-    }
-    return [];
-  }, [answer]);
-
-  // Effects
-  useEffect(() => {
-    if (isCopied) {
-      const timer = setTimeout(() => setIsCopied(false), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [isCopied]);
-
-  // Initialize documents ref when component mounts or when source data changes
-  useEffect(() => {
-    // Directly set the ref value without causing re-renders
-    documentsRef.current = extractAllSources();
-    console.log("Documents extracted:", documentsRef.current.length);
-
-    // Check for Azure format inline citations in the content
-    const content = extractContent();
-    if (typeof content === 'string') {
-      const azureCitationRegex = /\[(.*?)(?:#page=(\d+))?\]/g;
-      let match;
-      const azureCitations = [];
-      let citationCounter = 1;
-      
-      while ((match = azureCitationRegex.exec(content)) !== null) {
-        const fullMatch = match[0];
-        const filename = match[1];
-        const page = match[2] ? parseInt(match[2]) : null;
-        
-        // Only include if it looks like a filename (contains a dot)
-        if (filename && filename.includes('.')) {
-          azureCitations.push({
-            id: `citation-${citationCounter}`,
-            fileName: filename,
-            page: page,
-            index: citationCounter,
-            text: fullMatch
-          });
-          citationCounter++;
-        }
+        content = source.excerpts.join('\n\n');
+      } else if (source.text) {
+        content = source.text;
+      } else if (source.content) {
+        content = source.content;
       }
       
-      // If we found Azure citations in the text, use those
-      if (azureCitations.length > 0) {
-        setCitationInfos(azureCitations);
-      }
-    }
-
-    // Trigger a re-render to update the sources
-    setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources]);
-
-  // Parse the answer content using AnswerParser when the component mounts or answer changes
-  useEffect(() => {
-    if (!answer) return;
+      return { title, content, score: source.score };
+    }).filter(source => source.content);
     
-    // Check for inline Azure citations [FILENAME.pdf#page=NUMBER]
-    const content = extractContent();
-    const hasInlineAzureCitations = typeof content === 'string' && 
-      /\[.*?\.(?:pdf|docx|xlsx|txt)(?:#page=\d+)?\]/i.test(content);
-    
-    if (hasInlineAzureCitations) {
-      // For inline Azure citations, create HTML with clickable links
-      let htmlContent = content;
-      if (typeof htmlContent === 'string') {
-        // Replace [FILENAME.pdf#page=NUMBER] with clickable spans
-        htmlContent = htmlContent.replace(/\[(.*?)(?:#page=(\d+))?\]/g, (match, filename, page) => {
-          if (filename && filename.includes('.')) {
-            return `<span class="azure-citation" data-filename="${filename}" data-page="${page || ''}" style="color: #e53e3e; cursor: pointer; font-weight: 500;">${match}</span>`;
-          }
-          return match;
+    if (processedSources.length > 0) {
+      setSupportingContent(prev => {
+        // Filter out duplicates
+        const allSources = [...prev, ...processedSources];
+        const uniqueTitles = new Set();
+        return allSources.filter(source => {
+          const key = `${source.title}:${source.content.substring(0, 50)}`;
+          if (uniqueTitles.has(key)) return false;
+          uniqueTitles.add(key);
+          return true;
         });
-      } else {
-        htmlContent = "";
-      }
+      });
       
-      setParsedAnswerHtml(htmlContent);
-    } else if (answer.citations && Array.isArray(answer.citations)) {
-      // Handle explicit Azure citation format
-      const azureCitations = answer.citations.map((citation, index) => ({
-        id: citation.id || `citation-${index + 1}`,
-        fileName: citation.title || citation.source || `Citation ${index + 1}`,
-        index: index + 1,
-        text: citation.text || '',
-        page: citation.page,
-        url: citation.url
-      }));
-      
-      setCitationInfos(azureCitations);
-      
-      // For this case, just use the raw content since citations are handled separately
-      setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
-    } else {
-      // Parse the answer using the AnswerParser module for non-specific formats
-      try {
-        const parsedAnswer = parseAnswerToHtml(answer, isStreaming, onCitationClicked);
-        setParsedAnswerHtml(parsedAnswer.answerHtml);
-
-        // Extract citation information
-        const extractedCitations = [];
-        const sources = documentsRef.current;
-
-        // Map the citation IDs to source information
-        parsedAnswer.citations.forEach((citation, index) => {
-          const matchedSource = sources.find(
-            source => source.id === citation ||
-              source.fileName === citation ||
-              (source.fileName && citation && source.fileName.includes(citation))
-          );
-
-          if (matchedSource) {
-            extractedCitations.push({
-              id: matchedSource.id,
-              fileName: matchedSource.fileName,
-              index: index + 1,
-              text: `[${matchedSource.fileName}]`,
-              relevance: matchedSource.score,
-              url: matchedSource.url
-            });
-          } else if (citation) {
-            // If no matching source found, create a generic citation
-            extractedCitations.push({
-              id: citation,
-              fileName: citation,
-              index: index + 1,
-              text: `[${citation}]`
-            });
-          }
-        });
-
-        // Only update citations if we found them and don't already have Azure citations
-        if (extractedCitations.length > 0 && citationInfos.length === 0) {
-          setCitationInfos(extractedCitations);
-        }
-      } catch (error) {
-        console.error("Error parsing answer:", error);
-        // If parsing fails, just use the raw content
-        setParsedAnswerHtml(`<div>${typeof content === 'string' ? content : ''}</div>`);
-      }
+      setHasSupporting(true);
     }
-  }, [answer, isStreaming, onCitationClicked, extractContent]);
-  
-  // Setup click handler for citations in the answer content
-  useEffect(() => {
-    if (!contentRef.current) return;
-    
-    const handleCitationClick = (event) => {
-      // Find all citation references
-      const target = event.target;
-      
-      // Handle Azure inline citations
-      if (target.classList.contains('azure-citation') || target.closest('.azure-citation')) {
-        const citation = target.classList.contains('azure-citation') ? target : target.closest('.azure-citation');
-        if (!citation) return;
-        
-        const filename = citation.getAttribute('data-filename');
-        const page = citation.getAttribute('data-page');
-        
-        if (filename) {
-          // Look for a matching document in our sources
-          const matchingDoc = documentsRef.current.find(doc => 
-            doc.fileName === filename || 
-            doc.id === filename ||
-            (doc.fileName && filename.includes(doc.fileName))
-          );
-          
-          if (matchingDoc) {
-            console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
-            // FIXED: Pass the filename directly instead of the ID
-            onCitationClicked(filename, page);
-          } else {
-            // If no matching document, use the filename as a citation ID
-            console.log(`Clicked on Azure citation: ${filename}, page: ${page}`);
-            onCitationClicked(filename, page);
-          }
-        }
-      }
-    };
-    
-    // Add event listener for the container
-    contentRef.current.addEventListener('click', handleCitationClick);
-    
-    // Clean up
-    return () => {
-      if (contentRef.current) {
-        contentRef.current.removeEventListener('click', handleCitationClick);
-      }
-    };
-  }, [onCitationClicked]);
-
-  // Utility functions
-  const getRelevanceExplanation = (source) => {
-    if (!source) return '';
-    if (source.metadata?.relevance) return source.metadata.relevance;
-
-    const confidence = source.score || 0.6;
-    const confidencePercent = Math.min(100, Math.round(confidence * 100));
-
-    let confidenceLevel = 'medium confidence';
-    if (confidencePercent > 80) confidenceLevel = 'high confidence';
-    if (confidencePercent < 50) confidenceLevel = 'some relevance';
-
-    return `This ${source.type || 'document'} contains information relevant to your query. The system has ${confidenceLevel} (${confidencePercent}%) that this source contributes valuable information to the answer.`;
   };
-
-  // Handlers
-  const toggleDocExpansion = (docId) => {
-    setExpandedDocs(prev => {
+  
+  // Function to parse string answers (Safari format)
+  const parseStringAnswer = (rawAnswer: string) => {
+    // First, extract the human-readable part (before any JSON)
+    let humanContent = rawAnswer;
+    const jsonStartIndex = rawAnswer.indexOf('{');
+    
+    if (jsonStartIndex > 0) {
+      humanContent = rawAnswer.substring(0, jsonStartIndex).trim();
+      debugLog("Extracted human content from string", { length: humanContent.length });
+      
+      // Try to find and parse JSON parts
+      try {
+        // Look for the main context object with various patterns
+        let contextJson: any = null;
+        
+        // Pattern 1: Look for {"delta":..., "context":...}
+        const deltaContextMatch = rawAnswer.match(/\{"delta"[\s\S]*?"context"[\s\S]*?\}/);
+        if (deltaContextMatch) {
+          debugLog("Found delta+context pattern");
+          try {
+            contextJson = JSON.parse(deltaContextMatch[0]);
+            debugLog("Successfully parsed delta+context JSON", Object.keys(contextJson.context || {}));
+          } catch (e) {
+            debugLog("Failed to parse delta+context match");
+          }
+        }
+        
+        // Pattern 2: Look for {"type":"done","answer":...}
+        if (!contextJson) {
+          const doneMatch = rawAnswer.match(/\{"type":"done","answer"[\s\S]*?\}/);
+          if (doneMatch) {
+            debugLog("Found done+answer pattern");
+            try {
+              const doneJson = JSON.parse(doneMatch[0]);
+              if (doneJson.answer && doneJson.answer.context) {
+                debugLog("Extracting context from done+answer");
+                contextJson = { context: doneJson.answer.context };
+              }
+            } catch (e) {
+              debugLog("Failed to parse done+answer match");
+            }
+          }
+        }
+        
+        // Extract data points (supporting content)
+        if (contextJson?.context?.data_points?.text && 
+            Array.isArray(contextJson.context.data_points.text)) {
+          
+          debugLog("Found data_points.text", contextJson.context.data_points.text.length);
+          
+          processDataPoints(contextJson.context.data_points.text);
+        }
+        
+        // Extract thoughts
+        if (contextJson?.context?.thoughts) {
+          if (Array.isArray(contextJson.context.thoughts)) {
+            debugLog("Found thoughts array", contextJson.context.thoughts.length);
+            const formattedThoughts = formatThoughts(contextJson.context.thoughts);
+            setThoughtProcess(formattedThoughts);
+            setHasThoughts(true);
+          } else if (typeof contextJson.context.thoughts === 'string') {
+            debugLog("Found thoughts string");
+            setThoughtProcess(contextJson.context.thoughts);
+            setHasThoughts(true);
+          } else if (typeof contextJson.context.thoughts === 'object') {
+            debugLog("Found thoughts object");
+            setThoughtProcess(JSON.stringify(contextJson.context.thoughts, null, 2));
+            setHasThoughts(true);
+          }
+        }
+        
+        // Look for individual supporting_content objects
+        // First try to find all supporting_content objects
+        const supportingMatches = Array.from(rawAnswer.matchAll(/\{"type":"supporting_content","source":([\s\S]*?)\}/g));
+        debugLog("Found supporting_content matches", supportingMatches.length);
+        
+        for (const match of supportingMatches) {
+          try {
+            debugLog("Processing supporting_content match");
+            const sourceObj = JSON.parse(`{"source":${match[1]}}`).source;
+            processSupportingContent(sourceObj);
+          } catch (e) {
+            console.error("Error parsing supporting_content:", e);
+          }
+        }
+        
+        // Look for citation objects too (they often have content)
+        const citationMatches = Array.from(rawAnswer.matchAll(/\{"type":"citation","citation":([\s\S]*?)\}/g));
+        debugLog("Found citation matches", citationMatches.length);
+        
+        for (const match of citationMatches) {
+          try {
+            debugLog("Processing citation match");
+            const citationObj = JSON.parse(`{"citation":${match[1]}}`).citation;
+            processCitation(citationObj);
+          } catch (e) {
+            console.error("Error parsing citation:", e);
+          }
+        }
+        
+        // Look for thought process entries
+        const thoughtMatches = Array.from(rawAnswer.matchAll(/\{"type":"thought_process","content":([\s\S]*?)\}/g));
+        debugLog("Found thought_process matches", thoughtMatches.length);
+        
+        for (const match of thoughtMatches) {
+          try {
+            debugLog("Processing thought_process match");
+            const content = JSON.parse(`{"content":${match[1]}}`).content;
+            processThoughtProcess(content);
+          } catch (e) {
+            console.error("Error parsing thought_process:", e);
+          }
+        }
+        
+        // Look for done messages
+        const doneMatches = Array.from(rawAnswer.matchAll(/\{"type":"done","answer":([\s\S]*?)\}/g));
+        debugLog("Found done matches", doneMatches.length);
+        
+        for (const match of doneMatches) {
+          try {
+            debugLog("Processing done match");
+            const answer = JSON.parse(`{"answer":${match[1]}}`).answer;
+            processDoneMessage(answer);
+          } catch (e) {
+            console.error("Error parsing done message:", e);
+          }
+        }
+        
+      } catch (e) {
+        console.error("Error parsing JSON:", e);
+      }
+    }
+    
+    // Store content even if we failed to parse citations
+    if (humanContent) {
+      setContent(humanContent);
+    } else {
+      setContent(rawAnswer);
+    }
+  };
+  
+  // Function to parse object answers (Chrome format)
+  const parseObjectAnswer = (objAnswer: any) => {
+    debugLog("Processing object answer with keys", Object.keys(objAnswer));
+    
+    // Handle streaming updates - just update the content
+    if (objAnswer.metadata?.isStreaming === true) {
+      debugLog("Processing streaming update");
+      setContent(objAnswer.content || objAnswer.delta || "");
+      return;
+    }
+    
+    // Extract main content first - this is always needed
+    if (objAnswer.content !== undefined) {
+      setContent(typeof objAnswer.content === 'string' ? objAnswer.content : JSON.stringify(objAnswer.content));
+    } else if (objAnswer.delta !== undefined) {
+      setContent(typeof objAnswer.delta === 'string' ? objAnswer.delta : JSON.stringify(objAnswer.delta));
+    }
+    
+    // If the object has a delta and context structure (matching the example)
+    if (objAnswer.context) {
+      debugLog("Found context structure in object");
+      
+      // Extract supporting content from data_points.text
+      if (objAnswer.context.data_points?.text && 
+          Array.isArray(objAnswer.context.data_points.text)) {
+        
+        debugLog("Found data_points.text in object", objAnswer.context.data_points.text.length);
+        processDataPoints(objAnswer.context.data_points.text);
+      }
+      
+      // Extract thoughts
+      if (objAnswer.context.thoughts) {
+        debugLog("Found thoughts in object context");
+        if (Array.isArray(objAnswer.context.thoughts)) {
+          const formattedThoughts = formatThoughts(objAnswer.context.thoughts);
+          setThoughtProcess(formattedThoughts);
+          setHasThoughts(true);
+        } else if (typeof objAnswer.context.thoughts === 'string') {
+          setThoughtProcess(objAnswer.context.thoughts);
+          setHasThoughts(true);
+        } else if (typeof objAnswer.context.thoughts === 'object') {
+          setThoughtProcess(JSON.stringify(objAnswer.context.thoughts, null, 2));
+          setHasThoughts(true);
+        }
+      }
+      
+      // Return early as we've processed the context
+      return;
+    }
+    
+    // Content might be a JSON string - try to parse if it looks like it
+    if (typeof objAnswer.content === 'string' && 
+        (objAnswer.content.includes('{"delta":') || 
+         objAnswer.content.includes('{"type":') || 
+         objAnswer.content.includes('{"context":'))) {
+      debugLog("Object answer content contains JSON, parsing as string");
+      parseStringAnswer(objAnswer.content);
+      return;
+    }
+    
+    // Extract supporting content
+    const sources: ChatSource[] = [];
+    
+    // Try direct supporting_content property or from metadata
+    const supportingFromMetadata = objAnswer.metadata?.supportingContent;
+    
+    if (supportingFromMetadata && Array.isArray(supportingFromMetadata)) {
+      debugLog("Found supportingContent in metadata", supportingFromMetadata.length);
+      supportingFromMetadata.forEach((item: any, index: number) => {
+        sources.push({
+          title: item.fileName || item.title || `Source ${index + 1}`,
+          content: item.content || item.text || '',
+          score: item.score
+        });
+      });
+    }
+    
+    // Try direct supporting_content property
+    if (objAnswer.supporting_content) {
+      debugLog("Found supporting_content property", 
+               Array.isArray(objAnswer.supporting_content) ? 
+               objAnswer.supporting_content.length : 
+               typeof objAnswer.supporting_content);
+      
+      if (Array.isArray(objAnswer.supporting_content)) {
+        objAnswer.supporting_content.forEach((item: any, index: number) => {
+          debugLog(`Supporting item ${index}`, Object.keys(item));
+          sources.push({
+            title: item.title || item.source || `Source ${index + 1}`,
+            content: item.content || item.text || '',
+            score: item.score
+          });
+        });
+      }
+    }
+    
+    // Try supportingContent property (alternate casing)
+    if (objAnswer.supportingContent) {
+      debugLog("Found supportingContent property", 
+               Array.isArray(objAnswer.supportingContent) ? 
+               objAnswer.supportingContent.length : 
+               typeof objAnswer.supportingContent);
+      
+      if (Array.isArray(objAnswer.supportingContent)) {
+        objAnswer.supportingContent.forEach((item: any, index: number) => {
+          debugLog(`SupportingContent item ${index}`, Object.keys(item));
+          sources.push({
+            title: item.title || item.source || `Source ${index + 1}`,
+            content: item.content || item.text || '',
+            score: item.score
+          });
+        });
+      }
+    }
+    
+    // Try searchResults property
+    if (objAnswer.searchResults?.sources) {
+      debugLog("Found searchResults sources", 
+               Array.isArray(objAnswer.searchResults.sources) ? 
+               objAnswer.searchResults.sources.length : 
+               typeof objAnswer.searchResults.sources);
+      
+      if (Array.isArray(objAnswer.searchResults.sources)) {
+        objAnswer.searchResults.sources.forEach((source: any, index: number) => {
+          debugLog(`SearchResult source ${index}`, Object.keys(source));
+          sources.push({
+            title: source.fileName || `Source ${index + 1}`,
+            content: source.text || source.excerpts?.join('\n\n') || '',
+            score: source.score
+          });
+        });
+      }
+    }
+    
+    // Try documentExcerpts property
+    if (objAnswer.documentExcerpts) {
+      debugLog("Found documentExcerpts", 
+               Array.isArray(objAnswer.documentExcerpts) ? 
+               objAnswer.documentExcerpts.length : 
+               typeof objAnswer.documentExcerpts);
+      
+      if (Array.isArray(objAnswer.documentExcerpts)) {
+        objAnswer.documentExcerpts.forEach((excerpt: any, index: number) => {
+          if (excerpt) {
+            debugLog(`DocumentExcerpt ${index}`, Object.keys(excerpt));
+            sources.push({
+              title: excerpt.fileName || `Document ${index + 1}`,
+              content: excerpt.text || excerpt.excerpts?.join('\n\n') || '',
+              score: excerpt.score
+            });
+          }
+        });
+      }
+    }
+    
+    // Look for any type:supporting_content objects
+    if (typeof objAnswer === 'object' && 'type' in objAnswer && objAnswer.type === 'supporting_content' && objAnswer.source) {
+      debugLog("Found direct supporting_content object");
+      sources.push({
+        title: objAnswer.source.fileName || objAnswer.source.id || "Source",
+        content: objAnswer.source.text || (objAnswer.source.excerpts ? objAnswer.source.excerpts.join('\n\n') : ''),
+        score: objAnswer.source.score
+      });
+    }
+    
+    // Look for any type:citation objects
+    if (typeof objAnswer === 'object' && 'type' in objAnswer && objAnswer.type === 'citation' && objAnswer.citation) {
+      debugLog("Found direct citation object");
+      sources.push({
+        title: objAnswer.citation.fileName || objAnswer.citation.id || "Citation",
+        content: objAnswer.citation.text || '',
+        score: objAnswer.citation.score
+      });
+    }
+    
+    if (sources.length > 0) {
+      debugLog("Total supporting content sources added", sources.length);
+      setSupportingContent(prev => {
+        // De-duplicate sources
+        const allSources = [...prev, ...sources];
+        const uniqueSources = new Map();
+        
+        allSources.forEach(source => {
+          const key = `${source.title}:${source.content.substring(0, 50)}`;
+          uniqueSources.set(key, source);
+        });
+        
+        return Array.from(uniqueSources.values());
+      });
+      
+      setHasSupporting(true);
+    }
+    
+    // Extract thought process
+    let foundThoughts = false;
+    
+    // Try the thoughtProcess from metadata
+    if (objAnswer.metadata?.thoughtProcess) {
+      debugLog("Found thoughtProcess in metadata");
+      setThoughtProcess(objAnswer.metadata.thoughtProcess);
+      setHasThoughts(true);
+      foundThoughts = true;
+    }
+    
+    // Try the thoughts property
+    if (!foundThoughts && objAnswer.thoughts) {
+      debugLog("Found thoughts property", typeof objAnswer.thoughts);
+      setHasThoughts(true);
+      foundThoughts = true;
+      
+      if (Array.isArray(objAnswer.thoughts)) {
+        setThoughtProcess(formatThoughts(objAnswer.thoughts));
+      } else if (typeof objAnswer.thoughts === 'string') {
+        setThoughtProcess(objAnswer.thoughts);
+      } else {
+        setThoughtProcess(JSON.stringify(objAnswer.thoughts, null, 2));
+      }
+    }
+    
+    // Try thought_process property
+    if (!foundThoughts && objAnswer.thought_process) {
+      debugLog("Found thought_process property", typeof objAnswer.thought_process);
+      setHasThoughts(true);
+      
+      if (typeof objAnswer.thought_process === 'string') {
+        setThoughtProcess(objAnswer.thought_process);
+      } else {
+        setThoughtProcess(JSON.stringify(objAnswer.thought_process, null, 2));
+      }
+    }
+    
+    // Try session_state property - sometimes contains thought process
+    if (!foundThoughts && objAnswer.session_state) {
+      debugLog("Found session_state, might contain thoughts");
+      setThoughtProcess("Session state: " + JSON.stringify(objAnswer.session_state, null, 2));
+      setHasThoughts(true);
+    }
+  };
+  
+  // Format thoughts into markdown - handle more formats
+  const formatThoughts = (thoughts: any[]): string => {
+    if (!thoughts || thoughts.length === 0) return "";
+    
+    return thoughts.map((thought: any, index: number) => {
+      // If it's just a string, return it
+      if (typeof thought === 'string') {
+        return thought;
+      }
+      
+      let thoughtText = '';
+      
+      // Add title if available
+      if (thought.title) {
+        thoughtText += `## ${thought.title}\n\n`;
+      } else {
+        thoughtText += `## Thought ${index + 1}\n\n`;
+      }
+      
+      // Add description/content
+      if (thought.description) {
+        if (Array.isArray(thought.description)) {
+          thoughtText += thought.description.map((item: any) => {
+            if (typeof item === 'string') {
+              return item;
+            }
+            if (item.role && item.content) {
+              return `**${item.role}**: ${item.content}\n\n`;
+            }
+            return JSON.stringify(item, null, 2);
+          }).join('\n');
+        } else if (typeof thought.description === 'string') {
+          thoughtText += thought.description;
+        } else {
+          thoughtText += JSON.stringify(thought.description, null, 2);
+        }
+      } else if (thought.content) {
+        thoughtText += typeof thought.content === 'string' ? 
+          thought.content : JSON.stringify(thought.content, null, 2);
+      }
+      
+      // Add props if available
+      if (thought.props && Object.keys(thought.props).length > 0) {
+        thoughtText += `\n\n*Using: ${Object.keys(thought.props).join(', ')}*`;
+      }
+      
+      return thoughtText;
+    }).join('\n\n---\n\n');
+  };
+  
+  // Copy to clipboard handler
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  
+  // Toggle source expansion
+  const toggleSource = (index: number) => {
+    setExpandedSources(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(docId)) { newSet.delete(docId); }
-      else { newSet.add(docId); }
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
       return newSet;
     });
   };
-
-  const handleDocumentClick = (source) => {
-    if (!source || !source.id) return;
-    toggleDocExpansion(source.id);
-    setCurrentDocumentId(source.id);
-  };
-
-  const getCurrentDocument = useCallback(() => {
-    if (!currentDocumentId) return null;
-    // Use the documents ref instead of calling extractAllSources()
-    return documentsRef.current.find(s => s.id === currentDocumentId);
-  }, [currentDocumentId]);
-
-  const handleCopyToClipboard = () => {
-    const contentToCopy = extractContent();
-    try {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(contentToCopy)
-          .then(() => setIsCopied(true))
-          .catch(err => {
-            console.error("Copy failed:", err);
-          });
-      }
-    } catch (err) {
-      console.error("Copy failed:", err);
+  
+  // Theme colors
+  const colors = {
+    background: theme === 'dark' ? '#1e1e2e' : '#ffffff',
+    text: theme === 'dark' ? '#e4e6eb' : '#18181b',
+    border: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
+    accent: theme === 'dark' ? '#ff3f3f' : '#e53e3e',
+    highlight: theme === 'dark' ? '#322f3d' : '#f7f7f7',
+    tab: {
+      active: theme === 'dark' ? '#3f3f5a' : '#f8fafc',
+      inactive: theme === 'dark' ? '#1e1e2e' : '#ffffff'
     }
   };
-
-  // Get extracted data - use memoized callbacks to avoid unnecessary calculations
-  const content = extractContent();
-  const thoughtProcess = extractThoughtProcess();
-  const followupQuestions = extractFollowupQuestions();
-  const extractedSupportingContent = extractSupportingContent();
-  const sources = documentsRef.current;
-  const currentDocument = getCurrentDocument();
   
-  // Check if we have thought process either from Azure state or extraction
-  const hasThoughts = hasAzureThoughtProcess || (thoughtProcess && thoughtProcess.length > 0);
-  
-  // Check if we have supporting content either from Azure state or extraction
-  const hasSupportingContentData = hasSupportingContent || 
-    (supportingContent && supportingContent.length > 0) || 
-    (extractedSupportingContent && extractedSupportingContent.length > 0);
-  
-  const hasSources = sources && sources.length > 0;
-
-  // Animation variants
-  const containerVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-    selected: {
-      scale: 1.005,
-      boxShadow: "0 4px 20px rgba(99, 102, 241, 0.15)",
-      transition: { duration: 0.2 }
-    }
-  };
-
-  const tabAnimation = {
-    initial: { opacity: 0, y: 10 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: -10 }
-  };
-
   return (
-    <motion.div
-      initial="hidden"
-      animate={isSelected ? "selected" : "visible"}
-      variants={containerVariants}
-      className={`rounded-lg shadow-sm border ${isSelected ? 'border-indigo-500' : 'border-transparent'
-        } overflow-hidden`}
-      style={{
-        backgroundColor: themeStyles.cardBackground,
-        color: themeStyles.textColor
+    <div 
+      className="rounded-lg shadow-sm overflow-hidden"
+      style={{ 
+        backgroundColor: colors.background,
+        color: colors.text,
+        border: `1px solid ${colors.border}`
       }}
     >
-      {/* Header */}
-      <AnswerHeader
-        expanded={expanded}
-        setExpanded={setExpanded}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        isCopied={isCopied}
-        hasThoughts={hasThoughts}
-        hasSources={hasSources}
-        hasXray={false} // Disabled X-Ray
-        hasImages={false} // Disabled Images
-        handleCopyToClipboard={handleCopyToClipboard}
-        onThoughtProcessClicked={onThoughtProcessClicked}
-        onSupportingContentClicked={onSupportingContentClicked}
-        onRefreshClicked={onRefreshClicked}
-        themeStyles={themeStyles}
-      />
-
-      {/* Document detail view */}
-      {currentDocument && (
-        <DocumentDetail
-          document={currentDocument}
-          setCurrentDocumentId={setCurrentDocumentId}
-          setActiveTab={setActiveTab}
-          themeStyles={themeStyles}
-          getRelevanceExplanation={getRelevanceExplanation}
-          onCitationClicked={onCitationClicked}
-        />
-      )}
-
-      {/* Tab navigation */}
-      {expanded && (
-        <div className="border-b" style={{ borderColor: themeStyles.borderColor }}>
-          <div className="flex space-x-2 overflow-x-auto">
+      {/* Header with copy button */}
+      <div className="flex justify-between items-center p-3 border-b" style={{ borderColor: colors.border }}>
+        <h3 className="text-lg font-medium">Answer</h3>
+        <button
+          onClick={copyToClipboard}
+          className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          aria-label="Copy to clipboard"
+        >
+          {copied ? <Check size={18} className="text-green-500" /> : <Copy size={18} />}
+        </button>
+      </div>
+      
+      {/* Tabs for different sections */}
+      <div className="border-b" style={{ borderColor: colors.border }}>
+        <div className="flex space-x-2 overflow-x-auto">
+          <button
+            className={`px-3 py-2 text-sm font-medium ${
+              activeTab === 'answer' ? 'border-b-2' : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+            onClick={() => setActiveTab('answer')}
+            style={{
+              borderColor: activeTab === 'answer' ? colors.accent : 'transparent',
+              color: activeTab === 'answer' ? colors.accent : colors.text
+            }}
+          >
+            Answer
+          </button>
+          
+          {hasSupporting && (
             <button
-              className={`px-3 py-2 text-sm font-medium ${activeTab === 'answer'
-                  ? 'border-b-2'
-                  : 'hover:text-gray-700 hover:border-gray-300'
-                }`}
-              onClick={() => setActiveTab('answer')}
+              className={`px-3 py-2 text-sm font-medium flex items-center ${
+                activeTab === 'supporting' ? 'border-b-2' : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+              }`}
+              onClick={() => setActiveTab('supporting')}
               style={{
-                color: activeTab === 'answer' ? themeStyles.primaryColor : themeStyles.textColor,
-                borderColor: activeTab === 'answer' ? themeStyles.primaryColor : 'transparent'
+                borderColor: activeTab === 'supporting' ? '#0EA5E9' : 'transparent',
+                color: activeTab === 'supporting' ? '#0EA5E9' : colors.text
               }}
             >
-              Answer
+              <FileText size={14} className="mr-1" />
+              Supporting Content ({supportingContent.length})
             </button>
-
-            {hasThoughts && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'thought-process'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => setActiveTab('thought-process')}
-                style={{
-                  color: activeTab === 'thought-process' ? '#F59E0B' : themeStyles.textColor,
-                  borderColor: activeTab === 'thought-process' ? '#F59E0B' : 'transparent'
-                }}
-              >
-                <Lightbulb size={14} className="mr-1" />
-                Thought Process
-              </button>
-            )}
-
-            {hasSupportingContentData && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'supporting-content'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => setActiveTab('supporting-content')}
-                style={{
-                  color: activeTab === 'supporting-content' ? '#0EA5E9' : themeStyles.textColor,
-                  borderColor: activeTab === 'supporting-content' ? '#0EA5E9' : 'transparent'
-                }}
-              >
-                <FileText size={14} className="mr-1" />
-                Supporting Content
-              </button>
-            )}
-
-            {hasSources && (
-              <button
-                className={`px-3 py-2 text-sm font-medium flex items-center ${activeTab === 'sources'
-                    ? 'border-b-2'
-                    : 'hover:border-gray-300'
-                  }`}
-                onClick={() => setActiveTab('sources')}
-                style={{
-                  color: activeTab === 'sources' ? themeStyles.secondaryColor : themeStyles.textColor,
-                  borderColor: activeTab === 'sources' ? themeStyles.secondaryColor : 'transparent'
-                }}
-              >
-                <Database size={14} className="mr-1" />
-                Sources ({sources.length})
-              </button>
-            )}
-          </div>
+          )}
+          
+          {hasThoughts && (
+            <button
+              className={`px-3 py-2 text-sm font-medium flex items-center ${
+                activeTab === 'thoughts' ? 'border-b-2' : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+              }`}
+              onClick={() => setActiveTab('thoughts')}
+              style={{
+                borderColor: activeTab === 'thoughts' ? '#F59E0B' : 'transparent',
+                color: activeTab === 'thoughts' ? '#F59E0B' : colors.text
+              }}
+            >
+              <Brain size={14} className="mr-1" />
+              Thought Process
+            </button>
+          )}
         </div>
-      )}
-
+      </div>
+      
       {/* Tab content */}
-      <AnimatePresence mode="wait">
-        {expanded && (
-          <>
-            {/* Answer tab */}
-            {activeTab === 'answer' && (
-              <motion.div
-                key="answer-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
+      <motion.div
+        key={activeTab}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="p-4"
+      >
+        {/* Answer content */}
+        {activeTab === 'answer' && (
+          <div className="prose max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
+        
+        {/* Supporting content */}
+        {activeTab === 'supporting' && (
+          <div className="space-y-3">
+            {supportingContent.map((source, index) => (
+              <div 
+                key={index} 
+                className="border rounded-md overflow-hidden"
+                style={{ borderColor: colors.border }}
               >
-                <div
-                  id={answerElementId}
-                  ref={contentRef}
-                  className="prose max-w-none"
-                  style={{ color: themeStyles.textColor }}
-                >
-                  <div dangerouslySetInnerHTML={{ __html: parsedAnswerHtml || (typeof content === 'string' ? content : '') }} />
-                </div>
-
-                {isStreaming && (
-                  <motion.span
-                    className="inline-block"
-                    animate={{ opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                  >
-                    <span>...</span>
-                  </motion.span>
-                )}
-
-                {/* Citation list if we have citations */}
-                {citationInfos.length > 0 && (
-                  <div className="mt-4 pt-4 border-t" style={{ borderColor: themeStyles.borderColor }}>
-                    <h4 className="text-sm font-medium mb-2">Citations</h4>
-                    <ol className="list-decimal pl-5 space-y-1">
-                      {citationInfos.map((citation) => (
-                        <li
-                          key={`citation-${citation.index}`}
-                          id={`citation-${citation.index}`}
-                          className="text-sm"
-                        >
-                          <span
-                            className="cursor-pointer hover:underline"
-                            onClick={() => {
-                              // If there's a direct URL on the citation, use that
-                              if (citation.url) {
-                                window.open(citation.url, '_blank');
-                                return;
-                              }
-                              
-                              // FIXED: Use fileName instead of id for citation click handler
-                              onCitationClicked(citation.fileName, citation.page);
-                            }}
-                            style={{ color: themeStyles.primaryColor }}
-                          >
-                            {citation.fileName || citation.id}
-                          </span>
-                          {citation.page && <span> (page {citation.page})</span>}
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
-
-                {/* Follow-up questions */}
-                {showFollowupQuestions && followupQuestions.length > 0 && (
-                  <div className="mt-6">
-                    <h4
-                      className="text-sm font-medium mb-2"
-                      style={{ color: themeStyles.primaryColor }}
-                    >
-                      Follow-up Questions:
-                    </h4>
-                    <div className="flex flex-wrap gap-2">
-                      {followupQuestions.map((question, i) => (
-                        <button
-                          key={i}
-                          onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(question)}
-                          className="px-3 py-1.5 text-sm rounded-full flex items-center"
-                          style={{
-                            backgroundColor: `${themeStyles.primaryColor}10`,
-                            color: themeStyles.primaryColor
-                          }}
-                        >
-                          <MessageSquare size={12} className="mr-1.5" />
-                          {question}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {/* Thought Process tab */}
-            {activeTab === 'thought-process' && hasThoughts && (
-              <motion.div
-                key="thought-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: 'rgba(245, 158, 11, 0.05)',
-                    borderColor: 'rgba(245, 158, 11, 0.2)'
+                <div 
+                  className="p-3 flex justify-between items-center cursor-pointer"
+                  onClick={() => toggleSource(index)}
+                  style={{ 
+                    backgroundColor: expandedSources.has(index) ? colors.highlight : 'transparent' 
                   }}
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-medium flex items-center" style={{ color: '#F59E0B' }}>
-                      <Lightbulb size={18} className="mr-2" />
-                      AI Thought Process
-                    </h3>
+                  <div className="flex items-center">
+                    <FileText size={16} className="text-blue-500 mr-2" />
+                    <span className="font-medium">{source.title || `Source ${index + 1}`}</span>
+                    {source.score !== undefined && (
+                      <span className="ml-2 text-xs text-gray-500">
+                        ({Math.round(source.score * 100)}% match)
+                      </span>
+                    )}
                   </div>
-
-                  <div
-                    className="rounded-md border p-3 overflow-auto max-h-96 text-sm font-mono"
-                    style={{
-                      backgroundColor: themeStyles.cardBackground,
-                      borderColor: 'rgba(245, 158, 11, 0.2)'
+                  {expandedSources.has(index) ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </div>
+                
+                {expandedSources.has(index) && (
+                  <div 
+                    className="p-3 text-sm border-t overflow-auto max-h-96"
+                    style={{ 
+                      borderColor: colors.border,
+                      backgroundColor: colors.highlight
                     }}
                   >
-                    <pre className="whitespace-pre-wrap">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {hasAzureThoughtProcess ? azureThoughtProcess : thoughtProcess}
-                      </ReactMarkdown>
-                    </pre>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {source.content || "No content available"}
+                    </ReactMarkdown>
                   </div>
-                </div>
-              </motion.div>
-            )}
-            
-            {/* Supporting Content tab - for Azure specifics */}
-            {activeTab === 'supporting-content' && hasSupportingContentData && (
-              <motion.div
-                key="supporting-content-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: 'rgba(14, 165, 233, 0.05)',
-                    borderColor: 'rgba(14, 165, 233, 0.2)'
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-medium flex items-center" style={{ color: '#0EA5E9' }}>
-                      <FileText size={18} className="mr-2" />
-                      Supporting Content
-                    </h3>
-                  </div>
-
-                  <div className="space-y-4">
-                    {/* Use supporting content from state, or fall back to extracted */}
-                    {(supportingContent.length > 0 ? supportingContent : extractedSupportingContent).map((item, idx) => (
-                      <div 
-                        key={idx}
-                        className="rounded-md border p-3 overflow-auto text-sm"
-                        style={{
-                          backgroundColor: themeStyles.cardBackground,
-                          borderColor: 'rgba(14, 165, 233, 0.2)'
-                        }}
-                      >
-                        <div className="font-medium mb-2 text-sm">{item.title || `Supporting Content ${idx + 1}`}</div>
-                        <div className="prose max-w-none text-sm">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {item.content || item.text || ''}
-                          </ReactMarkdown>
-                        </div>
-                        {item.source && (
-                          <div className="mt-2 text-xs text-gray-500">
-                            Source: {item.source}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Sources tab */}
-            {activeTab === 'sources' && hasSources && (
-              <motion.div
-                key="sources-tab"
-                variants={tabAnimation}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.3 }}
-                className="p-4"
-              >
-                <div
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: `${themeStyles.secondaryColor}10`,
-                    borderColor: `${themeStyles.secondaryColor}30`
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <h3
-                      className="text-lg font-medium flex items-center"
-                      style={{ color: themeStyles.secondaryColor }}
-                    >
-                      <Database size={18} className="mr-2" />
-                      Referenced Documents
-                    </h3>
-
-                    <div className="flex gap-2">
-                      <span
-                        className="px-2 py-1 text-xs rounded-full flex items-center"
-                        style={{
-                          backgroundColor: `${themeStyles.secondaryColor}20`,
-                          color: themeStyles.secondaryColor
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
-                          <polyline points="14 2 14 8 20 8"></polyline>
-                        </svg>
-                        {sources.length} Documents
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 space-y-2">
-                    {sources.map((source, index) => (
-                      <div
-                        key={`${source.id}-${index}`}
-                        className="rounded-md border overflow-hidden"
-                        style={{
-                          backgroundColor: themeStyles.cardBackground,
-                          borderColor: themeStyles.borderColor
-                        }}
-                      >
-                        <div
-                          className="flex items-center justify-between gap-2 text-sm p-3 cursor-pointer"
-                          onClick={() => handleDocumentClick(source)}
-                          style={{ color: themeStyles.textColor }}
-                        >
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center">
-                                <span className="truncate font-medium" title={source.fileName}>
-                                  {source.fileName}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center text-xs opacity-70 mt-0.5 space-x-2">
-                                {source.author && (
-                                  <span className="truncate" title={`Author: ${source.author}`}>
-                                    {source.author}
-                                  </span>
-                                )}
-                                {source.datePublished && (
-                                  <span title={`Date: ${formatDate(source.datePublished)}`}>
-                                    {formatDate(source.datePublished)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            {source.score !== undefined && (
-                              <span
-                                className="px-1.5 py-0.5 rounded-full text-xs font-medium"
-                                title={`Relevance score: ${source.score}`}
-                                style={{
-                                  backgroundColor: `${themeStyles.secondaryColor}20`,
-                                  color: themeStyles.secondaryColor
-                                }}
-                              >
-                                {formatScoreDisplay(source.score)}
-                              </span>
-                            )}
-
-                            {expandedDocs.has(source.id) ? (
-                              <ChevronUp size={14} className="opacity-70" />
-                            ) : (
-                              <ChevronDown size={14} className="opacity-70" />
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Expanded document preview */}
-                        {expandedDocs.has(source.id) && (
-                          <div
-                            className="border-t p-3"
-                            style={{
-                              backgroundColor: `${themeStyles.secondaryColor}05`,
-                              borderColor: themeStyles.borderColor
-                            }}
-                          >
-                            {source.excerpts && source.excerpts.length > 0 && (
-                              <div className="mb-3">
-                                <h4 className="text-xs font-medium mb-1">Excerpts:</h4>
-                                <div 
-                                  className="text-xs p-2 rounded bg-gray-50 dark:bg-gray-800 overflow-auto max-h-32"
-                                  style={{
-                                    backgroundColor: `${themeStyles.backgroundColor}`,
-                                    color: themeStyles.textColor
-                                  }}
-                                >
-                                  {source.excerpts.map((excerpt, i) => (
-                                    <div key={i} className="mb-2 last:mb-0">
-                                      {excerpt}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            <div className="flex justify-end mt-3 space-x-2">
-                              <button
-                                className="text-xs px-2 py-1 rounded flex items-center"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // FIXED: Use fileName instead of id for citation
-                                  onCitationClicked(source.fileName);
-                                }}
-                                style={{
-                                  backgroundColor: `${themeStyles.secondaryColor}20`,
-                                  color: themeStyles.secondaryColor
-                                }}
-                              >
-                                View Document
-                              </button>
-                              <button
-                                className="text-xs px-2 py-1 rounded flex items-center"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCurrentDocumentId(source.id);
-                                }}
-                                style={{
-                                  backgroundColor: `${themeStyles.secondaryColor}20`,
-                                  color: themeStyles.secondaryColor
-                                }}
-                              >
-                                View Details
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </>
+                )}
+              </div>
+            ))}
+          </div>
         )}
-      </AnimatePresence>
-
-      {/* Add custom styling for Azure citations */}
-      <style jsx global>{`
-        /* Azure citation styling */
-        .azure-citation {
-          color: ${themeStyles.primaryColor};
-          font-weight: 500;
-          cursor: pointer;
-          text-decoration: none;
-        }
         
-        .azure-citation:hover {
-          text-decoration: underline;
-        }
-      `}</style>
-    </motion.div>
+        {/* Thought process */}
+        {activeTab === 'thoughts' && (
+          <div 
+            className="rounded-md p-4 text-sm overflow-auto max-h-96"
+            style={{ 
+              backgroundColor: colors.highlight,
+              borderLeft: `4px solid #F59E0B`
+            }}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {thoughtProcess}
+            </ReactMarkdown>
+          </div>
+        )}
+      </motion.div>
+    </div>
   );
 }

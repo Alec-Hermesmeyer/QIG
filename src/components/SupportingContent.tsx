@@ -42,19 +42,19 @@ function parseSupportingContentItem(item: string | any): ParsedSupportingContent
     // This is likely an enhanced result object from your API
     return {
       id: item.id?.toString() || undefined,
-      title: item.fileName || item.name || item.title || 'Unknown Document',
-      content: item.text || item.content || '',
-      source: item.source || '',
-      pageNumber: item.pageNumber || (item.metadata && item.metadata.page) || '',
-      section: item.section || (item.metadata && item.metadata.section) || '',
-      relevanceScore: item.score || 0,
-      pageImages: item.pageImages || [],
+      title: String(item.fileName || item.name || item.title || 'Unknown Document'),
+      content: String(item.text || item.content || ''),
+      source: String(item.source || ''),
+      pageNumber: String(item.pageNumber || (item.metadata && item.metadata.page) || ''),
+      section: String(item.section || (item.metadata && item.metadata.section) || ''),
+      relevanceScore: Number(item.score || 0),
+      pageImages: Array.isArray(item.pageImages) ? item.pageImages : [],
       metadata: item.metadata || {},
-      narrative: item.narrative || [],
-      score: item.score || 0,
-      snippets: item.snippets || [],
-      fileName: item.fileName || item.name || '',
-      name: item.name || item.fileName || '',
+      narrative: Array.isArray(item.narrative) ? item.narrative : [],
+      score: Number(item.score || 0),
+      snippets: Array.isArray(item.snippets) ? item.snippets : [],
+      fileName: String(item.fileName || item.name || ''),
+      name: String(item.name || item.fileName || ''),
       isGroundX
     };
   }
@@ -121,7 +121,7 @@ function parseSupportingContentItem(item: string | any): ParsedSupportingContent
 }
 
 // Function to extract citations from content
-function extractCitations(content: string) {
+function extractCitations(content: string | any) {
   const citations: {
     text: string;
     page?: string;
@@ -130,7 +130,7 @@ function extractCitations(content: string) {
 
   // Check if the content is actually a string
   if (typeof content !== 'string') {
-    return citations;
+    content = String(content || '');
   }
 
   // Pattern for [Page X] or [p. X] citations
@@ -183,7 +183,7 @@ function extractCitations(content: string) {
 }
 
 // Function to extract various metadata from content
-function extractMetadata(content: string) {
+function extractMetadata(content: string | any) {
   const metadata: {
     pageNumber?: string;
     section?: string;
@@ -193,50 +193,33 @@ function extractMetadata(content: string) {
   
   // Check if content is actually a string
   if (typeof content !== 'string') {
-    return metadata;
+    content = String(content || '');
   }
   
   // Extract page numbers (various formats)
   const pagePatterns = [
-    /\bpage\s+(\d+[-–—]?\d*)\b/i,
-    /\bp\.\s*(\d+[-–—]?\d*)\b/i,
-    /\bpg\.\s*(\d+[-–—]?\d*)\b/i,
-    /\b(\d+)\s+\n/  // Look for page numbers at end of lines
+    /\b(?:Page|p\.|pg\.)\s*(\d+[-–—]?\d*)\b/gi,
+    /\b(?:Section|Sec\.?)\s*([0-9.]+|[IVX]+\.[A-Z])\b/gi,
+    /\b(?:Paragraph|Para\.?)\s*(\d+)\b/gi,
+    /\b(?:Line|Ln\.?)\s*(\d+)\b/gi
   ];
   
   for (const pattern of pagePatterns) {
-    const match = content.match(pattern);
-    if (match) {
-      metadata.pageNumber = match[1];
-      break;
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const type = match[0].toLowerCase();
+      const value = match[1];
+      
+      if (type.includes('page')) {
+        metadata.pageNumber = value;
+      } else if (type.includes('section')) {
+        metadata.section = value;
+      } else if (type.includes('paragraph')) {
+        metadata.paragraph = value;
+      } else if (type.includes('line')) {
+        metadata.line = value;
+      }
     }
-  }
-  
-  // Extract section information
-  const sectionPatterns = [
-    /\bsection\s+([A-Z0-9.]+\b)/i,
-    /\b([0-9]+\.[0-9]+(?:\.[0-9]+)*)\b/,  // Matches section numbers like 3.1, 3.1.1, etc.
-    /\b([IVX]+\.[A-Z])\b/  // Roman numeral sections
-  ];
-  
-  for (const pattern of sectionPatterns) {
-    const match = content.match(pattern);
-    if (match) {
-      metadata.section = match[1];
-      break;
-    }
-  }
-  
-  // Extract paragraph information
-  const paraMatch = content.match(/\bparagraph\s+(\d+)\b/i) || content.match(/\bpara\s+(\d+)\b/i);
-  if (paraMatch) {
-    metadata.paragraph = paraMatch[1];
-  }
-  
-  // Extract line numbers
-  const lineMatch = content.match(/\bline\s+(\d+[-–]?\d*)\b/i);
-  if (lineMatch) {
-    metadata.line = lineMatch[1];
   }
   
   return metadata;
@@ -266,21 +249,27 @@ function formatSourceInfo(metadata: any): string | undefined {
 
 // Helper function to format document text with highlights and citations
 function formatDocumentText(
-  content: string, 
+  content: string | any, 
   highlightTerms: string[] = [], 
   citations: {text: string, page?: string, section?: string}[] = []
 ): string {
-  if (!content) return '';
-  
-  // Make sure content is a string
+  // Ensure content is a string
   if (typeof content !== 'string') {
-    content = String(content);
+    content = String(content || '');
   }
+  
+  // Ensure highlightTerms is an array of strings
+  highlightTerms = Array.isArray(highlightTerms) ? highlightTerms : [];
+  
+  // Ensure citations is an array of valid citation objects
+  citations = Array.isArray(citations) ? citations.filter(citation => 
+    citation && typeof citation === 'object' && typeof citation.text === 'string'
+  ) : [];
   
   let formattedContent = content;
   
   // Replace citation patterns with clickable spans
-  if (citations && citations.length > 0) {
+  if (citations.length > 0) {
     citations.forEach((citation, index) => {
       const citationId = `citation-${index}`;
       // Fix: Add empty string fallbacks for page and section
@@ -314,24 +303,30 @@ function formatDocumentText(
 
 // Generate a citation text for copying
 function generateCitationText(item: ParsedSupportingContentItem): string {
-  const parts = [];
+  const parts: string[] = [];
   
-  parts.push(item.title);
+  // Add title if available
+  if (item.title) {
+    parts.push(String(item.title));
+  }
   
+  // Add page number if available
   if (item.pageNumber) {
-    parts.push(`Page ${item.pageNumber}`);
+    parts.push(`Page ${String(item.pageNumber)}`);
   }
   
+  // Add section if available
   if (item.section) {
-    parts.push(`Section ${item.section}`);
+    parts.push(`Section ${String(item.section)}`);
   }
   
+  // Add content preview if available
   if (item.content) {
     // Truncate content to a reasonable length for citation
     const maxContentLength = 150;
-    const contentPreview = item.content.length > maxContentLength 
-      ? item.content.substring(0, maxContentLength) + '...' 
-      : item.content;
+    const contentPreview = String(item.content).length > maxContentLength 
+      ? String(item.content).substring(0, maxContentLength) + '...' 
+      : String(item.content);
     
     parts.push(`"${contentPreview}"`);
   }

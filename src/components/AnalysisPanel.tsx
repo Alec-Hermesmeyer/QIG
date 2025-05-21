@@ -385,7 +385,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   
   // Extract document names cited in response - with support for GroundX IDs
   const extractCitedDocuments = (content: string): string[] => {
-    if (!content) return [];
+    if (!content || typeof content !== 'string') return [];
     
     // Standard file citations [filename.ext]
     const citationRegex = /\[([\w\s-]+\.(pdf|docx|xlsx|txt|csv))\]/gi;
@@ -513,7 +513,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           .filter((item: any) => item.role === 'assistant' || item.role === 'user')
           .map((item: any) => item.content);
       }
-    } else if (response?.content) {
+    } else if (response?.content && typeof response.content === 'string') {
       // Create simple thoughts from content if none provided
       const content = response.content;
       const sentences = content.split(/(?<=\.)\s+/);
@@ -584,8 +584,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const renderResponsePanel = () => {
     if (!response?.content) return null;
     
-    // Get the full response content
-    const content = response.content;
+    // Get the full response content and ensure it's a string
+    const content = typeof response.content === 'string' ? response.content : String(response.content || '');
     
     // First highlight standard filename citations
     let highlightedContent = content.replace(

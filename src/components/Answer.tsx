@@ -368,16 +368,75 @@ export default function EnhancedAnswer({
     return allSources;
   }, [answer, documentExcerpts, searchResults]);
 
-  // Utility functions to extract content safely
+  // Enhanced to handle the new structured message format
+  const checkForThoughtProcess = useCallback(() => {
+    if (!answer) return false;
+
+    // Direct thought process from our updated format
+    if (answer.content?.thoughtProcess) {
+      setAzureThoughtProcess(answer.content.thoughtProcess);
+      return true;
+    }
+    
+    // Handle content object format 
+    if (typeof answer.content === 'object' && answer.content?.thoughtProcess) {
+      setAzureThoughtProcess(answer.content.thoughtProcess);
+      return true;
+    }
+
+    // Azure specific thought process
+    if (answer.thoughts && typeof answer.thoughts === 'string' && answer.thoughts.trim()) {
+      setAzureThoughtProcess(answer.thoughts);
+      return true;
+    }
+
+    // GroundX style thought process
+    if (answer.thinking && (typeof answer.thinking === 'string' || Array.isArray(answer.thinking))) {
+      const formattedThoughts = Array.isArray(answer.thinking)
+        ? answer.thinking.join('\n\n')
+        : answer.thinking;
+      setAzureThoughtProcess(formattedThoughts);
+      return true;
+    }
+
+    // Try old format with thought_process
+    if (answer.thought_process && typeof answer.thought_process === 'string') {
+      setAzureThoughtProcess(answer.thought_process);
+      return true;
+    }
+
+    return false;
+  }, [answer]);
+
+  // Extract content from various response formats
   const extractContent = useCallback(() => {
     if (!answer) return '';
-    if (typeof answer === 'string') return answer;
-    if (answer.content) return typeof answer.content === 'string' ? answer.content : JSON.stringify(answer.content, null, 2);
-    if (answer.answer) {
-      return typeof answer.answer === 'string' ? answer.answer : JSON.stringify(answer.answer, null, 2);
+    
+    // Handle our updated message format where content is an object with content property
+    if (typeof answer.content === 'object' && answer.content?.content) {
+      return answer.content.content;
     }
-    if (answer.response) return typeof answer.response === 'string' ? answer.response : JSON.stringify(answer.response, null, 2);
-    return JSON.stringify(answer, null, 2);
+
+    // Simple string content
+    if (typeof answer.content === 'string') {
+      return answer.content;
+    }
+
+    // Handle various response formats
+    if (answer.message?.content) {
+      return answer.message.content;
+    }
+
+    if (answer.choices && answer.choices[0]?.message?.content) {
+      return answer.choices[0].message.content;
+    }
+
+    // Fallback: just stringify the answer
+    if (typeof answer === 'object') {
+      return JSON.stringify(answer, null, 2);
+    }
+
+    return String(answer);
   }, [answer]);
 
   // Utility functions
@@ -507,7 +566,7 @@ export default function EnhancedAnswer({
         : JSON.stringify(thoughtResult, null, 2);
       
       setHasAzureThoughtProcess(true);
-      setAzureThoughtProcess(formattedThought);
+      setSupportingContent(formattedThought);
     }
     
     // Check for supporting content using multiple possible keys

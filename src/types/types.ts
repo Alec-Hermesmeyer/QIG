@@ -47,6 +47,8 @@ export interface XRayChunk {
     pageCount?: number;
     highlights?: string[];
     xray?: XRayData;
+    hasXray?: boolean; // Flag indicating if X-Ray data is available
+    page?: number; // Page number reference
     
     // Additional properties from the integrated types file
     name?: string; // For GroundX
