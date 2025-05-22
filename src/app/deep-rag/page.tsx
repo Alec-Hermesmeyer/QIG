@@ -12,6 +12,7 @@ import { Source } from "@/types/types";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import DeepRagTopicCards from "@/components/DeepRagTopicCards";
 
 // Animation variants
 const fadeIn = {
@@ -233,50 +234,8 @@ export default function DeepRAGPage() {
                       className="grid grid-cols-1 md:grid-cols-3 gap-5"
                       variants={staggerContainer}
                     >
-                      <motion.div
-                        className="bg-gradient-to-br from-amber-50 to-amber-100 p-6 rounded-lg border border-amber-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("Analyze the structure and key sections of our most recent contract")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-amber-200 text-amber-700 rounded-lg">
-                            <FileSearch size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Document Structure</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Get comprehensive breakdown of contract structure and section analysis</p>
-                      </motion.div>
-
-                      <motion.div
-                        className="bg-gradient-to-br from-orange-50 to-orange-100 p-6 rounded-lg border border-orange-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("Extract all tables from our financial reports and summarize each one")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-orange-200 text-orange-700 rounded-lg">
-                            <Database size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Data Extraction</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Automatically extract and analyze tables, lists and structured data</p>
-                      </motion.div>
-
-                      <motion.div
-                        className="bg-gradient-to-br from-rose-50 to-rose-100 p-6 rounded-lg border border-rose-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("Compare our latest product specifications against industry standards")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-rose-200 text-rose-700 rounded-lg">
-                            <BarChart4 size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Comparative Analysis</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Compare documents against benchmarks, standards, and historical data</p>
-                      </motion.div>
+                      {/* Using DeepRagTopicCards to display sample questions from Supabase */}
+                      <DeepRagTopicCards chatRef={chatRef} />
                     </motion.div>
                   </motion.div>
                 )}

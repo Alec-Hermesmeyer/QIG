@@ -11,6 +11,7 @@ import { RAGControl } from '@/components/RagControl';
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import FastRagTopicCards from "@/components/FastRagTopicCards";
 
 // Animation variants
 const fadeIn = {
@@ -380,50 +381,8 @@ export default function FastRAGPage() {
                       className="grid grid-cols-1 md:grid-cols-3 gap-5"
                       variants={staggerContainer}
                     >
-                      <motion.div
-                        className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg border border-blue-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("What are the key points in our latest contracts?")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-blue-200 text-blue-700 rounded-lg">
-                            <FileText size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Contract Analysis</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Extract key obligations, terms, and risk factors from contracts</p>
-                      </motion.div>
-
-                      <motion.div
-                        className="bg-gradient-to-br from-emerald-50 to-emerald-100 p-6 rounded-lg border border-emerald-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("Summarize our company policies on data security")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-emerald-200 text-emerald-700 rounded-lg">
-                            <Shield size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Policy Intelligence</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Navigate company guidelines and compliance requirements</p>
-                      </motion.div>
-
-                      <motion.div
-                        className="bg-gradient-to-br from-violet-50 to-violet-100 p-6 rounded-lg border border-violet-200 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                        variants={slideUp}
-                        whileHover={{ y: -2, transition: { duration: 0.2 } }}
-                        onClick={() => chatRef.current?.submitMessage("Find inconsistencies between our Terms of Service and Privacy Policy")}
-                      >
-                        <div className="flex items-center mb-3">
-                          <span className="p-2 bg-violet-200 text-violet-700 rounded-lg">
-                            <MessagesSquare size={18} />
-                          </span>
-                          <h3 className="font-semibold ml-2 text-gray-800">Document Comparison</h3>
-                        </div>
-                        <p className="text-sm text-gray-600">Identify gaps and inconsistencies across related documents</p>
-                      </motion.div>
+                      {/* Using SampleQuestions hook to get questions for cards */}
+                      <FastRagTopicCards chatRef={chatRef} />
                     </motion.div>
                   </motion.div>
                 )}
