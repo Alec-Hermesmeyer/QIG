@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import DeepRagTopicCards from "@/components/DeepRagTopicCards";
+import ProtectedRoute from "@/components/ProtectedRoute";
 
 // Animation variants
 const fadeIn = {
@@ -155,165 +156,167 @@ export default function DeepRAGPage() {
   };
 
   return (
-    <RAGProvider>
-      <div className="min-h-screen flex flex-col bg-gray-50">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
-              <div className="flex items-center">
-                <h1 className="text-xl font-semibold text-gray-900 flex items-center">
-                  <span className="bg-amber-100 text-amber-700 p-1 rounded mr-2">
-                    <Zap size={18} />
-                  </span>
-                  DeepRAG
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span><Info size={16} className="ml-2 text-gray-400 cursor-help" /></span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p className="w-64 text-sm">DeepRAG provides X-Ray technology for detailed document insights and in-depth analysis.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <Badge variant="outline" className="ml-3 text-xs font-normal bg-amber-50 text-amber-700 border-amber-200">
-                    Advanced
-                  </Badge>
-                </h1>
-              </div>
-              <div className="flex items-center space-x-3">
-                <RAGControl
-                  enabled={isRAGEnabled}
-                  selectedBucketId={selectedBucketId}
-                  onToggle={handleRAGToggle}
-                  onBucketSelect={handleBucketSelect}
-                />
-                
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={clearChat}
-                  className="text-gray-700 border-gray-300 hover:bg-gray-100"
-                >
-                  <History size={16} className="mr-1.5" />
-                  Clear Chat
-                </Button>
-                
-                
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Main content */}
-        <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
-          <div className="max-w-7xl mx-auto  rounded-xl shadow-sm overflow-hidden">
-            <div className="p-6">
-              {/* Introduction - only show when conversation not started */}
-              <AnimatePresence>
-                {!conversationStarted && (
-                  <motion.div
-                    className="mb-8"
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, y: -20 }}
-                    variants={fadeIn}
+    <ProtectedRoute>
+      <RAGProvider>
+        <div className="min-h-screen flex flex-col bg-gray-50">
+          {/* Header */}
+          <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center h-16">
+                <div className="flex items-center">
+                  <h1 className="text-xl font-semibold text-gray-900 flex items-center">
+                    <span className="bg-amber-100 text-amber-700 p-1 rounded mr-2">
+                      <Zap size={18} />
+                    </span>
+                    DeepRAG
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span><Info size={16} className="ml-2 text-gray-400 cursor-help" /></span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="w-64 text-sm">DeepRAG provides X-Ray technology for detailed document insights and in-depth analysis.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Badge variant="outline" className="ml-3 text-xs font-normal bg-amber-50 text-amber-700 border-amber-200">
+                      Advanced
+                    </Badge>
+                  </h1>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <RAGControl
+                    enabled={isRAGEnabled}
+                    selectedBucketId={selectedBucketId}
+                    onToggle={handleRAGToggle}
+                    onBucketSelect={handleBucketSelect}
+                  />
+                  
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={clearChat}
+                    className="text-gray-700 border-gray-300 hover:bg-gray-100"
                   >
-                    <motion.div className="text-center mb-8" variants={slideUp}>
-                      <h2 className="text-2xl font-bold text-gray-900 mb-3 flex items-center justify-center">
-                        <Zap size={24} className="text-amber-500 mr-2" />
-                        Advanced Document Intelligence
-                      </h2>
-                      <p className="text-gray-600 max-w-2xl mx-auto">
-                        DeepRAG uses X-Ray technology to analyze document structure, extract meaningful data, and provide comprehensive insights.
-                      </p>
-                    </motion.div>
+                    <History size={16} className="mr-1.5" />
+                    Clear Chat
+                  </Button>
+                  
+                  
+                </div>
+              </div>
+            </div>
+          </header>
 
-                    <motion.div
-                      className="grid grid-cols-1 md:grid-cols-3 gap-5"
-                      variants={staggerContainer}
-                    >
-                      {/* Using DeepRagTopicCards to display sample questions from Supabase */}
-                      <DeepRagTopicCards chatRef={chatRef} />
-                    </motion.div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Chat history container with improved styling */}
-              <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+          {/* Main content */}
+          <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
+            <div className="max-w-7xl mx-auto  rounded-xl shadow-sm overflow-hidden">
+              <div className="p-6">
+                {/* Introduction - only show when conversation not started */}
                 <AnimatePresence>
-                  {chatHistory.map((message, index) => (
+                  {!conversationStarted && (
                     <motion.div
-                      key={index}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.3 }}
-                      className="mb-4"
+                      className="mb-8"
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, y: -20 }}
+                      variants={fadeIn}
                     >
-                      {message.role === 'user' ? (
-                        <div className="flex justify-end">
-                          <div className="bg-amber-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
-                            {message.content}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="max-w-[92%]">
-                          <DeepRAG 
-                            answer={{
-                              content: typeof message.content === 'string' ? message.content : 
-                                      (message.content?.content || JSON.stringify(message.content)),
-                              thoughts: message.metadata?.thoughts || '',
-                              searchResults: message.searchResults,
-                              sources: message.searchResults?.sources
-                            }}
-                            isStreaming={isStreaming && index === chatHistory.length - 1}
-                            theme="light"
-                          />
-                        </div>
-                      )}
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-                <div ref={chatMessageStreamEnd} />
-              </div>
+                      <motion.div className="text-center mb-8" variants={slideUp}>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-3 flex items-center justify-center">
+                          <Zap size={24} className="text-amber-500 mr-2" />
+                          Advanced Document Intelligence
+                        </h2>
+                        <p className="text-gray-600 max-w-2xl mx-auto">
+                          DeepRAG uses X-Ray technology to analyze document structure, extract meaningful data, and provide comprehensive insights.
+                        </p>
+                      </motion.div>
 
-              {/* Chat input with improved styling */}
-              <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                <ImprovedChat
-                  ref={chatRef}
-                  onUserMessage={handleUserMessage}
-                  onAssistantMessage={handleAssistantMessage}
-                  onConversationStart={() => setConversationStarted(true)}
-                  onStreamingChange={setIsStreaming}
-                  temperature={temperature}
-                  streamResponses={streamEnabled}
-                  isRAGEnabled={isRAGEnabled}
-                  selectedBucketId={selectedBucketId}
-                  useRAG={true} // Force RAG for DeepRAG page
-                />
+                      <motion.div
+                        className="grid grid-cols-1 md:grid-cols-3 gap-5"
+                        variants={staggerContainer}
+                      >
+                        {/* Using DeepRagTopicCards to display sample questions from Supabase */}
+                        <DeepRagTopicCards chatRef={chatRef} />
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Chat history container with improved styling */}
+                <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                  <AnimatePresence>
+                    {chatHistory.map((message, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.3 }}
+                        className="mb-4"
+                      >
+                        {message.role === 'user' ? (
+                          <div className="flex justify-end">
+                            <div className="bg-amber-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
+                              {message.content}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="max-w-[92%]">
+                            <DeepRAG 
+                              answer={{
+                                content: typeof message.content === 'string' ? message.content : 
+                                        (message.content?.content || JSON.stringify(message.content)),
+                                thoughts: message.metadata?.thoughts || '',
+                                searchResults: message.searchResults,
+                                sources: message.searchResults?.sources
+                              }}
+                              isStreaming={isStreaming && index === chatHistory.length - 1}
+                              theme="light"
+                            />
+                          </div>
+                        )}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  <div ref={chatMessageStreamEnd} />
+                </div>
+
+                {/* Chat input with improved styling */}
+                <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                  <ImprovedChat
+                    ref={chatRef}
+                    onUserMessage={handleUserMessage}
+                    onAssistantMessage={handleAssistantMessage}
+                    onConversationStart={() => setConversationStarted(true)}
+                    onStreamingChange={setIsStreaming}
+                    temperature={temperature}
+                    streamResponses={streamEnabled}
+                    isRAGEnabled={isRAGEnabled}
+                    selectedBucketId={selectedBucketId}
+                    useRAG={true} // Force RAG for DeepRAG page
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        </main>
-        
-        {/* Footer */}
-        <footer className="bg-white border-t border-gray-200 py-4">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center text-sm text-gray-500">
-              <div>
-                DeepRAG Advanced Analytics Platform
-              </div>
-              <div className="flex space-x-4">
-                <a href="#" className="hover:text-gray-700 transition-colors">Documentation</a>
-                <a href="#" className="hover:text-gray-700 transition-colors">Support</a>
+          </main>
+          
+          {/* Footer */}
+          <footer className="bg-white border-t border-gray-200 py-4">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center text-sm text-gray-500">
+                <div>
+                  DeepRAG Advanced Analytics Platform
+                </div>
+                <div className="flex space-x-4">
+                  <a href="#" className="hover:text-gray-700 transition-colors">Documentation</a>
+                  <a href="#" className="hover:text-gray-700 transition-colors">Support</a>
+                </div>
               </div>
             </div>
-          </div>
-        </footer>
-      </div>
-    </RAGProvider>
+          </footer>
+        </div>
+      </RAGProvider>
+    </ProtectedRoute>
   );
 }
