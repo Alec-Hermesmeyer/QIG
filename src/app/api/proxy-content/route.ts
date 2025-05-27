@@ -6,7 +6,7 @@ const AZURE_SECRET = process.env.AZURE_SECRET;
 const GROUNDX_API_KEY = process.env.GROUNDX_API_KEY;
 const GROUNDX_API_URL = process.env.GROUNDX_API_URL || 'https://api.groundx.ai';
 // Updated backend URL for Azure
-const AZURE_BACKEND_URL = 'https://capps-backend-px4batn2ycs6a.greenground-334066dd.eastus2.azurecontainerapps.io';
+const AZURE_BACKEND_URL = 'https://capps-backend-6qjzg44bnug6q.greenmeadow-8b5f0a30.eastus2.azurecontainerapps.io';
 
 async function getAzureToken() {
   const tokenEndpoint = `https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token`;

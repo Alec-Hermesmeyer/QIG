@@ -19,7 +19,7 @@ function loadClientConfigurations(): Record<string, ClientConfig> {
     tenantId: process.env.AZURE_TENANT_ID || '',
     clientId: process.env.AZURE_CLIENT_ID || '',
     clientSecret: process.env.AZURE_SECRET || '',
-   apiUrl: 'https://capps-backend-px4batn2ycs6a.greenground-334066dd.eastus2.azurecontainerapps.io'
+   apiUrl: 'https://capps-backend-6qjzg44bnug6q.greenmeadow-8b5f0a30.eastus2.azurecontainerapps.io'
   };
   
   // Add the new backend
