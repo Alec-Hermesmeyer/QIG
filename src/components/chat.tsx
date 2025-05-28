@@ -134,6 +134,16 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [interimTranscript, setInterimTranscript] = useState('');
   const [speechError, setSpeechError] = useState<string | null>(null);
   
+  // Hands-free mode state
+  const [isHandsFreeMode, setIsHandsFreeMode] = useState(false);
+  const [isListeningForWakeWord, setIsListeningForWakeWord] = useState(false);
+  const [isWakeWordDetected, setIsWakeWordDetected] = useState(false);
+  const [handsFreeFeedback, setHandsFreeFeedback] = useState<string>('');
+  const [autoSubmitCountdown, setAutoSubmitCountdown] = useState<number>(0);
+  
+  // Add a ref to track wake word state immediately without waiting for React state updates
+  const wakeWordDetectedRef = useRef<boolean>(false);
+  
   // Text-to-speech state
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
@@ -148,6 +158,18 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Hands-free refs for continuous listening
+  const wakeWordSocketRef = useRef<WebSocket | null>(null);
+  const wakeWordStreamRef = useRef<MediaStream | null>(null);
+  const wakeWordContextRef = useRef<AudioContext | null>(null);
+  const wakeWordWorkletRef = useRef<AudioWorkletNode | null>(null);
+  const wakeWordSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  // Auto-submit timer for hands-free mode
+  const autoSubmitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const AUTO_SUBMIT_DELAY = 2000; // 2 seconds of silence before auto-submit
 
   // Keep a record of all messages for the session
   const [allMessages, setAllMessages] = useState<Array<{ 
@@ -172,6 +194,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     promptTemplate,
     searchConfig
   });
+
+  // Wake words and action words configuration
+  const WAKE_WORDS = ['hey assistant', 'hello chat', 'hey chat', 'assistant'];
+  const ACTION_WORDS = ['send', 'submit', 'go', 'execute'];
 
   // Update config when props change
   useEffect(() => {
@@ -512,24 +538,139 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               const transcription = data.channel.alternatives[0].transcript;
               
               if (transcription && transcription.trim().length > 0) {
-                console.log('[STT] Transcription:', transcription, 'Final:', data.is_final);
+                console.log('[STT] ========== NEW TRANSCRIPTION ==========');
+                console.log('[STT] Transcription:', transcription);
+                console.log('[STT] Is final:', data.is_final);
+                console.log('[STT] Current input before processing:', input);
+                console.log('[STT] Wake word detected (state):', isWakeWordDetected);
+                console.log('[STT] Wake word detected (ref):', wakeWordDetectedRef.current);
+                console.log('[STT] Is recording:', isRecording);
+                console.log('[STT] Hands-free mode:', isHandsFreeMode);
+                
+                // Use the ref for immediate access to wake word status
+                const wakeWordActive = isWakeWordDetected || wakeWordDetectedRef.current;
+                console.log('[STT] Wake word active (combined):', wakeWordActive);
+                
+                // CRITICAL DEBUG: Check all conditions that need to be true
+                console.log('[STT] 🔍 CONDITION CHECK:');
+                console.log('[STT] - data.is_final:', data.is_final);
+                console.log('[STT] - isWakeWordDetected:', isWakeWordDetected);
+                console.log('[STT] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
+                console.log('[STT] - wakeWordActive:', wakeWordActive);
+                console.log('[STT] - isHandsFreeMode:', isHandsFreeMode);
+                console.log('[STT] - transcription not empty:', transcription.trim().length > 0);
                 
                 if (data.is_final) {
-                  // Add to input field and clear interim
+                  console.log('[STT] ✅ Processing FINAL transcription');
+                  
+                  // Build the full text that would result from adding this transcription
+                  const fullText = input + transcription.trim() + ' ';
+                  console.log('[STT] Full text would be:', `"${fullText}"`);
+                  
+                  // Check for action words FIRST (immediate submit)
+                  if (wakeWordActive && containsActionWord(fullText)) {
+                    console.log('[STT] 🎯 ACTION WORD DETECTED - IMMEDIATE SUBMIT');
+                    
+                    const cleanMessage = extractMessageFromTranscript(fullText);
+                    console.log('[STT] Cleaned message:', `"${cleanMessage}"`);
+                    
+                    if (cleanMessage.trim()) {
+                      clearAutoSubmitTimer();
+                      setInput(cleanMessage.trim());
+                      setInterimTranscript('Action word detected - sending...');
+                      
+                      setTimeout(() => {
+                        console.log('[STT] Executing handleHandsFreeSubmit for action word');
+                        handleHandsFreeSubmit();
+                      }, 100);
+                      return;
+                    }
+                  } else {
+                    console.log('[STT] ❌ No action word detected');
+                    console.log('[STT] - Wake word active:', wakeWordActive);
+                    console.log('[STT] - Contains action word:', containsActionWord(fullText));
+                  }
+                  
+                  // Normal transcription - add to input
+                  console.log('[STT] 📝 Adding transcription to input (no action word detected)');
+                  let newInputValue = '';
                   setInput(prev => {
-                    const newValue = prev + transcription.trim() + ' ';
-                    console.log('[STT] Adding final transcription to input:', newValue);
-                    return newValue;
+                    newInputValue = prev + transcription.trim() + ' ';
+                    console.log('[STT] Input updated to:', `"${newInputValue}"`);
+                    return newInputValue;
                   });
                   setInterimTranscript('');
+                  
+                  // CRITICAL: This is where the timer should start
+                  console.log('[STT] 🚨 TIMER START DECISION POINT:');
+                  console.log('[STT] - isWakeWordDetected:', isWakeWordDetected);
+                  console.log('[STT] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
+                  console.log('[STT] - wakeWordActive:', wakeWordActive);
+                  console.log('[STT] - isHandsFreeMode:', isHandsFreeMode);
+                  console.log('[STT] - newInputValue:', `"${newInputValue}"`);
+                  console.log('[STT] - newInputValue.trim():', `"${newInputValue.trim()}"`);
+                  
+                  if (wakeWordActive) {
+                    console.log('[STT] 🕐 WAKE WORD ACTIVE - SHOULD START TIMER');
+                    console.log('[STT] Will use text for timer:', `"${newInputValue}"`);
+                    
+                    // Pass the new text directly to avoid state update timing issues
+                    setTimeout(() => {
+                      console.log('[STT] 🚀 EXECUTING TIMER START NOW');
+                      console.log('[STT] - Current isWakeWordDetected:', isWakeWordDetected);
+                      console.log('[STT] - Current wakeWordDetectedRef:', wakeWordDetectedRef.current);
+                      console.log('[STT] - Text to use:', `"${newInputValue}"`);
+                      startAutoSubmitTimer(newInputValue);
+                    }, 100);
+                  } else {
+                    console.log('[STT] ❌ TIMER NOT STARTED - Wake word not active');
+                    console.log('[STT] This means wake word state was lost somehow');
+                  }
                 } else {
-                  // Show interim results
-                  setInterimTranscript(transcription);
+                  console.log('[STT] ⏸️ Processing INTERIM transcription');
+                  
+                  const fullText = input + transcription.trim();
+                  console.log('[STT] Full interim text:', `"${fullText}"`);
+                  
+                  // Reset timer on any new speech activity
+                  if (wakeWordActive) {
+                    console.log('[STT] 🔄 Resetting timer due to interim speech');
+                    resetAutoSubmitTimer();
+                  } else {
+                    console.log('[STT] ⚠️ Interim speech but wake word not active');
+                  }
+                  
+                  // Check for action words in interim
+                  if (wakeWordActive && containsActionWord(fullText)) {
+                    console.log('[STT] 🎯 ACTION WORD IN INTERIM - PREPARING SUBMIT');
+                    clearAutoSubmitTimer();
+                    setInterimTranscript('Action word detected - sending now...');
+                    
+                    if (containsActionWord(transcription)) {
+                      const cleanMessage = extractMessageFromTranscript(fullText);
+                      if (cleanMessage.trim()) {
+                        console.log('[STT] Executing immediate submit for interim action word');
+                        setInput(cleanMessage.trim());
+                        setTimeout(() => {
+                          handleHandsFreeSubmit();
+                        }, 200);
+                        return;
+                      }
+                    }
+                  } else {
+                    setInterimTranscript(transcription);
+                  }
                 }
+                
+                console.log('[STT] ========== END TRANSCRIPTION PROCESSING ==========');
+              } else {
+                console.log('[STT] ⚠️ Empty transcription received');
               }
+            } else {
+              console.log('[STT] ⚠️ Invalid data structure received');
             }
           } catch (error) {
-            console.error('[STT] Error parsing WebSocket message:', error);
+            console.error('[STT] ❌ Error parsing WebSocket message:', error);
           }
         };
 
@@ -581,6 +722,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   // Stop speech-to-text
   const stopSpeechToText = () => {
     console.log('[STT] Stopping speech-to-text...');
+    clearAutoSubmitTimer(); // Clear any pending auto-submit
     cleanupSpeechResources();
     setIsRecording(false);
     setIsConnecting(false);
@@ -1324,6 +1466,561 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     }
   };
 
+  // Cleanup hands-free resources
+  const cleanupHandsFreeResources = () => {
+    console.log('[HANDS-FREE] Cleaning up hands-free resources');
+    
+    // Clear auto-submit timer
+    clearAutoSubmitTimer();
+    
+    // Reset wake word state
+    wakeWordDetectedRef.current = false;
+    
+    if (wakeWordWorkletRef.current) {
+      try {
+        wakeWordWorkletRef.current.disconnect();
+        wakeWordWorkletRef.current = null;
+      } catch (err) {
+        console.warn('[HANDS-FREE] Error disconnecting wake word worklet:', err);
+      }
+    }
+
+    if (wakeWordSourceRef.current) {
+      try {
+        wakeWordSourceRef.current.disconnect();
+        wakeWordSourceRef.current = null;
+      } catch (err) {
+        console.warn('[HANDS-FREE] Error disconnecting wake word source:', err);
+      }
+    }
+
+    if (wakeWordContextRef.current && wakeWordContextRef.current.state !== 'closed') {
+      try {
+        wakeWordContextRef.current.close();
+        wakeWordContextRef.current = null;
+      } catch (err) {
+        console.warn('[HANDS-FREE] Error closing wake word audio context:', err);
+      }
+    }
+
+    if (wakeWordSocketRef.current) {
+      try {
+        if (wakeWordSocketRef.current.readyState === WebSocket.OPEN) {
+          wakeWordSocketRef.current.close(1000, 'Manual cleanup');
+        }
+        wakeWordSocketRef.current = null;
+      } catch (err) {
+        console.warn('[HANDS-FREE] Error closing wake word WebSocket:', err);
+      }
+    }
+
+    if (wakeWordStreamRef.current) {
+      try {
+        wakeWordStreamRef.current.getTracks().forEach(track => {
+          track.stop();
+        });
+        wakeWordStreamRef.current = null;
+      } catch (err) {
+        console.warn('[HANDS-FREE] Error stopping wake word media stream:', err);
+      }
+    }
+  };
+
+  // Utility functions for hands-free mode
+  const containsWakeWord = (text: string): boolean => {
+    const lowerText = text.toLowerCase().trim();
+    return WAKE_WORDS.some(wakeWord => lowerText.includes(wakeWord));
+  };
+
+  const containsActionWord = (text: string): boolean => {
+    const lowerText = text.toLowerCase().trim();
+    console.log('[HANDS-FREE] 🔍 Checking for action words in text:', `"${lowerText}"`);
+    
+    for (const actionWord of ACTION_WORDS) {
+      // Simple approach: check if action word appears anywhere near the end
+      if (lowerText.includes(actionWord)) {
+        // Check if it's in the last portion of the text
+        const words = lowerText.split(/\s+/);
+        const lastFiveWords = words.slice(-5); // Check last 5 words
+        
+        if (lastFiveWords.some(word => word.replace(/[.!?,]/g, '') === actionWord)) {
+          console.log('[HANDS-FREE] ✅ Found action word in last words:', actionWord);
+          return true;
+        }
+        
+        // Also check if it's at the very end
+        if (lowerText.endsWith(actionWord) || lowerText.endsWith(actionWord + '.') || 
+            lowerText.endsWith(actionWord + '!') || lowerText.endsWith(actionWord + '?')) {
+          console.log('[HANDS-FREE] ✅ Found action word at end:', actionWord);
+          return true;
+        }
+      }
+    }
+    
+    console.log('[HANDS-FREE] ❌ No action words found');
+    return false;
+  };
+
+  const extractMessageFromTranscript = (transcript: string): string => {
+    const lowerTranscript = transcript.toLowerCase();
+    
+    // Find wake word position
+    let messageStart = 0;
+    for (const wakeWord of WAKE_WORDS) {
+      const index = lowerTranscript.indexOf(wakeWord);
+      if (index !== -1) {
+        messageStart = index + wakeWord.length;
+        break;
+      }
+    }
+    
+    // Extract message part (after wake word)
+    let message = transcript.substring(messageStart).trim();
+    
+    // Remove action words from anywhere in the message, but prioritize end removal
+    for (const actionWord of ACTION_WORDS) {
+      const lowerMessage = message.toLowerCase();
+      
+      // First, try to remove from the end (most common case)
+      const endIndex = lowerMessage.lastIndexOf(actionWord);
+      if (endIndex !== -1) {
+        // Check if the action word is at the end (with some tolerance for spacing/punctuation)
+        const afterActionWord = message.substring(endIndex + actionWord.length).trim();
+        if (afterActionWord.length <= 2) { // Allow for punctuation or short trailing text
+          message = message.substring(0, endIndex).trim();
+          break;
+        }
+      }
+      
+      // If not at the end, remove from anywhere in the message as a fallback
+      const actionWordRegex = new RegExp(`\\b${actionWord}\\b`, 'gi');
+      message = message.replace(actionWordRegex, '').trim();
+    }
+    
+    // Clean up any multiple spaces or trailing punctuation
+    message = message.replace(/\s+/g, ' ').trim();
+    
+    // Remove trailing punctuation that might be left over
+    message = message.replace(/[,\s]+$/, '');
+    
+    return message;
+  };
+
+  // Auto-submit timer management for hands-free mode
+  const startAutoSubmitTimer = (currentText?: string) => {
+    console.log('[HANDS-FREE] 🕐 startAutoSubmitTimer called');
+    console.log('[HANDS-FREE] - currentText parameter:', `"${currentText}"`);
+    console.log('[HANDS-FREE] - input state:', `"${input}"`);
+    console.log('[HANDS-FREE] - isWakeWordDetected (state):', isWakeWordDetected);
+    console.log('[HANDS-FREE] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
+    console.log('[HANDS-FREE] - isHandsFreeMode:', isHandsFreeMode);
+    
+    const wakeWordActive = isWakeWordDetected || wakeWordDetectedRef.current;
+    console.log('[HANDS-FREE] - wakeWordActive (combined):', wakeWordActive);
+    
+    const textToCheck = currentText || input;
+    console.log('[HANDS-FREE] - textToCheck (final):', `"${textToCheck}"`);
+    console.log('[HANDS-FREE] - textToCheck.trim():', `"${textToCheck.trim()}"`);
+    console.log('[HANDS-FREE] - textToCheck.trim() length:', textToCheck.trim().length);
+    
+    if (!wakeWordActive) {
+      console.log('[HANDS-FREE] ❌ Not starting timer - wake word not active');
+      console.log('[HANDS-FREE] State:', isWakeWordDetected, 'Ref:', wakeWordDetectedRef.current);
+      return;
+    }
+    
+    if (!textToCheck.trim()) {
+      console.log('[HANDS-FREE] ❌ Not starting timer - no input text');
+      console.log('[HANDS-FREE] textToCheck was:', `"${textToCheck}"`);
+      return;
+    }
+    
+    console.log('[HANDS-FREE] ✅ All conditions met, starting timer');
+    console.log('[HANDS-FREE] ✅ Starting auto-submit timer (2 seconds) for text:', `"${textToCheck}"`);
+    clearAutoSubmitTimer(); // Clear any existing timer
+    
+    let countdown = AUTO_SUBMIT_DELAY / 1000; // Convert to seconds
+    setAutoSubmitCountdown(countdown);
+    console.log('[HANDS-FREE] Setting countdown to:', countdown);
+    
+    // Update countdown every second
+    countdownIntervalRef.current = setInterval(() => {
+      countdown -= 1;
+      console.log('[HANDS-FREE] Countdown tick:', countdown);
+      setAutoSubmitCountdown(countdown);
+      
+      if (countdown <= 0) {
+        console.log('[HANDS-FREE] Countdown reached zero, clearing interval');
+        if (countdownIntervalRef.current) {
+          clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
+        }
+      }
+    }, 1000);
+    
+    autoSubmitTimerRef.current = setTimeout(() => {
+      console.log('[HANDS-FREE] 🚀 Auto-submit timer FIRED! Submitting message');
+      console.log('[HANDS-FREE] Current input at fire time:', `"${input}"`);
+      
+      // Clear the countdown interval
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      setAutoSubmitCountdown(0);
+      
+      const currentInput = input.trim();
+      if (currentInput) {
+        console.log('[HANDS-FREE] Proceeding with auto-submit for:', `"${currentInput}"`);
+        setHandsFreeFeedback('Auto-submitting after pause...');
+        handleHandsFreeSubmit();
+      } else {
+        console.log('[HANDS-FREE] ❌ Timer fired but no input to submit');
+      }
+    }, AUTO_SUBMIT_DELAY);
+    
+    console.log('[HANDS-FREE] ✅ Timer and interval set up successfully');
+    console.log('[HANDS-FREE] Timer ref set:', !!autoSubmitTimerRef.current);
+    console.log('[HANDS-FREE] Interval ref set:', !!countdownIntervalRef.current);
+  };
+
+  const clearAutoSubmitTimer = () => {
+    console.log('[HANDS-FREE] Clearing auto-submit timer and countdown');
+    
+    if (autoSubmitTimerRef.current) {
+      clearTimeout(autoSubmitTimerRef.current);
+      autoSubmitTimerRef.current = null;
+      console.log('[HANDS-FREE] Cleared auto-submit timer');
+    }
+    
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+      console.log('[HANDS-FREE] Cleared countdown interval');
+    }
+    
+    setAutoSubmitCountdown(0);
+  };
+
+  const resetAutoSubmitTimer = () => {
+    if (isWakeWordDetected && input.trim()) {
+      console.log('[HANDS-FREE] Resetting auto-submit timer due to new speech, current input:', input);
+      startAutoSubmitTimer();
+    } else {
+      console.log('[HANDS-FREE] Not resetting timer - wake word detected:', isWakeWordDetected, 'input length:', input.length);
+    }
+  };
+
+  // Start continuous listening for wake words
+  const startWakeWordListening = async () => {
+    try {
+      console.log('[HANDS-FREE] Starting wake word listening...');
+      setHandsFreeFeedback('Initializing hands-free mode...');
+
+      // Clean up any existing wake word resources
+      cleanupHandsFreeResources();
+
+      const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+      
+      if (!apiKey) {
+        const error = 'Deepgram API key is missing for hands-free mode.';
+        console.error('[HANDS-FREE] ' + error);
+        setHandsFreeFeedback(error);
+        return;
+      }
+
+      // Request microphone access for continuous listening
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000,
+            channelCount: 1
+          } 
+        });
+        
+        wakeWordStreamRef.current = stream;
+        console.log('[HANDS-FREE] Microphone access granted for wake word detection');
+      } catch (micError) {
+        const errorMsg = 'Microphone access denied for hands-free mode.';
+        console.error('[HANDS-FREE] ' + errorMsg, micError);
+        setHandsFreeFeedback(errorMsg);
+        return;
+      }
+
+      // Create WebSocket connection for wake word detection
+      const wsUrl = `${DEEPGRAM_API_URL}?encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
+      
+      try {
+        const socket = new WebSocket(wsUrl, ['token', apiKey]);
+        wakeWordSocketRef.current = socket;
+
+        socket.onopen = async () => {
+          console.log('[HANDS-FREE] Wake word WebSocket connection opened');
+          
+          try {
+            // Create AudioContext for wake word detection
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            const audioContext = new AudioContext({ sampleRate: 16000 });
+            wakeWordContextRef.current = audioContext;
+            
+            if (audioContext.state === 'suspended') {
+              await audioContext.resume();
+            }
+            
+            if (wakeWordStreamRef.current) {
+              // Create audio source
+              const sourceNode = audioContext.createMediaStreamSource(wakeWordStreamRef.current);
+              wakeWordSourceRef.current = sourceNode;
+              
+              // Create audio worklet node
+              const workletNode = await createAudioWorklet(audioContext);
+              wakeWordWorkletRef.current = workletNode;
+              
+              // Handle audio data from worklet
+              workletNode.port.onmessage = (event) => {
+                if (event.data.type === 'audioData' && wakeWordSocketRef.current && wakeWordSocketRef.current.readyState === WebSocket.OPEN) {
+                  try {
+                    const buffer = event.data.buffer;
+                    const pcmData = convertFloatToInt16(buffer);
+                    wakeWordSocketRef.current.send(pcmData);
+                  } catch (err) {
+                    console.error('[HANDS-FREE] Error sending wake word audio data:', err);
+                  }
+                }
+              };
+              
+              // Connect audio pipeline
+              sourceNode.connect(workletNode);
+            }
+
+            setIsListeningForWakeWord(true);
+            setHandsFreeFeedback('Listening for wake words...');
+            console.log('[HANDS-FREE] Wake word detection started successfully');
+            
+          } catch (audioError) {
+            console.error('[HANDS-FREE] Error setting up wake word audio:', audioError);
+            setHandsFreeFeedback('Error setting up hands-free audio processing.');
+            cleanupHandsFreeResources();
+          }
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data) as DeepgramResponse;
+            
+            if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
+              const transcription = data.channel.alternatives[0].transcript;
+              
+              if (transcription && transcription.trim().length > 0) {
+                console.log('[HANDS-FREE] 🎤 Wake word transcription:', transcription);
+                console.log('[HANDS-FREE] - is_final:', data.is_final);
+                console.log('[HANDS-FREE] - current isWakeWordDetected:', isWakeWordDetected);
+                
+                if (data.is_final) {
+                  console.log('[HANDS-FREE] 📝 Processing final wake word transcription');
+                  
+                  // Check for wake word
+                  if (!isWakeWordDetected && containsWakeWord(transcription)) {
+                    console.log('[HANDS-FREE] 🚨 WAKE WORD DETECTED!');
+                    console.log('[HANDS-FREE] Transcription that triggered wake word:', `"${transcription}"`);
+                    console.log('[HANDS-FREE] Setting isWakeWordDetected to true');
+                    
+                    setIsWakeWordDetected(true);
+                    wakeWordDetectedRef.current = true; // Set ref immediately
+                    setHandsFreeFeedback('Wake word detected! Say your message...');
+                    
+                    console.log('[HANDS-FREE] About to start message recording...');
+                    console.log('[HANDS-FREE] Wake word ref set to:', wakeWordDetectedRef.current);
+                    
+                    // Start message recording
+                    setTimeout(() => {
+                      console.log('[HANDS-FREE] Executing startMessageRecording...');
+                      console.log('[HANDS-FREE] Wake word ref before STT:', wakeWordDetectedRef.current);
+                      startMessageRecording();
+                    }, 100);
+                  }
+                  // Check for action word if we're already recording
+                  else if (isWakeWordDetected && isRecording && containsActionWord(transcription)) {
+                    console.log('[HANDS-FREE] 🎯 Action word detected in wake word listener!');
+                    handleHandsFreeSubmit();
+                  } else {
+                    console.log('[HANDS-FREE] No wake word in transcription:', `"${transcription}"`);
+                    console.log('[HANDS-FREE] - Already detected:', isWakeWordDetected);
+                    console.log('[HANDS-FREE] - Is recording:', isRecording);
+                    console.log('[HANDS-FREE] - Contains wake word:', containsWakeWord(transcription));
+                  }
+                } else {
+                  console.log('[HANDS-FREE] ⏸️ Interim wake word transcription, skipping');
+                }
+              } else {
+                console.log('[HANDS-FREE] ⚠️ Empty wake word transcription');
+              }
+            } else {
+              console.log('[HANDS-FREE] ⚠️ Invalid wake word data structure');
+            }
+          } catch (error) {
+            console.error('[HANDS-FREE] ❌ Error parsing wake word WebSocket message:', error);
+          }
+        };
+
+        socket.onerror = (error) => {
+          console.error('[HANDS-FREE] Wake word WebSocket error:', error);
+          setHandsFreeFeedback('Wake word detection error occurred.');
+          cleanupHandsFreeResources();
+          setIsListeningForWakeWord(false);
+        };
+
+        socket.onclose = (event) => {
+          console.log(`[HANDS-FREE] Wake word WebSocket closed: ${event.code}, ${event.reason || 'none'}`);
+          setIsListeningForWakeWord(false);
+          setIsWakeWordDetected(false);
+          setHandsFreeFeedback('');
+        };
+
+      } catch (socketError) {
+        console.error('[HANDS-FREE] Error creating wake word WebSocket:', socketError);
+        setHandsFreeFeedback('Failed to connect to wake word detection service.');
+        cleanupHandsFreeResources();
+      }
+    } catch (error) {
+      console.error('[HANDS-FREE] Error starting wake word listening:', error);
+      setHandsFreeFeedback('Failed to start hands-free mode.');
+      cleanupHandsFreeResources();
+    }
+  };
+
+  // Start message recording after wake word is detected
+  const startMessageRecording = async () => {
+    console.log('[HANDS-FREE] 🎙️ Starting message recording after wake word detection');
+    console.log('[HANDS-FREE] Current state before transition:');
+    console.log('[HANDS-FREE] - isWakeWordDetected:', isWakeWordDetected);
+    console.log('[HANDS-FREE] - isHandsFreeMode:', isHandsFreeMode);
+    console.log('[HANDS-FREE] - isListeningForWakeWord:', isListeningForWakeWord);
+    
+    // Stop wake word detection temporarily
+    cleanupHandsFreeResources();
+    setIsListeningForWakeWord(false);
+    
+    console.log('[HANDS-FREE] 🔄 Cleaned up wake word resources, now starting STT');
+    console.log('[HANDS-FREE] Wake word state should still be true:', isWakeWordDetected);
+    
+    // Start regular speech-to-text for message
+    await startSpeechToText();
+    
+    console.log('[HANDS-FREE] ✅ STT started, wake word state:', isWakeWordDetected);
+  };
+
+  // Handle hands-free message submission
+  const handleHandsFreeSubmit = async () => {
+    // Get the current input and clean it one more time
+    const currentInput = input.trim();
+    
+    if (currentInput) {
+      console.log('[HANDS-FREE] Submitting message via hands-free:', currentInput);
+      setHandsFreeFeedback('Sending message...');
+      
+      // Stop recording first
+      stopSpeechToText();
+      
+      // Double-check that the input doesn't contain action words
+      let cleanedInput = currentInput;
+      for (const actionWord of ACTION_WORDS) {
+        const actionWordRegex = new RegExp(`\\b${actionWord}\\b`, 'gi');
+        cleanedInput = cleanedInput.replace(actionWordRegex, '').trim();
+      }
+      
+      // Update input with cleaned version if needed
+      if (cleanedInput !== currentInput) {
+        setInput(cleanedInput);
+      }
+      
+      // Wait a brief moment to ensure state is updated
+      setTimeout(() => {
+        // Submit the message using the form's submit event
+        const form = document.querySelector('form');
+        if (form) {
+          const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+          form.dispatchEvent(submitEvent);
+        }
+        
+        // Reset hands-free state
+        setIsWakeWordDetected(false);
+        wakeWordDetectedRef.current = false; // Reset ref too
+        setInterimTranscript('');
+        
+        // Resume wake word listening after the response
+        setTimeout(() => {
+          if (isHandsFreeMode) {
+            setHandsFreeFeedback('Resuming wake word detection...');
+            startWakeWordListening();
+          }
+        }, 3000); // Wait longer to allow for response processing
+      }, 200);
+    } else {
+      console.log('[HANDS-FREE] No input to submit');
+      setHandsFreeFeedback('No message to send');
+      
+      // Reset state and resume listening
+      setIsWakeWordDetected(false);
+      wakeWordDetectedRef.current = false; // Reset ref too
+      setInterimTranscript('');
+      
+      if (isHandsFreeMode) {
+        setTimeout(() => {
+          startWakeWordListening();
+        }, 1000);
+      }
+    }
+  };
+
+  // Toggle hands-free mode
+  const toggleHandsFreeMode = () => {
+    if (isHandsFreeMode) {
+      // Turn off hands-free mode
+      setIsHandsFreeMode(false);
+      setIsListeningForWakeWord(false);
+      setIsWakeWordDetected(false);
+      wakeWordDetectedRef.current = false; // Reset ref too
+      setHandsFreeFeedback('');
+      cleanupHandsFreeResources();
+      console.log('[HANDS-FREE] Hands-free mode disabled');
+    } else {
+      // Turn on hands-free mode
+      setIsHandsFreeMode(true);
+      console.log('[HANDS-FREE] Hands-free mode enabled');
+      console.log('[HANDS-FREE] Wake words configured:', WAKE_WORDS);
+      console.log('[HANDS-FREE] Action words configured:', ACTION_WORDS);
+      startWakeWordListening();
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupSpeechResources();
+      cleanupHandsFreeResources();
+      cleanupAudioResources();
+    };
+  }, []);
+
+  // Monitor wake word state changes for debugging
+  useEffect(() => {
+    console.log('[HANDS-FREE] 🔄 isWakeWordDetected state changed to:', isWakeWordDetected);
+    if (isWakeWordDetected) {
+      console.log('[HANDS-FREE] ✅ Wake word is now detected - ready for message recording');
+    } else {
+      console.log('[HANDS-FREE] ❌ Wake word detection reset');
+    }
+  }, [isWakeWordDetected]);
+
+  // Monitor hands-free mode changes
+  useEffect(() => {
+    console.log('[HANDS-FREE] 🔄 isHandsFreeMode state changed to:', isHandsFreeMode);
+  }, [isHandsFreeMode]);
+
   return (
     <motion.div 
       className="w-full max-w-4xl mt-auto"
@@ -1449,6 +2146,76 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         )}
       </AnimatePresence>
 
+      {/* Hands-free mode indicator */}
+      <AnimatePresence>
+        {isHandsFreeMode && (
+          <motion.div 
+            className={`mb-4 flex items-center justify-between gap-2 text-sm p-3 rounded-md border ${
+              isListeningForWakeWord 
+                ? 'bg-purple-50 text-purple-700 border-purple-200' 
+                : isWakeWordDetected 
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200'
+            }`}
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="flex items-center gap-2">
+              <motion.div
+                animate={isListeningForWakeWord ? { scale: [1, 1.2, 1] } : {}}
+                transition={{ repeat: Infinity, duration: 2 }}
+              >
+                🤖
+              </motion.div>
+              <div className="flex flex-col">
+                <span className="font-medium">
+                  {isListeningForWakeWord 
+                    ? 'Hands-free mode active' 
+                    : isWakeWordDetected 
+                    ? 'Wake word detected!'
+                    : 'Hands-free mode'
+                  }
+                </span>
+                {handsFreeFeedback && (
+                  <span className="text-xs opacity-75">{handsFreeFeedback}</span>
+                )}
+              </div>
+            </div>
+            
+            <motion.button
+              onClick={toggleHandsFreeMode}
+              className="text-xs px-2 py-1 rounded bg-white/50 hover:bg-white/80 transition-colors"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              Turn Off
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Wake words help */}
+      <AnimatePresence>
+        {isHandsFreeMode && isListeningForWakeWord && (
+          <motion.div 
+            className="mb-4 p-2 text-xs bg-purple-100 text-purple-600 rounded-md border border-purple-200"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
+          >
+            <div className="flex flex-col gap-1">
+              <span>💡 <strong>Wake words:</strong> "Hey Assistant", "Hello Chat", "Hey Chat", "Assistant"</span>
+              <span>⏱️ <strong>Auto-submit:</strong> Messages auto-send after 2 seconds of silence</span>
+              <span>🎯 <strong>Quick send:</strong> "Send", "Submit", "Go", "Execute" for immediate sending</span>
+              <span className="opacity-75">Say a wake word, then your message - it will auto-send when you pause!</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Speech recognition indicator */}
       <AnimatePresence>
         {isRecording && (
@@ -1461,9 +2228,14 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           >
             <Volume2 size={16} className="animate-pulse" />
             <span>
-              Listening...
+              {isWakeWordDetected ? 'Recording your message...' : 'Listening...'}
               {interimTranscript && (
                 <span className="italic ml-2 text-gray-500">"{interimTranscript}"</span>
+              )}
+              {autoSubmitCountdown > 0 && isWakeWordDetected && (
+                <span className="ml-2 font-medium text-blue-600">
+                  Auto-send in {autoSubmitCountdown}s
+                </span>
               )}
             </span>
             <motion.button
@@ -1526,6 +2298,29 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           </Button>
         </motion.div>
 
+        {/* Hands-free toggle button */}
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+        >
+          <Button
+            type="button"
+            onClick={toggleHandsFreeMode}
+            disabled={isLoading || isDisabled}
+            className={`h-12 px-4 rounded-md ${
+              isHandsFreeMode 
+                ? 'bg-purple-500 hover:bg-purple-600 text-white' 
+                : 'bg-gray-100 border border-gray-300 hover:bg-gray-200 text-gray-700'
+            }`}
+            title={isHandsFreeMode ? 'Turn off hands-free mode' : 'Turn on hands-free mode'}
+          >
+            {isHandsFreeMode ? '🤖' : '🎤'}
+          </Button>
+        </motion.div>
+
         <motion.div
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -1560,6 +2355,91 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           {config.promptTemplate && <span> | Custom Prompt: Yes</span>}
           {isRecording && <span> | Speech Recording: Active</span>}
           {isPlaying && <span> | Audio: Playing</span>}
+          {isHandsFreeMode && <span> | Hands-free: {isListeningForWakeWord ? 'Listening' : isWakeWordDetected ? 'Wake Word Detected' : 'On'}</span>}
+          
+          {/* Debug info for hands-free */}
+          {isHandsFreeMode && (
+            <div className="mt-1 p-2 bg-gray-100 rounded text-black text-xs">
+              <div>Current input: "{input}"</div>
+              <div>Wake word detected: {isWakeWordDetected ? 'YES' : 'NO'}</div>
+              <div>Is recording: {isRecording ? 'YES' : 'NO'}</div>
+              <div>Auto-submit countdown: {autoSubmitCountdown}s</div>
+              <div>Timer active: {autoSubmitTimerRef.current ? 'YES' : 'NO'}</div>
+              <div>Contains action word: {input ? (containsActionWord(input) ? 'YES' : 'NO') : 'N/A'}</div>
+              <div>Action words: {ACTION_WORDS.join(', ')}</div>
+              <div className="mt-2 flex gap-2 flex-wrap">
+                <button 
+                  onClick={() => {
+                    console.log('[TEST] Manual start auto-submit timer test');
+                    setIsWakeWordDetected(true);
+                    setInput("test message");
+                    setTimeout(() => startAutoSubmitTimer("test message"), 100);
+                  }}
+                  className="px-2 py-1 bg-blue-500 text-white rounded text-xs"
+                >
+                  Test Auto-Submit
+                </button>
+                <button 
+                  onClick={() => {
+                    console.log('[TEST] Manual clear timer test');
+                    clearAutoSubmitTimer();
+                  }}
+                  className="px-2 py-1 bg-red-500 text-white rounded text-xs"
+                >
+                  Clear Timer
+                </button>
+                <button 
+                  onClick={() => {
+                    console.log('[TEST] Testing direct handleHandsFreeSubmit');
+                    setInput("direct test message");
+                    setIsWakeWordDetected(true);
+                    setTimeout(() => {
+                      console.log('[TEST] Calling handleHandsFreeSubmit directly');
+                      handleHandsFreeSubmit();
+                    }, 100);
+                  }}
+                  className="px-2 py-1 bg-green-500 text-white rounded text-xs"
+                >
+                  Test Direct Submit
+                </button>
+                <button 
+                  onClick={() => {
+                    console.log('[TEST] 🚀 FORCE START TIMER - bypassing all logic');
+                    setIsWakeWordDetected(true);
+                    setInput("force test message");
+                    clearAutoSubmitTimer();
+                    // Force the timer to start regardless of conditions
+                    const countdown = AUTO_SUBMIT_DELAY / 1000;
+                    setAutoSubmitCountdown(countdown);
+                    
+                    let countdownVal = countdown;
+                    countdownIntervalRef.current = setInterval(() => {
+                      countdownVal -= 1;
+                      setAutoSubmitCountdown(countdownVal);
+                      console.log('[TEST] Force countdown:', countdownVal);
+                      if (countdownVal <= 0 && countdownIntervalRef.current) {
+                        clearInterval(countdownIntervalRef.current);
+                        countdownIntervalRef.current = null;
+                      }
+                    }, 1000);
+                    
+                    autoSubmitTimerRef.current = setTimeout(() => {
+                      console.log('[TEST] 🚀 FORCE TIMER FIRED!');
+                      if (countdownIntervalRef.current) {
+                        clearInterval(countdownIntervalRef.current);
+                        countdownIntervalRef.current = null;
+                      }
+                      setAutoSubmitCountdown(0);
+                      handleHandsFreeSubmit();
+                    }, AUTO_SUBMIT_DELAY);
+                  }}
+                  className="px-2 py-1 bg-purple-500 text-white rounded text-xs"
+                >
+                  Force Timer
+                </button>
+              </div>
+            </div>
+          )}
         </motion.div>
       )}
     </motion.div>
