@@ -141,12 +141,13 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const [currentTTSSummary, setCurrentTTSSummary] = useState<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
-  // Speech-to-text refs
+  // Speech-to-text refs - Updated for modern Web Audio API
   const socketRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Keep a record of all messages for the session
   const [allMessages, setAllMessages] = useState<Array<{ 
@@ -249,39 +250,38 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
   const cleanupSpeechResources = () => {
     try {
-      // Close WebSocket connection
-      if (socketRef.current) {
-        // Try to send a close stream message if the connection is still open
-        if (socketRef.current.readyState === WebSocket.OPEN) {
-          try {
-            // Send CloseStream message to Deepgram for clean shutdown
-            socketRef.current.send(JSON.stringify({ type: "CloseStream" }));
-          } catch (err) {
-            console.warn('Error sending close stream message', err);
-          }
-          
-          // Give a small delay for the close message to be sent
-          setTimeout(() => {
-            if (socketRef.current) {
-              socketRef.current.close();
-              socketRef.current = null;
-            }
-          }, 100);
-        } else {
-          socketRef.current.close();
-          socketRef.current = null;
-        }
+      console.log('[STT] Cleaning up speech resources...');
+      
+      // Clear reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
 
-      // Disconnect and close audio processing nodes
+      // Close WebSocket connection properly
+      if (socketRef.current) {
+        if (socketRef.current.readyState === WebSocket.OPEN) {
+          try {
+            // Send close stream message
+            socketRef.current.send(JSON.stringify({ type: "CloseStream" }));
+          } catch (err) {
+            console.warn('[STT] Error sending close stream message:', err);
+          }
+        }
+        
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+
+      // Disconnect audio nodes
+      if (workletNodeRef.current) {
+        workletNodeRef.current.disconnect();
+        workletNodeRef.current = null;
+      }
+
       if (sourceNodeRef.current) {
         sourceNodeRef.current.disconnect();
         sourceNodeRef.current = null;
-      }
-
-      if (processorNodeRef.current) {
-        processorNodeRef.current.disconnect();
-        processorNodeRef.current = null;
       }
 
       // Close audio context
@@ -290,13 +290,18 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         audioContextRef.current = null;
       }
 
-      // Stop all tracks in the media stream
+      // Stop all media stream tracks
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current.getTracks().forEach((track) => {
+          track.stop();
+          console.log('[STT] Stopped track:', track.kind);
+        });
         mediaStreamRef.current = null;
       }
+
+      console.log('[STT] Speech resources cleaned up successfully');
     } catch (error) {
-      console.error('Error cleaning up speech resources:', error);
+      console.error('[STT] Error cleaning up speech resources:', error);
     }
   };
 
@@ -316,154 +321,270 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     }
   };
 
+  // Create audio worklet for processing audio data
+  const createAudioWorklet = async (audioContext: AudioContext): Promise<AudioWorkletNode> => {
+    // Create inline audio worklet
+    const workletCode = `
+      class AudioProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.bufferSize = 4096;
+          this.buffer = new Float32Array(this.bufferSize);
+          this.bufferIndex = 0;
+        }
+
+        process(inputs, outputs, parameters) {
+          const input = inputs[0];
+          if (input.length > 0) {
+            const inputData = input[0];
+            
+            for (let i = 0; i < inputData.length; i++) {
+              this.buffer[this.bufferIndex] = inputData[i];
+              this.bufferIndex++;
+              
+              if (this.bufferIndex >= this.bufferSize) {
+                // Send buffer to main thread
+                this.port.postMessage({
+                  type: 'audioData',
+                  buffer: this.buffer.slice()
+                });
+                this.bufferIndex = 0;
+              }
+            }
+          }
+          
+          return true;
+        }
+      }
+
+      registerProcessor('audio-processor', AudioProcessor);
+    `;
+
+    // Create blob URL for worklet
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    const workletUrl = URL.createObjectURL(blob);
+
+    try {
+      await audioContext.audioWorklet.addModule(workletUrl);
+      const workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+      
+      // Clean up blob URL
+      URL.revokeObjectURL(workletUrl);
+      
+      return workletNode;
+    } catch (error) {
+      URL.revokeObjectURL(workletUrl);
+      throw error;
+    }
+  };
+
   const startSpeechToText = async () => {
     try {
       setIsConnecting(true);
       setSpeechError(null);
+      console.log('[STT] Starting speech-to-text...');
 
-      // Define a hardcoded key for development purposes only
-      // In production, you should use environment variables properly
-      const hardcodedKey = 'your_deepgram_api_key_here'; // Replace with your actual key
+      // Clean up any existing resources first
+      cleanupSpeechResources();
+
+      // Get the API key
+      const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
       
-      // Try to get the API key from environment variables first
-      let apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-      
-      // If not available in environment, use the hardcoded key
       if (!apiKey) {
-        console.warn('Using hardcoded Deepgram API key. For production, set NEXT_PUBLIC_DEEPGRAM_API_KEY in your .env.local file.');
-        apiKey = hardcodedKey;
+        const error = 'Deepgram API key is missing. Please add NEXT_PUBLIC_DEEPGRAM_API_KEY to your .env.local file.';
+        console.error('[STT] ' + error);
+        setSpeechError(error);
+        setIsConnecting(false);
+        return;
       }
 
-      // Get user media (microphone access)
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-
-      // Create URL parameters
-      const params = new URLSearchParams({
-        encoding: 'linear16',
-        sample_rate: '16000',
-        model: 'nova',
-        smart_format: 'true'
-      });
+      console.log('[STT] API key found, requesting microphone access...');
       
-      const wsUrl = `${DEEPGRAM_API_URL}?${params.toString()}`;
-      console.log('Connecting to Deepgram WebSocket:', wsUrl);
+      // Request microphone access
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000,
+            channelCount: 1
+          } 
+        });
+        
+        mediaStreamRef.current = stream;
+        console.log('[STT] Microphone access granted');
+      } catch (micError) {
+        const errorMsg = 'Microphone access denied. Please allow microphone access and try again.';
+        console.error('[STT] ' + errorMsg, micError);
+        setSpeechError(errorMsg);
+        setIsConnecting(false);
+        return;
+      }
+
+      // Create WebSocket connection with proper authentication
+      const wsUrl = `${DEEPGRAM_API_URL}?encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
       
-      // Create WebSocket connection with proper protocols
-      const socket = new WebSocket(wsUrl, [
-        'token',
-        apiKey
-      ]);
+      console.log('[STT] Connecting to WebSocket...');
+      
+      try {
+        // Connect using the token subprotocol as required by Deepgram
+        const socket = new WebSocket(wsUrl, ['token', apiKey]);
+        socketRef.current = socket;
 
-      socketRef.current = socket;
+        // Set up connection timeout
+        const connectionTimeout = setTimeout(() => {
+          if (socketRef.current?.readyState !== WebSocket.OPEN) {
+            console.error('[STT] WebSocket connection timeout');
+            setSpeechError('Connection to speech service timed out. Please try again.');
+            cleanupSpeechResources();
+            setIsConnecting(false);
+          }
+        }, 10000);
 
-      // Set up WebSocket event handlers
-      socket.onopen = () => {
-        console.log('WebSocket connection opened');
-        
-        // Create AudioContext (Safari-compatible)
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-        const audioContext = new AudioContext();
-        audioContextRef.current = audioContext;
-        
-        // Create audio source from the stream
-        if (mediaStreamRef.current) {
-          const sourceNode = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
-          sourceNodeRef.current = sourceNode;
+        socket.onopen = async () => {
+          clearTimeout(connectionTimeout);
+          console.log('[STT] WebSocket connection opened');
           
-          // Create script processor node (works in Safari)
-          const processorNode = audioContextRef.current.createScriptProcessor(4096, 1, 1);
-          processorNodeRef.current = processorNode;
+          // Authentication is handled via the subprotocol
+          console.log('[STT] Authenticated via token subprotocol');
           
-          // Connect the audio processing pipeline
-          sourceNodeRef.current.connect(processorNodeRef.current);
-          processorNodeRef.current.connect(audioContextRef.current.destination);
-          
-          // Process audio data
-          processorNodeRef.current.onaudioprocess = (e: AudioProcessingEvent) => {
-            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-              // Get audio data
-              const inputData = e.inputBuffer.getChannelData(0);
+          try {
+            // Create AudioContext
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            const audioContext = new AudioContext({ sampleRate: 16000 });
+            audioContextRef.current = audioContext;
+            
+            // Resume audio context if suspended
+            if (audioContext.state === 'suspended') {
+              await audioContext.resume();
+            }
+            
+            console.log('[STT] AudioContext created, sample rate:', audioContext.sampleRate);
+            
+            if (mediaStreamRef.current) {
+              // Create audio source
+              const sourceNode = audioContext.createMediaStreamSource(mediaStreamRef.current);
+              sourceNodeRef.current = sourceNode;
               
-              // Convert to 16-bit PCM (required format for Deepgram)
-              const pcmData = convertFloatToInt16(inputData);
+              console.log('[STT] Media stream source created');
               
-              // Send audio data to Deepgram
-              socketRef.current.send(pcmData);
+              // Create audio worklet node
+              const workletNode = await createAudioWorklet(audioContext);
+              workletNodeRef.current = workletNode;
               
-              // Send periodic keepalive
-              if (Date.now() % 5000 < 100) { // Every ~5 seconds
-                try {
-                  socketRef.current.send(JSON.stringify({ type: "KeepAlive" }));
-                } catch (err) {
-                  console.warn('Error sending keepalive', err);
+              // Handle audio data from worklet
+              workletNode.port.onmessage = (event) => {
+                if (event.data.type === 'audioData' && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                  try {
+                    const buffer = event.data.buffer;
+                    const pcmData = convertFloatToInt16(buffer);
+                    socketRef.current.send(pcmData);
+                  } catch (err) {
+                    console.error('[STT] Error sending audio data:', err);
+                  }
+                }
+              };
+              
+              // Connect audio pipeline
+              sourceNode.connect(workletNode);
+              
+              console.log('[STT] Audio pipeline connected');
+            }
+
+            setIsRecording(true);
+            setIsConnecting(false);
+            console.log('[STT] Recording started successfully');
+            
+          } catch (audioError) {
+            console.error('[STT] Error setting up audio:', audioError);
+            setSpeechError('Error setting up audio processing. Please try again.');
+            cleanupSpeechResources();
+            setIsConnecting(false);
+          }
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data) as DeepgramResponse;
+            
+            if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
+              const transcription = data.channel.alternatives[0].transcript;
+              
+              if (transcription && transcription.trim().length > 0) {
+                console.log('[STT] Transcription:', transcription, 'Final:', data.is_final);
+                
+                if (data.is_final) {
+                  // Add to input field and clear interim
+                  setInput(prev => {
+                    const newValue = prev + transcription.trim() + ' ';
+                    console.log('[STT] Adding final transcription to input:', newValue);
+                    return newValue;
+                  });
+                  setInterimTranscript('');
+                } else {
+                  // Show interim results
+                  setInterimTranscript(transcription);
                 }
               }
             }
-          };
-        }
-
-        setIsRecording(true);
-        setIsConnecting(false);
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as DeepgramResponse;
-          
-          // Check if this is a transcription result
-          if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
-            const transcription = data.channel.alternatives[0].transcript;
-            
-            // Handle interim vs final results
-            if (data.is_final) {
-              setInput(prev => prev + transcription.trim() + ' ');
-              setInterimTranscript('');
-            } else {
-              setInterimTranscript(transcription);
-            }
+          } catch (error) {
+            console.error('[STT] Error parsing WebSocket message:', error);
           }
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      };
+        };
 
-      socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setSpeechError('Connection error. Please check console for details.');
-        stopSpeechToText();
-      };
+        socket.onerror = (error) => {
+          console.error('[STT] WebSocket error:', error);
+          setSpeechError('Connection error occurred. Please try again.');
+          cleanupSpeechResources();
+          setIsConnecting(false);
+        };
 
-      socket.onclose = () => {
-        console.log('WebSocket connection closed');
-        if (isRecording) {
-          stopSpeechToText();
-        }
-      };
+        socket.onclose = (event) => {
+          console.log(`[STT] WebSocket connection closed: code ${event.code}, reason: ${event.reason || 'none'}`);
+          if (isRecording) {
+            cleanupSpeechResources();
+            setIsRecording(false);
+            setIsConnecting(false);
+            setInterimTranscript('');
+          }
+        };
+
+      } catch (socketError) {
+        console.error('[STT] Error creating WebSocket:', socketError);
+        setSpeechError('Failed to connect to speech service. Please try again.');
+        cleanupSpeechResources();
+        setIsConnecting(false);
+      }
     } catch (error) {
-      console.error('Error starting recording:', error);
+      console.error('[STT] Error starting recording:', error);
       setSpeechError(error instanceof Error ? error.message : 'Failed to start recording');
+      cleanupSpeechResources();
       setIsConnecting(false);
     }
   };
 
-  const stopSpeechToText = () => {
-    cleanupSpeechResources();
-    setIsRecording(false);
-    setIsConnecting(false);
-  };
-
-  // Utility function to convert Float32Array to Int16Array
+  // Utility function to convert Float32Array to Int16Array for Deepgram
   const convertFloatToInt16 = (buffer: Float32Array): ArrayBuffer => {
     const l = buffer.length;
     const buf = new Int16Array(l);
     
     for (let i = 0; i < l; i++) {
       // Convert float (-1 to 1) to int16 (-32768 to 32767)
-      buf[i] = Math.min(1, Math.max(-1, buffer[i])) * 32767;
+      const sample = Math.max(-1, Math.min(1, buffer[i]));
+      buf[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
     }
     
     return buf.buffer;
+  };
+
+  // Stop speech-to-text
+  const stopSpeechToText = () => {
+    console.log('[STT] Stopping speech-to-text...');
+    cleanupSpeechResources();
+    setIsRecording(false);
+    setIsConnecting(false);
+    setInterimTranscript('');
   };
 
   // IMPROVED: Generate a better summary of the response text for TTS
@@ -982,8 +1103,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             line.includes('</document_content>') ||
             line.includes('<userStyle>') ||
             line.includes('</userStyle>') ||
-            line.includes('<automated_reminder_from_anthropic>') ||
-            line.includes('</automated_reminder_from_anthropic>') ||
+            line.includes('') ||
             line.includes('<search_reminders>') ||
             line.includes('</search_reminders>')) {
             continue;
@@ -1056,60 +1176,99 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       .replace(/<\/?source>/g, '')
       .replace(/<\/?document_content>/g, '')
       .replace(/<userStyle>.*?<\/userStyle>/g, '')
-      .replace(/<automated_reminder_from_anthropic>.*?<\/automated_reminder_from_anthropic>/g, '')
       .replace(/<search_reminders>.*?<\/search_reminders>/g, '');
+  };
   
-    // Add response to history with search results if available
-    const newMessage = {
+  // Advanced handler for non-streaming responses
+  const handleNonStreamingResponse = async (response: Response) => {
+    const data = await response.json();
+    console.log('[ImprovedChat] Raw response:', data);
+    
+    let content = '';
+    let searchResults = null;
+  
+    if (data && data.success) {
+      // Handle GroundX RAG response format
+      if (data.response) {
+        console.log('[ImprovedChat] Response data:', data.response);
+        
+        // Handle nested response structure
+        if (typeof data.response === 'object') {
+          // Find the first key that contains the summary
+          const summaryKey = Object.keys(data.response).find(key => 
+            key.toLowerCase().includes('summary') || 
+            key.toLowerCase().includes('proposal')
+          );
+          
+          if (summaryKey) {
+            const summaryData = data.response[summaryKey];
+            // Convert the summary object to a formatted string
+            content = Object.entries(summaryData)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join('\n');
+          } else {
+            // If no summary key found, stringify the entire response
+            content = JSON.stringify(data.response, null, 2);
+          }
+        } else {
+          content = data.response;
+        }
+        
+        searchResults = data.searchResults || null;
+        console.log('[ImprovedChat] Extracted content:', content);
+        console.log('[ImprovedChat] Search results:', searchResults);
+      } else {
+        console.log('[ImprovedChat] No response data found');
+        content = "No content received from the API.";
+      }
+    } else {
+      console.log('[ImprovedChat] Error in response:', data.error);
+      content = data.error || "Error processing your request.";
+    }
+  
+    // Update UI with content
+    setAccumulatedContent(content);
+  
+    // Add response to history with search results
+    const messageWithSearchResults = {
       role: 'assistant', 
-      content: fullContent,
+      content: {
+        content: content,
+        sources: data.searchResults?.sources?.map((source: any) => ({
+          ...source,
+          hasXray: Boolean(source.hasXray),
+          xray: source.xray || null
+        })) || [],
+        searchResults: searchResults,
+        thoughtProcess: data.thoughts || '',
+        supportingContent: data.searchResults?.sources || []
+      },
       searchResults: searchResults
     };
     
-    setAllMessages(prev => [...prev, newMessage]);
+    console.log('[ImprovedChat] Message being added to history:', messageWithSearchResults);
+    
+    setAllMessages(prev => [...prev, messageWithSearchResults]);
   
-    // Notify parent component
+    // Notify parent component with both content and search results
     if (typeof onAssistantMessage === 'function') {
       if (onAssistantMessage.length > 1) {
-        // If the parent component accepts metadata as a second parameter
-        (onAssistantMessage as (content: string, metadata?: any) => void)(
-          fullContent, 
-          { searchResults }
-        );
+        // If the function accepts metadata
+        const metadata = { 
+          searchResults,
+          sources: data.searchResults?.sources || [],
+          thoughtProcess: data.thoughts || '',
+          supportingContent: data.searchResults?.sources || []
+        };
+        console.log('[ImprovedChat] Sending metadata to parent:', metadata);
+        (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
       } else {
         // Basic version that only accepts content
-        onAssistantMessage(fullContent);
+        onAssistantMessage(content);
       }
     }
     
-    // Generate TTS for the response
-    if (fullContent) {
-      generateTTS(fullContent);
-    }
-  };
-
-  // Handler for non-streaming responses
-  const handleNonStreamingResponse = async (response: Response) => {
-    const data = await response.json();
-    let content = '';
-
-    if (data && data.content) {
-      content = data.content;
-    } else if (data && data.choices && data.choices.length > 0) {
-      content = data.choices[0].message.content;
-    } else {
-      content = "Received a response but couldn't extract content.";
-    }
-
-    setAccumulatedContent(content);
-
-    // Add response to history
-    setAllMessages(prev => [...prev, { role: 'assistant', content }]);
-
-    // Notify parent component
-    onAssistantMessage(content);
-    
-    // Generate TTS for the response
+    // Generate TTS for the response if available
     if (content) {
       generateTTS(content);
     }
@@ -1172,7 +1331,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         )}
       </AnimatePresence>
 
-      {/* IMPROVED: TTS Audio Controls with summary display */}
+      {/* TTS Audio Controls with summary display */}
       <AnimatePresence>
         {(audioSrc && lastResponseTimestamp && Date.now() - lastResponseTimestamp < 60000) && (
           <motion.div 
