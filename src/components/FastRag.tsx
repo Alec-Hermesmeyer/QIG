@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -96,11 +96,6 @@ export default function FastRAG({
   const [supportingContent, setSupportingContent] = useState<any[]>([]);
   const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
   
-  // We'll use a ref for documents to avoid render loops
-  const documentsRef = useRef<Source[]>([]);
-  // Use state for forcing updates after document changes
-  const [forceUpdate, setForceUpdate] = useState(0);
-
   // References
   const contentRef = useRef<HTMLDivElement | null>(null);
   const answerElementId = `answer-content-${index}`;
@@ -111,131 +106,20 @@ export default function FastRAG({
     textColor: theme === 'dark' ? '#e4e6eb' : '#1e1e2e',
     cardBackground: theme === 'dark' ? '#2d2d3a' : '#ffffff',
     borderColor: theme === 'dark' ? '#3f3f5a' : '#e2e8f0',
-    primaryColor: theme === 'dark' ? '#ff3f3f' : '#e53e3e', // Changed to red
-    secondaryColor: theme === 'dark' ? '#cc0000' : '#b91c1c', // Changed to darker red
-    accentColor: theme === 'dark' ? '#ff4d4d' : '#f87171', // Changed to lighter red
-    xrayColor: theme === 'dark' ? '#e02020' : '#dc2626', // Changed to vibrant red
+    primaryColor: theme === 'dark' ? '#ff3f3f' : '#e53e3e',
+    secondaryColor: theme === 'dark' ? '#cc0000' : '#b91c1c',
+    accentColor: theme === 'dark' ? '#ff4d4d' : '#f87171',
+    xrayColor: theme === 'dark' ? '#e02020' : '#dc2626',
     ...customStyles
   };
 
-  // Debugging helper that logs the object's structure
-  const logObjectStructure = useCallback((obj: any, name = "Object") => {
-    if (!obj || typeof obj !== 'object') {
-      console.log(`${name} is not an object:`, obj);
-      return;
-    }
-
-    const formatValue = (val: any) => {
-      if (val === null) return "null";
-      if (val === undefined) return "undefined";
-      if (typeof val === 'object') {
-        if (Array.isArray(val)) return `Array(${val.length})`;
-        return "Object";
-      }
-      return typeof val;
-    };
-
-    const structure: Record<string, string> = Object.keys(obj).reduce((acc: Record<string, string>, key: string) => {
-      acc[key] = formatValue(obj[key]);
-      return acc;
-    }, {});
-
-    console.log(`Structure of ${name}:`, structure);
-    
-    // Specific logging for Azure RAG elements
-    if (obj.thought_process || obj.supporting_content || obj.sources || obj.citations) {
-      console.log("Found Azure RAG elements:");
-      if (obj.thought_process) console.log("- thought_process:", typeof obj.thought_process);
-      if (obj.supporting_content) console.log("- supporting_content:", Array.isArray(obj.supporting_content) ? `Array(${obj.supporting_content.length})` : typeof obj.supporting_content);
-      if (obj.sources) console.log("- sources:", Array.isArray(obj.sources) ? `Array(${obj.sources.length})` : typeof obj.sources);
-      if (obj.citations) console.log("- citations:", Array.isArray(obj.citations) ? `Array(${obj.citations.length})` : typeof obj.citations);
-    }
-  }, []);
-
-  // Deep extraction utility - looks for properties at any depth in the object
-  const deepExtract = useCallback((obj: any, keys: string[], stopAtFirst = false) => {
-    if (!obj || typeof obj !== 'object') return null;
-    
-    // First check for direct property match
-    for (const key of keys) {
-      if (obj[key] !== undefined) {
-        if (stopAtFirst) return obj[key];
-        console.log(`Found property '${key}' at root level:`, obj[key]);
-      }
-    }
-    
-    // Special handling for common structures we've seen
-    if (obj.search && obj.search.results && Array.isArray(obj.search.results)) {
-      console.log('Found search.results structure, extracting as supporting content');
-      return obj.search.results;
-    }
-    
-    if (obj.documentExcerpts && Array.isArray(obj.documentExcerpts)) {
-      console.log('Found documentExcerpts structure, extracting as supporting content');
-      return obj.documentExcerpts;
-    }
-    
-    if (obj.sources && Array.isArray(obj.sources)) {
-      console.log('Found sources structure, extracting as supporting content');
-      return obj.sources;
-    }
-    
-    if (obj.citations && Array.isArray(obj.citations)) {
-      console.log('Found citations structure, extracting as supporting content');
-      return obj.citations;
-    }
-    
-    // Recursively check for the property in nested objects
-    const results: Array<{path: string, value: any}> = [];
-    const processObject = (o: any, path = '') => {
-      if (!o || typeof o !== 'object') return;
-      
-      // Skip checking arrays of primitives to avoid excessive processing
-      if (Array.isArray(o) && o.length > 0 && typeof o[0] !== 'object') return;
-      
-      for (const key in o) {
-        if (Object.prototype.hasOwnProperty.call(o, key)) {
-          // Check if this key matches any of our target keys
-          if (keys.includes(key)) {
-            const currentPath = path ? `${path}.${key}` : key;
-            console.log(`Found property '${key}' at path '${currentPath}':`, o[key]);
-            results.push({ path: currentPath, value: o[key] });
-            if (stopAtFirst) return o[key];
-          }
-          
-          // Recursively process nested objects if not a circular reference
-          if (o[key] && typeof o[key] === 'object' && o[key] !== o) {
-            const currentPath = path ? `${path}.${key}` : key;
-            processObject(o[key], currentPath);
-          }
-        }
-      }
-    };
-    
-    processObject(obj);
-    return stopAtFirst ? null : results;
-  }, []);
-
-  // Extract sources from answer - memoized to avoid unnecessary recalculations
-  const extractAllSources = useCallback(() => {
+  // Memoize extracted sources to prevent recalculation on every render
+  const extractedSources = useMemo(() => {
     const allSources: Source[] = [];
     const sourceMap = new Map<string, boolean>();
 
-    // Log the structure to help with debugging
-    if (answer) {
-      logObjectStructure(answer, "Answer");
-    }
-    if (searchResults) {
-      logObjectStructure(searchResults, "Search Results");
-    }
-
     const processSource = (source: any, index: number) => {
       if (!source) return;
-
-      // For debugging
-      if (index === 0) {
-        logObjectStructure(source, "First Source");
-      }
 
       const sourceId = source.id || source.documentId || source.fileId ||
         (source.fileName ? `file-${source.fileName}` : `source-${index}`);
@@ -343,201 +227,10 @@ export default function FastRAG({
 
     console.log(`Total sources extracted: ${allSources.length}`);
     return allSources;
-  }, [answer, documentExcerpts, searchResults, logObjectStructure]);
+  }, [answer, documentExcerpts, searchResults]);
 
-  // Extract Azure-specific content using deep search
-  const extractAzureContent = useCallback(() => {
-    if (!answer) return;
-    
-    console.log("Extracting Azure content deeply", answer);
-    
-    // Log the full answer structure to help debug
-    logObjectStructure(answer, "Azure Answer");
-    
-    // Direct property checking for common Azure formats
-    if (answer.thought_process) {
-      console.log("Found direct thought_process property:", typeof answer.thought_process);
-      setHasAzureThoughtProcess(true);
-      setAzureThoughtProcess(
-        typeof answer.thought_process === 'string' 
-          ? answer.thought_process 
-          : JSON.stringify(answer.thought_process, null, 2)
-      );
-    } else if (answer.thoughts) {
-      console.log("Found direct thoughts property:", typeof answer.thoughts);
-      setHasAzureThoughtProcess(true);
-      setAzureThoughtProcess(
-        typeof answer.thoughts === 'string' 
-          ? answer.thoughts 
-          : JSON.stringify(answer.thoughts, null, 2)
-      );
-    }
-    
-    // Check for supporting content directly
-    if (answer.supporting_content && Array.isArray(answer.supporting_content)) {
-      console.log("Found direct supporting_content array:", answer.supporting_content.length);
-      setHasSupportingContent(true);
-      
-      // Process and normalize supporting content
-      const formattedContent = answer.supporting_content.map((item: any, idx: number) => {
-        if (typeof item === 'string') {
-          return {
-            title: `Supporting Content ${idx + 1}`,
-            content: item,
-            source: 'Document'
-          };
-        }
-        
-        return {
-          title: item.title || item.name || item.source || `Supporting Content ${idx + 1}`,
-          content: item.content || item.text || item.excerpt || item.snippet || '',
-          source: item.source || item.document || item.url || ''
-        };
-      });
-      
-      setSupportingContent(formattedContent);
-    } else if (answer.supportingContent && Array.isArray(answer.supportingContent)) {
-      console.log("Found direct supportingContent array:", answer.supportingContent.length);
-      setHasSupportingContent(true);
-      
-      // Process and normalize supporting content
-      const formattedContent = answer.supportingContent.map((item: any, idx: number) => {
-        if (typeof item === 'string') {
-          return {
-            title: `Supporting Content ${idx + 1}`,
-            content: item,
-            source: 'Document'
-          };
-        }
-        
-        return {
-          title: item.title || item.name || item.source || `Supporting Content ${idx + 1}`,
-          content: item.content || item.text || item.excerpt || item.snippet || '',
-          source: item.source || item.document || item.url || ''
-        };
-      });
-      
-      setSupportingContent(formattedContent);
-    }
-    
-    // Deep search for thought process if we didn't find it directly
-    if (!hasAzureThoughtProcess) {
-      const thoughtProcessKeys = [
-        'thought_process', 'thoughtProcess', 'thoughts', 'reasoning', 'rationalization',
-        'thinking', 'analysis', 'reasoning_process', 'reasoningProcess', 'chain_of_thought'
-      ];
-      
-      const thoughtResult = deepExtract(answer, thoughtProcessKeys, true);
-      
-      if (thoughtResult) {
-        console.log("Found thought process through deep search:", thoughtResult);
-        const formattedThought = typeof thoughtResult === 'string' 
-          ? thoughtResult 
-          : JSON.stringify(thoughtResult, null, 2);
-        
-        setHasAzureThoughtProcess(true);
-        setAzureThoughtProcess(formattedThought);
-      }
-    }
-    
-    // Deep search for supporting content if we didn't find it directly
-    if (!hasSupportingContent) {
-      const supportingContentKeys = [
-        'supporting_content', 'supportingContent', 'evidence', 'citations', 'sources',
-        'data_points', 'dataPoints', 'context', 'contextData', 'documentExcerpts'
-      ];
-      
-      const contentResults = deepExtract(answer, supportingContentKeys);
-      
-      for (const result of contentResults) {
-        if (Array.isArray(result.value) && result.value.length > 0) {
-          // Function to process and normalize arrays at any level
-          const processArray = (arr: any[]): SupportingContentItem[] => {
-            return arr.flatMap((item: any, idx: number) => {
-              // Handle recursive arrays
-              if (Array.isArray(item)) {
-                return processArray(item);
-              }
-              
-              // Handle string items
-              if (typeof item === 'string') {
-                return {
-                  title: `Supporting Content ${idx + 1}`,
-                  content: item,
-                  source: 'Document'
-                };
-              }
-              
-              // Handle object items
-              if (typeof item === 'object' && item !== null) {
-                // Look for content in various properties
-                const content = item.content || item.text || item.excerpt || 
-                               item.snippet || item.value || item.data || '';
-                
-                // Only include items that have actual content
-                if (content) {
-                  return {
-                    title: item.title || item.name || item.source || 
-                           item.document || item.filename || `Supporting Content ${idx + 1}`,
-                    content: content,
-                    source: item.source || item.document || item.fileName || 
-                            item.file || item.url || ''
-                  };
-                }
-              }
-              
-              return [];
-            }).filter(Boolean);
-          };
-          
-          const formattedContent = processArray(result.value);
-          
-          if (formattedContent.length > 0) {
-            console.log("Found supporting content through deep search:", formattedContent);
-            setHasSupportingContent(true);
-            setSupportingContent(formattedContent);
-            break; // Use the first matching array we find
-          }
-        }
-      }
-    }
-  }, [answer, hasAzureThoughtProcess, hasSupportingContent, deepExtract, logObjectStructure]);
-
-  // Initialize Azure content when the component mounts
-  useEffect(() => {
-    if (!answer) return;
-    
-    console.log("Initializing content extraction on mount");
-    try {
-      // Extract data from answer object
-      extractAzureContent();
-      
-      // If we have no supporting content yet, try to extract from document excerpts
-      setTimeout(() => {
-        if (supportingContent.length === 0 && documentsRef.current.length > 0) {
-          console.log("No supporting content found, extracting from documents");
-          const sourceExcerpts = documentsRef.current
-            .filter(source => source.excerpts && Array.isArray(source.excerpts) && source.excerpts.length > 0)
-            .map((source, index): SupportingContentItem => ({
-              title: source.fileName || `Source ${index + 1}`,
-              content: source.excerpts?.[0] || '',
-              source: source.fileName || 'Document'
-            }));
-          
-          if (sourceExcerpts.length > 0) {
-            console.log(`Found ${sourceExcerpts.length} document excerpts to use as supporting content`);
-            setSupportingContent(sourceExcerpts);
-            setHasSupportingContent(true);
-          }
-        }
-      }, 100);
-    } catch (error) {
-      console.error("Error extracting content:", error);
-    }
-  }, [answer, extractAzureContent]);
-
-  // Modified extractContent function to handle policy information
-  const extractContent = useCallback(() => {
+  // Memoize extracted content to prevent recalculation
+  const extractedContent = useMemo(() => {
     if (!answer) return '';
     
     // Special case for American Revelry policy information
@@ -545,8 +238,8 @@ export default function FastRAG({
         (answer.content && typeof answer.content === 'string' && answer.content.includes('American Revelry')) ||
         (typeof answer === 'string' && answer.includes('American Revelry')) ||
         // Check if answer contains policy-related information
-        (documentsRef.current && documentsRef.current.length > 0 && 
-         documentsRef.current.some(doc => 
+        (extractedSources && extractedSources.length > 0 && 
+         extractedSources.some(doc => 
            doc.fileName && doc.fileName.includes("2024-2025 Master Marketing Communication Chain")))) {
 
       return `
@@ -607,11 +300,11 @@ export default function FastRAG({
     
     // Last resort: convert the whole object to JSON
     return JSON.stringify(answer, null, 2);
-  }, [answer]);
+  }, [answer, extractedSources]);
 
-  const extractThoughtProcess = useCallback(() => {
-    let reasoning = '';
-    if (!answer) return reasoning;
+  // Memoize thought process extraction
+  const extractedThoughtProcess = useMemo(() => {
+    if (!answer) return '';
     
     // Check for Azure specific thought process format first
     if (answer.thought_process) {
@@ -630,105 +323,22 @@ export default function FastRAG({
     
     // Handle other formats
     if (answer.thoughts) {
-      reasoning = typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
+      return typeof answer.thoughts === 'string' ? answer.thoughts : JSON.stringify(answer.thoughts, null, 2);
     }
     else if (answer.result?.thoughts) {
-      reasoning = typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
+      return typeof answer.result.thoughts === 'string' ? answer.result.thoughts : JSON.stringify(answer.result.thoughts, null, 2);
     }
-    else if (answer.systemMessage) { reasoning = answer.systemMessage; }
-    else if (answer.reasoning) { reasoning = answer.reasoning; }
+    else if (answer.systemMessage) { return answer.systemMessage; }
+    else if (answer.reasoning) { return answer.reasoning; }
     
-    return reasoning;
+    return '';
   }, [answer]);
 
-  // Add detailed console logging to help debug the issue
-  useEffect(() => {
-    if (answer) {
-      console.log("=== DEBUG: Answer structure ===");
-      console.log("Answer type:", typeof answer);
-      console.log("Answer keys:", Object.keys(answer));
-      
-      // Check specific properties
-      if (answer.supporting_content) {
-        console.log("supporting_content exists:", typeof answer.supporting_content, Array.isArray(answer.supporting_content) ? answer.supporting_content.length : "not an array");
-      }
-      
-      if (answer.supportingContent) {
-        console.log("supportingContent exists:", typeof answer.supportingContent, Array.isArray(answer.supportingContent) ? answer.supportingContent.length : "not an array");
-      }
-      
-      if (answer.citations) {
-        console.log("citations exists:", typeof answer.citations, Array.isArray(answer.citations) ? answer.citations.length : "not an array");
-      }
-      
-      if (answer.sources) {
-        console.log("sources exists:", typeof answer.sources, Array.isArray(answer.sources) ? answer.sources.length : "not an array");
-      }
-      
-      if (answer.documentExcerpts) {
-        console.log("documentExcerpts exists:", typeof answer.documentExcerpts, Array.isArray(answer.documentExcerpts) ? answer.documentExcerpts.length : "not an array");
-      }
-      
-      if (answer.search && answer.search.results) {
-        console.log("search.results exists:", typeof answer.search.results, Array.isArray(answer.search.results) ? answer.search.results.length : "not an array");
-      }
-    }
-  }, [answer]);
-
-  // Add raw answer logging right when the component receives it
-  useEffect(() => {
-    if (answer) {
-      console.log("=== DETAILED ANSWER STRUCTURE DEBUGGING ===");
-      console.log("Raw answer received:", answer);
-      
-      // Dump complete JSON structure for inspection
-      try {
-        console.log("Full JSON structure:", JSON.stringify(answer, null, 2));
-      } catch (e) {
-        console.log("Could not stringify full answer:", e);
-      }
-      
-      // Check if answer is string or object
-      if (typeof answer === 'string') {
-        console.log("Answer is a string, attempting to parse as JSON");
-        try {
-          const parsedAnswer = JSON.parse(answer);
-          console.log("Parsed answer:", parsedAnswer);
-        } catch (e) {
-          console.log("Could not parse answer as JSON");
-        }
-      }
-      
-      // Try direct extraction from other potential structures
-      const checkProperty = (propName: string) => {
-        if (answer[propName]) {
-          console.log(`Found property ${propName}:`, answer[propName]);
-          if (Array.isArray(answer[propName])) {
-            console.log(`Property ${propName} is an array with ${answer[propName].length} items`);
-            console.log(`First item:`, answer[propName][0]);
-          }
-        }
-      };
-      
-      // Check common property names
-      ['supportingContent', 'supporting_content', 'citations', 'sources', 'documents', 'context'].forEach(checkProperty);
-      
-      // Check for potential nested structures
-      if (answer.answer) checkProperty('answer');
-      if (answer.message) checkProperty('message');
-      if (answer.response) checkProperty('response');
-      if (answer.data) checkProperty('data');
-    }
-  }, [answer]);
-
-  // Update extraction function to handle the API-specific format
-  const extractSupportingContent = useCallback((): SupportingContentItem[] => {
+  // Memoize supporting content extraction
+  const extractedSupportingContent = useMemo((): SupportingContentItem[] => {
     console.log("extractSupportingContent called, answer:", answer ? "exists" : "undefined");
     
     if (!answer) return [];
-    
-    // Raw answer debugging
-    console.log("Raw answer in extractSupportingContent:", answer);
     
     // Helper function to normalize supporting content items
     const normalizeItems = (items: any[]): SupportingContentItem[] => {
@@ -756,7 +366,7 @@ export default function FastRAG({
         else if (item.text) content = item.text;
         else if (item.excerpt) content = item.excerpt;
         else if (item.snippet) content = item.snippet;
-        else if (item.citation) content = item.citation; // Some APIs use citation as the content
+        else if (item.citation) content = item.citation;
         else if (item.excerpts && item.excerpts.length) content = item.excerpts[0];
         else if (item.snippets && item.snippets.length) content = item.snippets[0];
         else if (item.highlights && item.highlights.length) content = item.highlights.join('\n');
@@ -767,7 +377,7 @@ export default function FastRAG({
         console.log(`Normalized item ${idx}: title="${title?.substring(0, 20)}...", content length=${content?.length}`);
         
         return { title, content, source };
-      }).filter(item => item.content && item.content.trim().length > 0); // Filter out items with no content
+      }).filter(item => item.content && item.content.trim().length > 0);
     };
     
     // Extraction logic in order of priority
@@ -850,8 +460,8 @@ export default function FastRAG({
     }
     
     // 10. Fall back to extracted documents
-    if (documentsRef.current && documentsRef.current.length > 0) {
-      const sourcesWithExcerpts = documentsRef.current.filter(source => 
+    if (extractedSources && extractedSources.length > 0) {
+      const sourcesWithExcerpts = extractedSources.filter(source => 
         source.excerpts && Array.isArray(source.excerpts) && source.excerpts.length > 0);
       
       if (sourcesWithExcerpts.length > 0) {
@@ -860,28 +470,12 @@ export default function FastRAG({
       }
     }
     
-    // 11. Try deep search for any content
-    console.log("No supporting content found through standard methods, trying deep extraction");
-    const deepKeys = [
-      'supporting_content', 'supportingContent', 'evidence', 'citations', 'sources',
-      'data_points', 'dataPoints', 'context', 'contextData', 'documentExcerpts',
-      'excerpts', 'snippets', 'content', 'results'
-    ];
-    
-    const contentResults = deepExtract(answer, deepKeys);
-    for (const result of contentResults) {
-      if (Array.isArray(result.value) && result.value.length > 0) {
-        console.log(`Found array at ${result.path} with ${result.value.length} items`);
-        return normalizeItems(result.value);
-      }
-    }
-    
     console.log("No supporting content found anywhere");
     return [];
-  }, [answer, deepExtract]);
+  }, [answer, extractedSources]);
 
-  // Extract followup questions function
-  const extractFollowupQuestions = useCallback(() => {
+  // Memoize followup questions extraction
+  const extractedFollowupQuestions = useMemo(() => {
     if (!answer) return [];
     if (answer.followupQuestions && Array.isArray(answer.followupQuestions)) {
       return answer.followupQuestions;
@@ -892,25 +486,27 @@ export default function FastRAG({
     return [];
   }, [answer]);
 
-  // Effects
-  useEffect(() => {
-    if (isCopied) {
-      const timer = setTimeout(() => setIsCopied(false), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [isCopied]);
-
-  // Initialize documents ref when component mounts or when source data changes
-  useEffect(() => {
-    // Extract all sources
-    const sources = extractAllSources();
+  // Process content for Azure citations
+  const processedContent = useMemo(() => {
+    if (!extractedContent || typeof extractedContent !== 'string') return extractedContent;
     
-    // Directly set the ref value without causing re-renders
-    documentsRef.current = sources;
-    console.log("Documents extracted:", sources.length);
+    // Replace citation patterns like [filename.ext#page=123] with clickable spans
+    return extractedContent.replace(/\[(.*?(?:\.(pdf|docx?|txt))?(?:#page=(\d+))?)\]/g, (match, citation, ext, page) => {
+      const fileName = citation.split('#')[0];
+      return `<span class="azure-citation" data-filename="${fileName}" ${page ? `data-page="${page}"` : ''}>${match}</span>`;
+    });
+  }, [extractedContent]);
 
-    // Check for Azure format inline citations in the content
-    const content = extractContent();
+  // Initialize parsed answer HTML when content changes
+  useEffect(() => {
+    setParsedAnswerHtml(extractedContent);
+  }, [extractedContent]);
+
+  // Extract citations when answer changes
+  useEffect(() => {
+    if (!answer) return;
+
+    const content = extractedContent;
     if (typeof content === 'string') {
       // Regex pattern to match Azure citations [filename.ext#page=123]
       const azureCitationRegex = /\[(.*?(?:\.(pdf|docx?|txt))?(?:#page=(\d+))?)\]/g;
@@ -970,20 +566,8 @@ export default function FastRAG({
         setCitationInfos(azureCitations);
       }
     }
+  }, [answer, extractedContent]);
 
-    // Trigger a re-render to update the sources
-    setForceUpdate(prev => prev + 1);
-  }, [answer, documentExcerpts, searchResults, extractContent, extractAllSources]);
-
-  // Use the modified content directly
-  useEffect(() => {
-    if (!answer) return;
-    
-    // Set parsed HTML directly from our modified extractContent function
-    setParsedAnswerHtml(extractContent());
-    
-  }, [answer, extractContent]);
-  
   // Setup click handler for citations in the answer content
   useEffect(() => {
     if (!contentRef.current) return;
@@ -1034,6 +618,20 @@ export default function FastRAG({
     };
   }, []);
 
+  // Copy timer effect
+  useEffect(() => {
+    if (isCopied) {
+      const timer = setTimeout(() => setIsCopied(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isCopied]);
+
+  // Get current document based on currentDocumentId
+  const currentDocument = useMemo(() => {
+    if (!currentDocumentId) return null;
+    return extractedSources.find(s => String(s.id) === currentDocumentId);
+  }, [currentDocumentId, extractedSources]);
+
   // Utility functions
   const getRelevanceExplanation = (source: Source) => {
     if (!source) return '';
@@ -1066,17 +664,10 @@ export default function FastRAG({
     setCurrentDocumentId(sourceId);
   };
 
-  const getCurrentDocument = useCallback(() => {
-    if (!currentDocumentId) return null;
-    // Use the documents ref instead of calling extractAllSources()
-    return documentsRef.current.find(s => String(s.id) === currentDocumentId);
-  }, [currentDocumentId]);
-
   const handleCopyToClipboard = () => {
-    const contentToCopy = extractContent();
     try {
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(contentToCopy)
+        navigator.clipboard.writeText(extractedContent)
           .then(() => setIsCopied(true))
           .catch(err => {
             console.error("Copy failed:", err);
@@ -1087,37 +678,10 @@ export default function FastRAG({
     }
   };
 
-  // Process content for Azure citations
-  const processContentForCitations = useCallback((content: string) => {
-    if (!content || typeof content !== 'string') return content;
-    
-    // Replace citation patterns like [filename.ext#page=123] with clickable spans
-    return content.replace(/\[(.*?(?:\.(pdf|docx?|txt))?(?:#page=(\d+))?)\]/g, (match, citation, ext, page) => {
-      const fileName = citation.split('#')[0];
-      return `<span class="azure-citation" data-filename="${fileName}" ${page ? `data-page="${page}"` : ''}>${match}</span>`;
-    });
-  }, []);
-
-  // Get extracted data - use memoized callbacks to avoid unnecessary calculations
-  const content = extractContent();
-  const processedContent = processContentForCitations(content);
-  const thoughtProcess = extractThoughtProcess();
-  const followupQuestions = extractFollowupQuestions();
-  const extractedSupportingContent = extractSupportingContent();
-  const sources = documentsRef.current;
-  const currentDocument = getCurrentDocument();
-  
-  // Check if we have thought process either from Azure state or extraction
-  const hasThoughts = hasAzureThoughtProcess || (thoughtProcess && thoughtProcess.length > 0);
-  
-  // Check if we have supporting content either from Azure state or extraction
-  const hasSupportingContentData = hasSupportingContent || 
-    (supportingContent && supportingContent.length > 0) || 
-    (extractedSupportingContent && extractedSupportingContent.length > 0) ||
-    (documentsRef.current && documentsRef.current.length > 0) ||  // Always show if we have sources
-    (citationInfos && citationInfos.length > 0);  // Always show if we have citations
-  
-  const hasSources = sources && sources.length > 0;
+  // Check if we have various content types
+  const hasThoughts = extractedThoughtProcess && extractedThoughtProcess.length > 0;
+  const hasSupportingContentData = extractedSupportingContent.length > 0 || extractedSources.length > 0 || citationInfos.length > 0;
+  const hasSources = extractedSources && extractedSources.length > 0;
 
   // Animation variants
   const containerVariants = {
@@ -1246,7 +810,7 @@ export default function FastRAG({
                 }}
               >
                 <Database size={14} className="mr-1" />
-                Sources ({sources.length})
+                Sources ({extractedSources.length})
               </button>
             )}
             
@@ -1342,7 +906,7 @@ export default function FastRAG({
                 )}
 
                 {/* Follow-up questions */}
-                {showFollowupQuestions && followupQuestions.length > 0 && (
+                {showFollowupQuestions && extractedFollowupQuestions.length > 0 && (
                   <div className="mt-6">
                     <h4
                       className="text-sm font-medium mb-2"
@@ -1351,7 +915,7 @@ export default function FastRAG({
                       Follow-up Questions:
                     </h4>
                     <div className="flex flex-wrap gap-2">
-                      {followupQuestions.map((question: string, i: number) => (
+                      {extractedFollowupQuestions.map((question: string, i: number) => (
                         <button
                           key={i}
                           onClick={() => onFollowupQuestionClicked && onFollowupQuestionClicked(question)}
@@ -1405,7 +969,7 @@ export default function FastRAG({
                   >
                     <pre className="whitespace-pre-wrap">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {hasAzureThoughtProcess ? azureThoughtProcess : thoughtProcess}
+                        {extractedThoughtProcess}
                       </ReactMarkdown>
                     </pre>
                   </div>
@@ -1413,7 +977,7 @@ export default function FastRAG({
               </motion.div>
             )}
             
-            {/* Supporting Content tab - for Azure specifics */}
+            {/* Supporting Content tab */}
             {activeTab === 'supporting-content' && hasSupportingContentData && (
               <motion.div
                 key="supporting-content-tab"
@@ -1439,8 +1003,7 @@ export default function FastRAG({
                   </div>
 
                   <div className="space-y-4">
-                    {/* Use supporting content from state, or fall back to extracted */}
-                    {(supportingContent.length > 0 ? supportingContent : extractedSupportingContent).map((item: SupportingContentItem, idx: number) => (
+                    {extractedSupportingContent.map((item: SupportingContentItem, idx: number) => (
                       <div 
                         key={idx}
                         className="rounded-md border p-3 overflow-auto text-sm"
@@ -1457,7 +1020,6 @@ export default function FastRAG({
                             </ReactMarkdown>
                           ) : (
                             <div>
-                              {/* Try to handle non-string content */}
                               {JSON.stringify(item.content)}
                             </div>
                           )}
@@ -1471,42 +1033,6 @@ export default function FastRAG({
                     ))}
                   </div>
                 </div>
-
-                {/* Add a debug button to help test the supporting content tab by generating sample data */}
-                {supportingContent.length === 0 && extractedSupportingContent.length === 0 && (
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md mb-3">
-                    <p className="text-sm text-yellow-700 mb-2">No supporting content found in the response data.</p>
-                    <button
-                      onClick={() => {
-                        // Generate sample supporting content for testing
-                        const sampleContent = [
-                          {
-                            title: "Sample Document 1",
-                            content: "This is sample supporting content from document 1. It demonstrates how supporting content should appear in the tab.",
-                            source: "sample-doc-1.pdf"
-                          },
-                          {
-                            title: "Sample Document 2",
-                            content: "This is sample supporting content from document 2. It contains information that would typically be extracted from a citation.",
-                            source: "sample-doc-2.docx"
-                          },
-                          {
-                            title: "Sample Document 3",
-                            content: "This is sample supporting content from document 3. The supporting content tab should display this properly formatted.",
-                            source: "sample-doc-3.txt"
-                          }
-                        ];
-                        
-                        console.log("Setting sample supporting content for testing");
-                        setSupportingContent(sampleContent);
-                        setHasSupportingContent(true);
-                      }}
-                      className="px-3 py-1.5 text-xs bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded-md"
-                    >
-                      Load Sample Content (Debug)
-                    </button>
-                  </div>
-                )}
               </motion.div>
             )}
 
@@ -1549,13 +1075,13 @@ export default function FastRAG({
                           <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
                           <polyline points="14 2 14 8 20 8"></polyline>
                         </svg>
-                        {sources.length} Documents
+                        {extractedSources.length} Documents
                       </span>
                     </div>
                   </div>
 
                   <div className="mt-2 space-y-2">
-                    {sources.map((source, index) => (
+                    {extractedSources.map((source, index) => (
                       <div
                         key={`${source.id}-${index}`}
                         className="rounded-md border overflow-hidden"
@@ -1703,7 +1229,7 @@ export default function FastRAG({
                         <li>Has Thought Process: {hasThoughts ? 'Yes' : 'No'}</li>
                         <li>Has Supporting Content: {hasSupportingContentData ? 'Yes' : 'No'}</li>
                         <li>Has Sources: {hasSources ? 'Yes' : 'No'}</li>
-                        <li>Sources Count: {sources.length}</li>
+                        <li>Sources Count: {extractedSources.length}</li>
                         <li>Citations Count: {citationInfos.length}</li>
                       </ul>
                     </div>

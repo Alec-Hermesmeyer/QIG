@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/AuthContext';
 
@@ -16,16 +16,19 @@ export const useSampleQuestions = () => {
   const [error, setError] = useState<Error | null>(null);
   const { organization } = useAuth();
 
+  // Memoize the organization ID to prevent unnecessary re-renders
+  const organizationId = useMemo(() => organization?.id, [organization?.id]);
+
   useEffect(() => {
     const fetchSampleQuestions = async () => {
-      if (!organization?.id) {
+      if (!organizationId) {
         console.log('No organization ID found, cannot fetch sample questions');
         setSampleQuestions([]);
         setLoading(false);
         return;
       }
 
-      console.log(`Fetching sample questions for organization ${organization.id}`);
+      console.log(`Fetching sample questions for organization ${organizationId}`);
 
       try {
         setLoading(true);
@@ -33,7 +36,7 @@ export const useSampleQuestions = () => {
         const { data, error } = await supabase
           .from('sample_questions')
           .select('*')
-          .eq('organization_id', organization.id)
+          .eq('organization_id', organizationId)
           .order('created_at', { ascending: false });
 
         if (error) {
@@ -52,7 +55,7 @@ export const useSampleQuestions = () => {
     };
 
     fetchSampleQuestions();
-  }, [organization?.id]);
+  }, [organizationId]);
 
   return { sampleQuestions, loading, error };
 }; 

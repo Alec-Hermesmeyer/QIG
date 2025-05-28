@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { History, Settings, Info, SearchIcon, FileText, Shield, MessagesSquare } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -69,17 +69,28 @@ export default function FastRAGPage() {
   // Refs to track accumulated data
   const currentRawResponseRef = useRef<string>("");
   const isStreamingTransitioning = useRef(false);
+  const streamingIndexRef = useRef<number | null>(null);
+  const currentStreamingContentRef = useRef<string>("");
+
+  // Update refs when state changes
+  useEffect(() => {
+    streamingIndexRef.current = streamingIndex;
+  }, [streamingIndex]);
+
+  useEffect(() => {
+    currentStreamingContentRef.current = currentStreamingContent;
+  }, [currentStreamingContent]);
 
   // Handle user message
-  const handleUserMessage = (content: string) => {
+  const handleUserMessage = useCallback((content: string) => {
     setChatHistory(prev => [...prev, { role: 'user', content }]);
     setConversationStarted(true);
     // Reset raw response for new conversation
     currentRawResponseRef.current = "";
-  };
+  }, []);
 
   // Handle assistant message
-  const handleAssistantMessage = (content: string, metadata?: any) => {
+  const handleAssistantMessage = useCallback((content: string, metadata?: any) => {
     debugLog('Message received', { 
       contentPreview: content.substring(0, 50) + '...', 
       isPartial: metadata?.isPartial,
@@ -102,7 +113,7 @@ export default function FastRAGPage() {
       // Accumulate content for streaming
       setCurrentStreamingContent(prevContent => prevContent + content);
       
-      if (streamingIndex === null) {
+      if (streamingIndexRef.current === null) {
         // First chunk - create a new message
         setChatHistory(prev => {
           const newMessage = { 
@@ -123,12 +134,12 @@ export default function FastRAGPage() {
         // Update existing message with accumulated content
         setChatHistory(prev => {
           const newHistory = [...prev];
-          if (newHistory[streamingIndex]) {
-            newHistory[streamingIndex] = {
-              ...newHistory[streamingIndex],
-              content: currentStreamingContent + content,
+          if (newHistory[streamingIndexRef.current!]) {
+            newHistory[streamingIndexRef.current!] = {
+              ...newHistory[streamingIndexRef.current!],
+              content: currentStreamingContentRef.current + content,
               metadata: {
-                ...newHistory[streamingIndex].metadata,
+                ...newHistory[streamingIndexRef.current!].metadata,
                 isStreaming: true
               },
               raw: currentRawResponseRef.current 
@@ -139,9 +150,9 @@ export default function FastRAGPage() {
       }
     } else {
       // Final message with complete content
-      if (streamingIndex !== null) {
+      if (streamingIndexRef.current !== null) {
         // Save the accumulated content to ensure it's not lost
-        const finalContent = currentStreamingContent + content;
+        const finalContent = currentStreamingContentRef.current + content;
         
         // IMPORTANT: Mark that we're transitioning from streaming to complete
         isStreamingTransitioning.current = true;
@@ -155,8 +166,8 @@ export default function FastRAGPage() {
         // Update the streaming message with final content and metadata
         setChatHistory(prev => {
           const newHistory = [...prev];
-          if (newHistory[streamingIndex]) {
-            newHistory[streamingIndex] = {
+          if (newHistory[streamingIndexRef.current!]) {
+            newHistory[streamingIndexRef.current!] = {
               role: 'assistant',
               content: finalContent,
               metadata: {
@@ -196,7 +207,7 @@ export default function FastRAGPage() {
         }]);
       }
     }
-  };
+  }, []);
 
   // Extract supporting content from various locations in metadata
   const extractSupportingContent = (metadata?: any): any[] => {
@@ -275,10 +286,16 @@ export default function FastRAGPage() {
     if (!isStreaming && streamingIndex !== null && !isStreamingTransitioning.current) {
       debugLog('Streaming ended, finalizing message');
       
+      // Prevent multiple simultaneous updates
+      isStreamingTransitioning.current = true;
+      
       // Wait a bit longer to ensure all content is processed
       const timer = setTimeout(() => {
         setChatHistory(prev => {
-          if (!prev[streamingIndex]) return prev;
+          if (!prev[streamingIndex]) {
+            isStreamingTransitioning.current = false;
+            return prev;
+          }
           
           const currentMessage = prev[streamingIndex];
           // Preserve the current content when updating the metadata
@@ -295,11 +312,22 @@ export default function FastRAGPage() {
           
           const newHistory = [...prev];
           newHistory[streamingIndex] = updatedMessage;
+          
+          // Reset streaming state after update
+          setTimeout(() => {
+            setStreamingIndex(null);
+            setCurrentStreamingContent('');
+            isStreamingTransitioning.current = false;
+          }, 100);
+          
           return newHistory;
         });
-      }, 1000);
+      }, 500);
       
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        isStreamingTransitioning.current = false;
+      };
     }
   }, [isStreaming, streamingIndex]);
   
@@ -421,6 +449,10 @@ export default function FastRAGPage() {
                                 thoughtProcess: message.metadata?.thoughtProcess
                               }}
                               theme="light"
+                              onCitationClicked={(citation) => {
+                                // Handle citation click if needed
+                                console.log('Citation clicked:', citation);
+                              }}
                             />
                           </div>
                         )}

@@ -881,18 +881,25 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         role: 'user',
         content: userMessage
       });
-  
-      // Check if RAG should be used
-      const shouldUseRAG = props.isRAGEnabled && props.selectedBucketId;
+
+      // Determine which RAG system to use
+      let endpoint = '/api/chat-stream';
+      let useGroundX = false;
       
-      // Debug for RAG usage
-      console.log('[ImprovedChat] RAG enabled:', props.isRAGEnabled);
-      console.log('[ImprovedChat] Selected bucket ID:', props.selectedBucketId);
-      console.log('[ImprovedChat] Using RAG:', shouldUseRAG);
-  
-      // Determine which API to use
-      const endpoint = shouldUseRAG ? '/api/groundx/rag' : '/api/chat-stream';
-      const requestBody = shouldUseRAG ? {
+      // Check if RAG should be used
+      if (props.isRAGEnabled && props.selectedBucketId) {
+        console.log('[ImprovedChat] Using GroundX RAG with bucket:', props.selectedBucketId);
+        endpoint = '/api/groundx/rag';
+        useGroundX = true;
+      } else if (useRAG || ragContext.isRAGEnabled) {
+        console.log('[ImprovedChat] Using FastRAG');
+        // Keep using the default /api/chat-stream endpoint for FastRAG
+      }
+      
+      console.log('[ImprovedChat] Using endpoint:', endpoint);
+      
+      // Prepare request body based on RAG system
+      const requestBody = useGroundX ? {
         query: userMessage,
         bucketId: props.selectedBucketId,
         messages: formattedMessages,
@@ -924,8 +931,13 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         },
         session_state: sessionId
       };
-  
-      console.log('[ImprovedChat] Sending request to:', endpoint);
+
+      console.log('[ImprovedChat] Request details:', {
+        endpoint,
+        ragEnabled: props.isRAGEnabled,
+        selectedBucket: props.selectedBucketId,
+        messageCount: formattedMessages.length
+      });
       
       // Send the request
       const response = await fetch(endpoint, {
@@ -933,20 +945,20 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
-  
+
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
-  
-      // For RAG responses, always use the non-streaming handler
-      // since we need to process the search results
-      if (shouldUseRAG) {
+
+      // Choose appropriate response handler
+      if (useGroundX) {
+        // GroundX RAG always uses non-streaming
         await handleNonStreamingRAGResponse(response);
-      }
-      // Otherwise use the stream config
-      else if (config.streamResponse) {
+      } else if (config.streamResponse) {
+        // FastRAG with streaming
         await handleStreamingResponse(response);
       } else {
+        // FastRAG without streaming
         await handleNonStreamingResponse(response);
       }
       
@@ -967,132 +979,129 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     }
   };
   const handleNonStreamingRAGResponse = async (response: Response) => {
-    const data = await response.json();
-    console.log('[ImprovedChat] Raw RAG response:', data);
-    
-    let content = '';
-    let searchResults = null;
-  
-    if (data && data.success) {
-      // Handle GroundX RAG response format
-      if (data.response) {
-        console.log('[ImprovedChat] Response data:', data.response);
-        
-        // Handle nested response structure
-        if (typeof data.response === 'object') {
-          // Find the first key that contains the summary
-          const summaryKey = Object.keys(data.response).find(key => 
-            key.toLowerCase().includes('summary') || 
-            key.toLowerCase().includes('proposal')
-          );
+    try {
+      const data = await response.json();
+      console.log('[ImprovedChat] Raw GroundX RAG response:', data);
+      
+      let content = '';
+      let searchResults = null;
+
+      if (data && data.success) {
+        // Handle GroundX RAG response format
+        if (data.response) {
+          console.log('[ImprovedChat] GroundX response data:', data.response);
           
-          if (summaryKey) {
-            const summaryData = data.response[summaryKey];
-            // Convert the summary object to a formatted string
-            content = Object.entries(summaryData)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join('\n');
+          // Handle nested response structure
+          if (typeof data.response === 'object') {
+            // Find the first key that contains the summary
+            const summaryKey = Object.keys(data.response).find(key => 
+              key.toLowerCase().includes('summary') || 
+              key.toLowerCase().includes('proposal')
+            );
+            
+            if (summaryKey) {
+              const summaryData = data.response[summaryKey];
+              // Convert the summary object to a formatted string
+              content = Object.entries(summaryData)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n');
+            } else {
+              // If no summary key found, stringify the entire response
+              content = JSON.stringify(data.response, null, 2);
+            }
           } else {
-            // If no summary key found, stringify the entire response
-            content = JSON.stringify(data.response, null, 2);
+            content = data.response;
           }
+          
+          searchResults = data.searchResults || null;
+          console.log('[ImprovedChat] Extracted GroundX content:', content.substring(0, 100) + '...');
         } else {
-          content = data.response;
+          console.log('[ImprovedChat] No GroundX response data found');
+          content = "No content received from the GroundX RAG API.";
         }
-        
-        searchResults = data.searchResults || null;
-        console.log('[ImprovedChat] Extracted content:', content);
-        console.log('[ImprovedChat] Search results:', searchResults);
       } else {
-        console.log('[ImprovedChat] No response data found');
-        content = "No content received from the RAG API.";
+        console.log('[ImprovedChat] Error in GroundX response:', data.error);
+        content = data.error || "Error processing your request with the document search.";
       }
-    } else {
-      console.log('[ImprovedChat] Error in response:', data.error);
-      content = data.error || "Error processing your request with the document search.";
-    }
-  
-    // Update UI with content
-    setAccumulatedContent(content);
-  
-    // Add response to history with search results
-    const messageWithSearchResults = {
-      role: 'assistant', 
-      content: {
+
+      // Update UI with content
+      setAccumulatedContent(content);
+
+      // Add response to history with search results and sources
+      const messageWithSearchResults = {
+        role: 'assistant', 
         content: content,
-        sources: data.searchResults?.sources?.map((source: any) => ({
-          ...source,
-          hasXray: Boolean(source.hasXray),
-          xray: source.xray || null
-        })) || [],
         searchResults: searchResults,
-        thoughtProcess: data.thoughts || '',
-        supportingContent: data.searchResults?.sources || []
-      },
-      searchResults: searchResults
-    };
-    
-    console.log('[ImprovedChat] Message being added to history:', messageWithSearchResults);
-    
-    setAllMessages(prev => [...prev, messageWithSearchResults]);
-  
-    // Notify parent component with both content and search results
-    if (typeof onAssistantMessage === 'function') {
-      if (onAssistantMessage.length > 1) {
-        // If the function accepts metadata
-        const metadata = { 
-          searchResults,
-          sources: data.searchResults?.sources || [],
-          thoughtProcess: data.thoughts || '',
-          supportingContent: data.searchResults?.sources || []
-        };
-        console.log('[ImprovedChat] Sending metadata to parent:', metadata);
-        (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
-      } else {
-        // Basic version that only accepts content
-        onAssistantMessage(content);
+        sources: data.searchResults?.sources || []
+      };
+      
+      console.log('[ImprovedChat] Adding GroundX message to history');
+      setAllMessages(prev => [...prev, messageWithSearchResults]);
+
+      // Notify parent component with content and metadata
+      console.log('[ImprovedChat] Notifying parent component about GroundX response');
+      if (typeof onAssistantMessage === 'function') {
+        if (onAssistantMessage.length > 1) {
+          // If the function accepts metadata
+          const metadata = { 
+            searchResults,
+            sources: data.searchResults?.sources || [],
+            thoughtProcess: data.thoughts || '',
+            supportingContent: data.searchResults?.sources || []
+          };
+          (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
+        } else {
+          // Basic version that only accepts content
+          onAssistantMessage(content);
+        }
       }
-    }
-    
-    // Generate TTS for the response if available
-    if (content) {
-      generateTTS(content);
+      
+      // Generate TTS for the response
+      if (content) {
+        generateTTS(content);
+      }
+    } catch (error) {
+      console.error('[ImprovedChat] Error handling GroundX response:', error);
+      setAccumulatedContent("Error processing GroundX RAG response. Please try again.");
     }
   };
   
   // Advanced handler for streaming responses with complete context filtering
   const handleStreamingResponse = async (response: Response) => {
     if (!response.body) {
+      console.error('[ImprovedChat] No response body available for streaming');
       throw new Error('No response body available');
     }
-  
+
+    console.log('[ImprovedChat] Starting to process streaming response');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
     let receivedFirstContentChunk = false;
     let isFullyGeneratedResponse = false;
     let searchResults = null;
-  
+
     try {
-      // Check if the first chunk is a complete response (non-streaming backend fallback)
-      let contentStarted = false;
-  
+      // Process streaming response
       while (true) {
         const { done, value } = await reader.read();
-  
+
         if (done) {
+          console.log('[ImprovedChat] Stream complete');
           break;
         }
-  
+
         if (waitingForFirstChunk) {
           setWaitingForFirstChunk(false);
         }
-  
+
         const text = decoder.decode(value, { stream: true });
-  
-        // Process as normal streaming response
+        console.log('[ImprovedChat] Received chunk length:', text.length);
+
+        // Process the chunk
         const lines = text.split('\n').filter(line => line.trim());
-  
+        console.log('[ImprovedChat] Processing', lines.length, 'lines');
+
         for (const line of lines) {
           // Skip document context lines
           if (line.includes('<document') ||
@@ -1103,52 +1112,60 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
             line.includes('</document_content>') ||
             line.includes('<userStyle>') ||
             line.includes('</userStyle>') ||
-            line.includes('') ||
             line.includes('<search_reminders>') ||
             line.includes('</search_reminders>')) {
             continue;
           }
-  
+
           try {
             // Try to parse the line as JSON
             const data = JSON.parse(line);
-  
+            console.log('[ImprovedChat] Parsed JSON line:', Object.keys(data));
+
             // Extract search results if present
             if (data.search_results) {
-              console.log("Received search results:", data.search_results);
+              console.log("[ImprovedChat] Received search results");
               searchResults = data.search_results;
               continue;
             }
-  
+
             // Skip message that just sets up the assistant role
             if (data.delta && data.delta.role === 'assistant' && !data.delta.content) {
+              console.log('[ImprovedChat] Skipping assistant role setup message');
               continue;
             }
-  
+
             // Skip any line with context data
             if (data.context || data.thoughts || data.search_results) {
+              console.log('[ImprovedChat] Skipping context/thoughts/search_results');
               continue;
             }
-  
+
             // Process actual content in delta format
             if (data.delta && data.delta.content) {
+              console.log('[ImprovedChat] Received delta content');
               receivedFirstContentChunk = true;
               fullContent += data.delta.content;
               setAccumulatedContent(fullContent);
               continue;
             }
-  
+
             // Handle regular content format
             if (data.content && typeof data.content === 'string') {
+              console.log('[ImprovedChat] Received direct content');
               receivedFirstContentChunk = true;
               fullContent += data.content;
               setAccumulatedContent(fullContent);
               continue;
             }
-  
+
           } catch (e) {
-            // Not valid JSON, check if it's the start of content
+            // Not valid JSON, might be direct content
+            console.log('[ImprovedChat] Non-JSON line received, length:', line.length);
+            
+            // Check if it's the start of content
             if (!receivedFirstContentChunk && line.includes('I found information')) {
+              console.log('[ImprovedChat] Found direct text content');
               receivedFirstContentChunk = true;
               fullContent += line;
               setAccumulatedContent(fullContent);
@@ -1158,119 +1175,152 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
               fullContent += line;
               setAccumulatedContent(fullContent);
             }
-            // Otherwise, skip the line (likely metadata)
+            // Otherwise, log for debugging but skip the line
+            else {
+              console.log('[ImprovedChat] Skipping non-content line:', line.substring(0, 50));
+            }
           }
         }
-  
+
         // If we've already processed a complete response, break
         if (isFullyGeneratedResponse) {
           break;
         }
       }
+
+      console.log('[ImprovedChat] Finished processing stream, content length:', fullContent.length);
+      
+      // Clean up any remaining document tags or metadata markers
+      fullContent = fullContent.replace(/<\/?document.*?>/g, '')
+        .replace(/<\/?source>/g, '')
+        .replace(/<\/?document_content>/g, '')
+        .replace(/<userStyle>.*?<\/userStyle>/g, '')
+        .replace(/<search_reminders>.*?<\/search_reminders>/g, '');
+      
+      console.log('[ImprovedChat] Final cleaned content length:', fullContent.length);
+      
+      // Add response to history with search results if available
+      const newMessage = {
+        role: 'assistant', 
+        content: fullContent,
+        searchResults: searchResults
+      };
+      
+      console.log('[ImprovedChat] Adding streaming message to history');
+      setAllMessages(prev => [...prev, newMessage]);
+
+      // Notify parent component
+      console.log('[ImprovedChat] Notifying parent about streaming response');
+      if (typeof onAssistantMessage === 'function') {
+        if (onAssistantMessage.length > 1) {
+          // If the parent component accepts metadata as a second parameter
+          (onAssistantMessage as (content: string, metadata?: any) => void)(
+            fullContent, 
+            { searchResults }
+          );
+        } else {
+          // Basic version that only accepts content
+          onAssistantMessage(fullContent);
+        }
+      }
+      
+      // Generate TTS for the response
+      if (fullContent) {
+        generateTTS(fullContent);
+      }
     } catch (error) {
-      console.error('Error processing stream:', error);
+      console.error('[ImprovedChat] Error processing stream:', error);
+      // Try to salvage whatever content we've received so far
+      if (fullContent) {
+        // Add the partial content to history
+        const errorMessage = {
+          role: 'assistant', 
+          content: fullContent + "\n\n[Error: Stream processing was interrupted]"
+        };
+        
+        setAllMessages(prev => [...prev, errorMessage]);
+        
+        // Notify parent of partial content
+        if (typeof onAssistantMessage === 'function') {
+          onAssistantMessage(fullContent + "\n\n[Error: Stream processing was interrupted]");
+        }
+      }
     }
-  
-    // Clean up any remaining document tags or metadata markers
-    fullContent = fullContent.replace(/<\/?document.*?>/g, '')
-      .replace(/<\/?source>/g, '')
-      .replace(/<\/?document_content>/g, '')
-      .replace(/<userStyle>.*?<\/userStyle>/g, '')
-      .replace(/<search_reminders>.*?<\/search_reminders>/g, '');
   };
   
   // Advanced handler for non-streaming responses
   const handleNonStreamingResponse = async (response: Response) => {
-    const data = await response.json();
-    console.log('[ImprovedChat] Raw response:', data);
-    
-    let content = '';
-    let searchResults = null;
-  
-    if (data && data.success) {
-      // Handle GroundX RAG response format
-      if (data.response) {
-        console.log('[ImprovedChat] Response data:', data.response);
-        
-        // Handle nested response structure
-        if (typeof data.response === 'object') {
-          // Find the first key that contains the summary
-          const summaryKey = Object.keys(data.response).find(key => 
-            key.toLowerCase().includes('summary') || 
-            key.toLowerCase().includes('proposal')
-          );
-          
-          if (summaryKey) {
-            const summaryData = data.response[summaryKey];
-            // Convert the summary object to a formatted string
-            content = Object.entries(summaryData)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join('\n');
-          } else {
-            // If no summary key found, stringify the entire response
-            content = JSON.stringify(data.response, null, 2);
-          }
-        } else {
-          content = data.response;
-        }
-        
-        searchResults = data.searchResults || null;
-        console.log('[ImprovedChat] Extracted content:', content);
-        console.log('[ImprovedChat] Search results:', searchResults);
+    try {
+      const data = await response.json();
+      console.log('[ImprovedChat] Raw non-streaming response:', data);
+      
+      let content = '';
+      let searchResults = null;
+
+      // Handle standard chat API response format
+      if (data && data.content) {
+        console.log('[ImprovedChat] Standard content found in response');
+        content = data.content;
+      } else if (data && data.choices && data.choices.length > 0) {
+        console.log('[ImprovedChat] Found content in choices array');
+        content = data.choices[0].message.content;
+      } else if (data && data.answer) {
+        console.log('[ImprovedChat] Found content in answer field');
+        content = data.answer;
+      } else if (data && typeof data === 'string') {
+        console.log('[ImprovedChat] Response is direct string');
+        content = data;
       } else {
-        console.log('[ImprovedChat] No response data found');
-        content = "No content received from the API.";
+        console.log('[ImprovedChat] Could not extract content from response:', data);
+        content = "Received a response but couldn't extract content.";
       }
-    } else {
-      console.log('[ImprovedChat] Error in response:', data.error);
-      content = data.error || "Error processing your request.";
-    }
-  
-    // Update UI with content
-    setAccumulatedContent(content);
-  
-    // Add response to history with search results
-    const messageWithSearchResults = {
-      role: 'assistant', 
-      content: {
+
+      // Extract search results if present
+      if (data && data.search_results) {
+        console.log('[ImprovedChat] Found search results in response');
+        searchResults = data.search_results;
+      } else if (data && data.context && data.context.search_results) {
+        console.log('[ImprovedChat] Found search results in context');
+        searchResults = data.context.search_results;
+      }
+
+      console.log('[ImprovedChat] Final extracted content:', content.substring(0, 100) + '...');
+      
+      // Update UI with content
+      setAccumulatedContent(content);
+
+      // Add response to history with search results
+      const messageWithSearchResults = {
+        role: 'assistant', 
         content: content,
-        sources: data.searchResults?.sources?.map((source: any) => ({
-          ...source,
-          hasXray: Boolean(source.hasXray),
-          xray: source.xray || null
-        })) || [],
-        searchResults: searchResults,
-        thoughtProcess: data.thoughts || '',
-        supportingContent: data.searchResults?.sources || []
-      },
-      searchResults: searchResults
-    };
-    
-    console.log('[ImprovedChat] Message being added to history:', messageWithSearchResults);
-    
-    setAllMessages(prev => [...prev, messageWithSearchResults]);
-  
-    // Notify parent component with both content and search results
-    if (typeof onAssistantMessage === 'function') {
-      if (onAssistantMessage.length > 1) {
-        // If the function accepts metadata
-        const metadata = { 
-          searchResults,
-          sources: data.searchResults?.sources || [],
-          thoughtProcess: data.thoughts || '',
-          supportingContent: data.searchResults?.sources || []
-        };
-        console.log('[ImprovedChat] Sending metadata to parent:', metadata);
-        (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
-      } else {
-        // Basic version that only accepts content
-        onAssistantMessage(content);
+        searchResults: searchResults
+      };
+      
+      console.log('[ImprovedChat] Adding message to history');
+      setAllMessages(prev => [...prev, messageWithSearchResults]);
+
+      // Notify parent component
+      console.log('[ImprovedChat] Notifying parent component');
+      if (typeof onAssistantMessage === 'function') {
+        if (onAssistantMessage.length > 1) {
+          // If the function accepts metadata
+          (onAssistantMessage as (content: string, metadata?: any) => void)(
+            content, 
+            { searchResults }
+          );
+        } else {
+          // Basic version that only accepts content
+          onAssistantMessage(content);
+        }
       }
-    }
-    
-    // Generate TTS for the response if available
-    if (content) {
-      generateTTS(content);
+      
+      // Generate TTS for the response
+      if (content) {
+        generateTTS(content);
+      }
+    } catch (error) {
+      console.error('[ImprovedChat] Error handling non-streaming response:', error);
+      setAccumulatedContent("Error processing response. Please try again.");
     }
   };
 
