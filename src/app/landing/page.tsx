@@ -406,18 +406,97 @@ export default function LandingPage() {
   if (loading) {
     return (
       <ProtectedRoute>
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-white">
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-blue-50">
           <motion.div 
-            className="text-center"
+            className="text-center max-w-md mx-auto px-6"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
           >
-            <div className="relative mb-6">
-              <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-slate-200"></div>
-              <div className="absolute inset-0 inline-block animate-spin rounded-full h-12 w-12 border-4 border-t-blue-500 border-r-transparent border-b-transparent border-l-transparent"></div>
+            {/* Modern loader animation */}
+            <div className="relative mb-8">
+              <motion.div 
+                className="w-16 h-16 mx-auto"
+                initial={{ scale: 0.8 }}
+                animate={{ scale: 1 }}
+                transition={{ duration: 0.5 }}
+              >
+                {/* Outer ring */}
+                <motion.div
+                  className="absolute inset-0 border-4 border-blue-100 rounded-full"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                />
+                
+                {/* Animated ring */}
+                <motion.div
+                  className="absolute inset-0 border-4 border-transparent border-t-blue-500 border-r-blue-400 rounded-full"
+                  animate={{ rotate: 360 }}
+                  transition={{
+                    duration: 1.2,
+                    repeat: Infinity,
+                    ease: "linear"
+                  }}
+                />
+                
+                {/* Inner dot */}
+                <motion.div
+                  className="absolute inset-4 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full"
+                  animate={{ 
+                    scale: [1, 1.2, 1],
+                    opacity: [0.7, 1, 0.7]
+                  }}
+                  transition={{
+                    duration: 1.5,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                />
+              </motion.div>
             </div>
-            <h3 className="text-xl font-semibold text-slate-800 mb-2">Loading Your Workspace</h3>
-            <p className="text-slate-600">Preparing your organization services...</p>
+
+            {/* Loading text with animation */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4, duration: 0.6 }}
+            >
+              <h3 className="text-2xl font-bold text-slate-800 mb-3">
+                Loading Your Workspace
+              </h3>
+              <motion.p 
+                className="text-slate-600 text-lg leading-relaxed"
+                animate={{ opacity: [0.6, 1, 0.6] }}
+                transition={{
+                  duration: 2,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+              >
+                Preparing your organization services...
+              </motion.p>
+              
+              {/* Progress dots */}
+              <div className="flex justify-center space-x-2 mt-6">
+                {[0, 1, 2].map((index) => (
+                  <motion.div
+                    key={index}
+                    className="w-2 h-2 bg-blue-400 rounded-full"
+                    animate={{
+                      scale: [1, 1.5, 1],
+                      opacity: [0.4, 1, 0.4]
+                    }}
+                    transition={{
+                      duration: 1.5,
+                      repeat: Infinity,
+                      delay: index * 0.2,
+                      ease: "easeInOut"
+                    }}
+                  />
+                ))}
+              </div>
+            </motion.div>
           </motion.div>
         </div>
       </ProtectedRoute>
