@@ -1,6 +1,9 @@
 // app/api/chat-stream/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { ConfidentialClientApplication } from '@azure/msal-node';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
+import { clientConfigService } from '@/services/clientConfigService';
 
 // Type definition for client configuration
 interface ClientConfig {
@@ -10,38 +13,59 @@ interface ClientConfig {
   apiUrl: string;
 }
 
-// Function to load client configurations from environment variables
-function loadClientConfigurations(): Record<string, ClientConfig> {
-  const clients: Record<string, ClientConfig> = {};
-  
-  // Default client (backward compatibility)
-  clients['default'] = {
+// Function to get client configuration from database
+async function getClientConfiguration(organizationId?: string): Promise<ClientConfig | null> {
+  if (!organizationId) {
+    console.log('No organization ID provided, using fallback configuration');
+    return getFallbackConfiguration();
+  }
+
+  try {
+    console.log(`Loading configuration for organization: ${organizationId}`);
+    const config = await clientConfigService.getClientConfig(organizationId);
+    
+    if (!config) {
+      console.log('No database configuration found, using fallback');
+      return getFallbackConfiguration();
+    }
+
+    // Extract configuration values
+    const clientConfig: ClientConfig = {
+      tenantId: config.azure_config?.tenant_id || process.env.AZURE_TENANT_ID || '',
+      clientId: config.azure_config?.client_id || process.env.AZURE_CLIENT_ID || '',
+      clientSecret: process.env.AZURE_SECRET || '', // Always from env for security
+      apiUrl: config.backend_config?.api_url || getFallbackConfiguration().apiUrl
+    };
+
+    console.log(`Database configuration loaded for ${organizationId}:`, {
+      ...clientConfig,
+      clientSecret: clientConfig.clientSecret ? '[REDACTED]' : '[MISSING]'
+    });
+
+    return clientConfig;
+  } catch (error) {
+    console.error('Error loading client configuration from database:', error);
+    return getFallbackConfiguration();
+  }
+}
+
+// Fallback configuration (backward compatibility)
+function getFallbackConfiguration(): ClientConfig {
+  return {
     tenantId: process.env.AZURE_TENANT_ID || '',
     clientId: process.env.AZURE_CLIENT_ID || '',
     clientSecret: process.env.AZURE_SECRET || '',
-   apiUrl: 'https://capps-backend-6qjzg44bnug6q.greenmeadow-8b5f0a30.eastus2.azurecontainerapps.io'
+    apiUrl: process.env.NEXT_PUBLIC_DEFAULT_BACKEND_URL || 
+            'https://capps-backend-vakcnm7wmon74.salmonbush-fc2963f0.eastus.azurecontainerapps.io'
   };
-  
-  // Add the new backend
-  clients['client2'] = {
-    tenantId: process.env.CLIENT2_AZURE_TENANT_ID || '',
-    clientId: process.env.CLIENT2_AZURE_CLIENT_ID || '',
-    clientSecret: process.env.CLIENT2_AZURE_SECRET || '',
-    apiUrl: 'https://capps-backend-px4batn2ycs6a.greenground-334066dd.eastus2.azurecontainerapps.io'
-  };
-  
-  return clients;
 }
 
-// Global client configurations
-const clientConfigs = loadClientConfigurations();
+// Global client configurations - removed, now using database
 
 // Validate specific client configuration
-function validateClientConfig(clientId: string): { valid: boolean; error?: string } {
-  const config = clientConfigs[clientId];
-  
+function validateClientConfig(config: ClientConfig | null): { valid: boolean; error?: string } {
   if (!config) {
-    return { valid: false, error: `Client configuration not found: ${clientId}` };
+    return { valid: false, error: 'Client configuration not found' };
   }
   
   const missingVars = [];
@@ -51,7 +75,7 @@ function validateClientConfig(clientId: string): { valid: boolean; error?: strin
   if (!config.apiUrl) missingVars.push('apiUrl');
   
   if (missingVars.length > 0) {
-    const errorMsg = `Missing configuration for client ${clientId}: ${missingVars.join(', ')}`;
+    const errorMsg = `Missing configuration: ${missingVars.join(', ')}`;
     console.error(errorMsg);
     return { valid: false, error: errorMsg };
   }
@@ -59,16 +83,10 @@ function validateClientConfig(clientId: string): { valid: boolean; error?: strin
   return { valid: true };
 }
 
-// Function to get an access token using MSAL for a specific client
-async function getAccessToken(clientId: string): Promise<string> {
-  const config = clientConfigs[clientId];
-  
-  if (!config) {
-    throw new Error(`Client configuration not found: ${clientId}`);
-  }
-  
+// Function to get an access token using MSAL for a specific client configuration
+async function getAccessToken(config: ClientConfig): Promise<string> {
   try {
-    console.log(`Requesting Azure token for client: ${clientId}`);
+    console.log('Requesting Azure token with database configuration');
     
     // Create MSAL config for this client
     const msalConfig = {
@@ -88,13 +106,13 @@ async function getAccessToken(clientId: string): Promise<string> {
     });
     
     if (!tokenResponse || !tokenResponse.accessToken) {
-      throw new Error(`No access token returned from MSAL for client: ${clientId}`);
+      throw new Error('No access token returned from MSAL');
     }
     
-    console.log(`Azure token obtained successfully for client: ${clientId}`);
+    console.log('Azure token obtained successfully');
     return tokenResponse.accessToken;
   } catch (error) {
-    console.error(`Error getting Azure token for client ${clientId}:`, error);
+    console.error('Error getting Azure token:', error);
     throw error;
   }
 }
@@ -569,15 +587,59 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('Request body parsed');
     
-    // Determine which client to use - can be extracted from headers or body
-    let clientId = request.headers.get('x-client-id') || 'default';
+    // Get user's organization from Supabase auth
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data: { session } } = await supabase.auth.getSession();
     
-    // From request body (if not in headers)
-    if (clientId === 'default' && body.clientId) {
-      clientId = body.clientId;
-      // Remove clientId from body before forwarding
-      delete body.clientId;
+    let organizationId: string | undefined;
+    
+    if (session?.user) {
+      // Get user's organization
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('organization_id, organizations!inner(name)')
+        .eq('id', session.user.id)
+        .single();
+      
+      const userOrganizationId = profile?.organization_id;
+      const userOrganizationName = (profile?.organizations as any)?.name;
+      
+      console.log(`User organization: ${userOrganizationName} (${userOrganizationId})`);
+      
+      // Check if this is a QIG user trying to act as another organization
+      const organizationOverride = request.headers.get('x-organization-override');
+      
+      if (organizationOverride && userOrganizationName === 'QIG') {
+        console.log(`QIG user requesting to act as organization: ${organizationOverride}`);
+        
+        // Verify the override organization exists
+        const { data: targetOrg } = await supabase
+          .from('organizations')
+          .select('id, name')
+          .eq('id', organizationOverride)
+          .single();
+        
+        if (targetOrg) {
+          organizationId = organizationOverride;
+          console.log(`QIG user successfully acting as: ${targetOrg.name} (${organizationId})`);
+        } else {
+          console.warn(`Invalid organization override: ${organizationOverride}`);
+          organizationId = userOrganizationId;
+        }
+      } else if (organizationOverride && userOrganizationName !== 'QIG') {
+        console.warn(`Non-QIG user (${userOrganizationName}) attempted organization override - denied`);
+        organizationId = userOrganizationId;
+      } else {
+        organizationId = userOrganizationId;
+      }
+      
+      console.log(`Final organization ID for request: ${organizationId}`);
+    } else {
+      console.log('No authenticated user, using fallback configuration');
     }
+    
+    // Load client configuration from database
+    const clientConfig = await getClientConfiguration(organizationId);
     
     // Check for thought process and styling preferences
     const includeThoughtProcess = body.include_thought_process === true;
@@ -587,22 +649,21 @@ export async function POST(request: NextRequest) {
     const browser = detectBrowser(request.headers.get('user-agent'));
     console.log(`Browser detected: ${browser}`);
     
-    console.log(`Using client configuration: ${clientId}`);
     console.log(`Include thought process: ${includeThoughtProcess}`);
     console.log(`Styling: ${styling}`);
     
     // Validate client configuration
-    const configCheck = validateClientConfig(clientId);
+    const configCheck = validateClientConfig(clientConfig);
     if (!configCheck.valid) {
       return createErrorResponse('Client configuration error', 400, configCheck.error);
     }
     
-    // Get Azure token using MSAL for the specific client
+    // Get Azure token using MSAL with the loaded configuration
     let token;
     try {
-      token = await getAccessToken(clientId);
+      token = await getAccessToken(clientConfig!);
     } catch (tokenError) {
-      console.error(`Failed to obtain Azure token for client ${clientId}:`, tokenError);
+      console.error('Failed to obtain Azure token:', tokenError);
       return createErrorResponse(
         'Authentication failed', 
         401, 
@@ -610,8 +671,8 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Get the API URL for this client
-    const targetUrl = `${clientConfigs[clientId].apiUrl}/chat/stream`;
+    // Get the API URL from the configuration
+    const targetUrl = `${clientConfig!.apiUrl}/chat/stream`;
     console.log(`Forwarding request to: ${targetUrl}`);
     
     // Check if this is a policy-related query
@@ -626,20 +687,12 @@ export async function POST(request: NextRequest) {
       body.format_style = 'policy_summary';
     }
     
-    // Azure OpenAI specific parameters
-    if (clientId === 'client2') {
-      // Add parameters specifically for Azure OpenAI
-      if (includeThoughtProcess) {
-        // Make sure to include these parameters for Azure OpenAI so it returns thoughts
-        body.show_thoughts = true;
-        body.show_thinking = true;
-      }
-    } else {
-      // For default client or other clients
-      if (includeThoughtProcess) {
-        body.include_thoughts = true;
-        body.include_reasoning = true;
-      }
+    // Add parameters for thought process based on configuration
+    if (includeThoughtProcess) {
+      body.include_thoughts = true;
+      body.include_reasoning = true;
+      body.show_thoughts = true;
+      body.show_thinking = true;
     }
     
     // Always request sources/citations
@@ -654,7 +707,6 @@ export async function POST(request: NextRequest) {
         'Authorization': `Bearer ${token}`,
         'User-Agent': 'NextJS-MSAL-Chat-Stream',
         'Accept': 'text/event-stream',
-        'X-Client-ID': clientId,
         'X-Include-Thought-Process': includeThoughtProcess ? 'true' : 'false',
         'X-Include-Citations': 'true',
         'X-Styling': styling,
@@ -679,7 +731,7 @@ export async function POST(request: NextRequest) {
       }
       
       if (response.status === 403) {
-        console.error(`Access forbidden (403) to target API for client ${clientId}:`, errorDetails);
+        console.error('Access forbidden (403) to target API:', errorDetails);
         return createErrorResponse(
           'Access denied to chat service', 
           403, 
@@ -749,28 +801,48 @@ function isPolicyRelatedQuery(content: string): boolean {
 
 // Enhanced GET handler to check API configuration and abilities
 export async function GET(request: NextRequest) {
-  // Check if a client ID is provided in the request
-  const clientId = request.headers.get('x-client-id') || 
-                   request.nextUrl.searchParams.get('clientId') || 
-                   'default';
-  
-  const configCheck = validateClientConfig(clientId);
-  
-  if (!configCheck.valid) {
-    return createErrorResponse('API misconfigured', 500, configCheck.error);
-  }
-  
   try {
-    // Test token acquisition for the specified client
-    await getAccessToken(clientId);
+    // Get user's organization from Supabase auth
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    let organizationId: string | undefined;
+    
+    if (session?.user) {
+      // Get user's organization
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('organization_id')
+        .eq('id', session.user.id)
+        .single();
+      
+      organizationId = profile?.organization_id;
+    }
+    
+    // Load client configuration from database
+    const clientConfig = await getClientConfiguration(organizationId);
+    
+    const configCheck = validateClientConfig(clientConfig);
+    
+    if (!configCheck.valid) {
+      return createErrorResponse('API misconfigured', 500, configCheck.error);
+    }
+    
+    // Test token acquisition with the loaded configuration
+    await getAccessToken(clientConfig!);
     
     // Detect browser
     const browser = detectBrowser(request.headers.get('user-agent'));
     
     return NextResponse.json({
       status: 'ok',
-      message: `Chat stream API is properly configured with MSAL for client: ${clientId}`,
+      message: 'Chat stream API is properly configured with database-driven configuration',
       timestamp: new Date().toISOString(),
+      configuration: {
+        organizationId,
+        backendUrl: clientConfig!.apiUrl,
+        hasAzureConfig: !!(clientConfig!.tenantId && clientConfig!.clientId)
+      },
       features: {
         thought_process: true,
         citations: true,

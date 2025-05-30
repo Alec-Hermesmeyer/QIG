@@ -1,5 +1,6 @@
 // app/layout.tsx
 import { AuthProvider } from '@/lib/auth/AuthContext';
+import { OrganizationSwitchProvider } from '@/contexts/OrganizationSwitchContext';
 import './globals.css';
 import type { Metadata } from 'next';
 import { ToastProvider } from "@/components/ui/toast";
@@ -22,14 +23,16 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>
-          <ToastProvider>
-            <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-              <Sidebar />
-              <div className="flex-1 overflow-auto">
-                {children}
+          <OrganizationSwitchProvider>
+            <ToastProvider>
+              <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+                <Sidebar />
+                <div className="flex-1 overflow-auto">
+                  {children}
+                </div>
               </div>
-            </div>
-          </ToastProvider>
+            </ToastProvider>
+          </OrganizationSwitchProvider>
         </AuthProvider>
       </body>
     </html>

@@ -12,6 +12,7 @@ import { Send, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lu
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRAG } from './RagChatProvider';
+import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -120,6 +121,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     selectedBucketId,
     searchConfig
   } = props;
+
+  // Initialize organization-aware API hook
+  const { organizationAwareFetch, activeOrganization, isActingAsOtherOrg } = useOrganizationAwareAPI();
  
   // Original state
   const [input, setInput] = useState('');
@@ -533,9 +537,12 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data) as DeepgramResponse;
+            console.log('[STT] 🔍 RAW MESSAGE DATA:', JSON.stringify(data, null, 2));
             
             if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
               const transcription = data.channel.alternatives[0].transcript;
+              console.log('[STT] 📋 EXTRACTED TRANSCRIPTION:', `"${transcription}"`);
+              console.log('[STT] 📋 TRANSCRIPTION LENGTH:', transcription ? transcription.trim().length : 0);
               
               if (transcription && transcription.trim().length > 0) {
                 console.log('[STT] ========== NEW TRANSCRIPTION ==========');
@@ -559,6 +566,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                 console.log('[STT] - wakeWordActive:', wakeWordActive);
                 console.log('[STT] - isHandsFreeMode:', isHandsFreeMode);
                 console.log('[STT] - transcription not empty:', transcription.trim().length > 0);
+                
+                console.log('[STT] 🔄 ABOUT TO CHECK is_final CONDITION');
+                console.log('[STT] 🔄 data.is_final value:', data.is_final, 'type:', typeof data.is_final);
                 
                 if (data.is_final) {
                   console.log('[STT] ✅ Processing FINAL transcription');
@@ -627,7 +637,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                     console.log('[STT] This means wake word state was lost somehow');
                   }
                 } else {
-                  console.log('[STT] ⏸️ Processing INTERIM transcription');
+                  console.log('[STT] ⏸️ Processing INTERIM transcription (not final)');
                   
                   const fullText = input + transcription.trim();
                   console.log('[STT] Full interim text:', `"${fullText}"`);
@@ -665,6 +675,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                 console.log('[STT] ========== END TRANSCRIPTION PROCESSING ==========');
               } else {
                 console.log('[STT] ⚠️ Empty transcription received');
+                console.log('[STT] 🔍 Empty transcription details:');
+                console.log('[STT] - transcription value:', transcription);
+                console.log('[STT] - transcription length:', transcription ? transcription.length : 'null');
+                console.log('[STT] - transcription.trim() length:', transcription ? transcription.trim().length : 'null');
               }
             } else {
               console.log('[STT] ⚠️ Invalid data structure received');
@@ -1078,11 +1092,13 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         endpoint,
         ragEnabled: props.isRAGEnabled,
         selectedBucket: props.selectedBucketId,
-        messageCount: formattedMessages.length
+        messageCount: formattedMessages.length,
+        activeOrganization: activeOrganization?.name,
+        isActingAsOtherOrg
       });
       
-      // Send the request
-      const response = await fetch(endpoint, {
+      // Send the request using organization-aware fetch
+      const response = await organizationAwareFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
@@ -1467,14 +1483,19 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   };
 
   // Cleanup hands-free resources
-  const cleanupHandsFreeResources = () => {
-    console.log('[HANDS-FREE] Cleaning up hands-free resources');
+  const cleanupHandsFreeResources = (resetWakeWord = true) => {
+    console.log('[HANDS-FREE] Cleaning up hands-free resources, resetWakeWord:', resetWakeWord);
     
     // Clear auto-submit timer
     clearAutoSubmitTimer();
     
-    // Reset wake word state
-    wakeWordDetectedRef.current = false;
+    // Reset wake word state only if requested (don't reset during transition)
+    if (resetWakeWord) {
+      console.log('[HANDS-FREE] Resetting wake word ref to false');
+      wakeWordDetectedRef.current = false;
+    } else {
+      console.log('[HANDS-FREE] Preserving wake word ref during transition:', wakeWordDetectedRef.current);
+    }
     
     if (wakeWordWorkletRef.current) {
       try {
@@ -1897,20 +1918,30 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     console.log('[HANDS-FREE] 🎙️ Starting message recording after wake word detection');
     console.log('[HANDS-FREE] Current state before transition:');
     console.log('[HANDS-FREE] - isWakeWordDetected:', isWakeWordDetected);
+    console.log('[HANDS-FREE] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
     console.log('[HANDS-FREE] - isHandsFreeMode:', isHandsFreeMode);
     console.log('[HANDS-FREE] - isListeningForWakeWord:', isListeningForWakeWord);
     
+    // CRITICAL: Ensure the ref is set before we start STT
+    if (!wakeWordDetectedRef.current) {
+      console.log('[HANDS-FREE] ❌ WARNING: wakeWordDetectedRef is false, forcing to true');
+      wakeWordDetectedRef.current = true;
+    }
+    
     // Stop wake word detection temporarily
-    cleanupHandsFreeResources();
+    cleanupHandsFreeResources(false); // Don't reset wake word state during transition
     setIsListeningForWakeWord(false);
     
     console.log('[HANDS-FREE] 🔄 Cleaned up wake word resources, now starting STT');
     console.log('[HANDS-FREE] Wake word state should still be true:', isWakeWordDetected);
+    console.log('[HANDS-FREE] Wake word ref should be true:', wakeWordDetectedRef.current);
     
     // Start regular speech-to-text for message
     await startSpeechToText();
     
-    console.log('[HANDS-FREE] ✅ STT started, wake word state:', isWakeWordDetected);
+    console.log('[HANDS-FREE] ✅ STT started, final state check:');
+    console.log('[HANDS-FREE] - isWakeWordDetected:', isWakeWordDetected);
+    console.log('[HANDS-FREE] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
   };
 
   // Handle hands-free message submission
@@ -2436,6 +2467,43 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                   className="px-2 py-1 bg-purple-500 text-white rounded text-xs"
                 >
                   Force Timer
+                </button>
+                <button 
+                  onClick={() => {
+                    const testPhrases = [
+                      "what is the weather like send",
+                      "hello world submit",
+                      "test message go",
+                      "final message execute",
+                      "no action word here",
+                      "what is the weather like"
+                    ];
+                    
+                    console.log('[TEST] 🔍 Testing action word detection:');
+                    testPhrases.forEach(phrase => {
+                      const hasAction = containsActionWord(phrase);
+                      console.log(`[TEST] "${phrase}" -> ${hasAction ? '✅ HAS ACTION' : '❌ NO ACTION'}`);
+                    });
+                  }}
+                  className="px-2 py-1 bg-orange-500 text-white rounded text-xs"
+                >
+                  Test Action Words
+                </button>
+                <button 
+                  onClick={() => {
+                    console.log('[TEST] 📊 CURRENT STATE CHECK:');
+                    console.log('[TEST] - isHandsFreeMode:', isHandsFreeMode);
+                    console.log('[TEST] - isWakeWordDetected (state):', isWakeWordDetected);
+                    console.log('[TEST] - wakeWordDetectedRef.current:', wakeWordDetectedRef.current);
+                    console.log('[TEST] - isListeningForWakeWord:', isListeningForWakeWord);
+                    console.log('[TEST] - isRecording:', isRecording);
+                    console.log('[TEST] - current input:', `"${input}"`);
+                    console.log('[TEST] - autoSubmitCountdown:', autoSubmitCountdown);
+                    console.log('[TEST] - timer active:', !!autoSubmitTimerRef.current);
+                  }}
+                  className="px-2 py-1 bg-cyan-500 text-white rounded text-xs"
+                >
+                  Check State
                 </button>
               </div>
             </div>

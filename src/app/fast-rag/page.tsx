@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import FastRagTopicCards from "@/components/FastRagTopicCards";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
 
 // Animation variants
 const fadeIn = {
@@ -36,6 +38,8 @@ const staggerContainer = {
 };
 
 export default function FastRAGPage() {
+  const { canSwitchOrganizations } = useOrganizationSwitch();
+  
   // State for conversation and streaming
   const [conversationStarted, setConversationStarted] = useState(false);
   const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string; metadata?: any; raw?: string }>>([]);
@@ -386,104 +390,113 @@ export default function FastRAGPage() {
 
           {/* Main content */}
           <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-5xl mx-auto shadow-sm overflow-hidden">
-              <div className="p-6">
-                {/* Introduction - only show when conversation not started */}
-                <AnimatePresence>
-                  {!conversationStarted && (
-                    <motion.div
-                      className="mb-8"
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, y: -20 }}
-                      variants={fadeIn}
-                    >
-                      <motion.div className="text-center mb-8" variants={slideUp}>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-3">
-                          Document Intelligence Platform
-                        </h2>
-                        <p className="text-gray-600 max-w-2xl mx-auto">
-                          Get precise answers and insights from your documents with our advanced retrieval-augmented generation system.
-                        </p>
-                      </motion.div>
-
-                      <motion.div
-                        className="grid grid-cols-1 md:grid-cols-3 gap-5"
-                        variants={staggerContainer}
-                      >
-                        {/* Using SampleQuestions hook to get questions for cards */}
-                        <FastRagTopicCards chatRef={chatRef} />
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Chat history container with improved styling */}
-                <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                  <AnimatePresence>
-                    {chatHistory.map((message, index) => (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.3 }}
-                        className="mb-4"
-                      >
-                        {message.role === 'user' ? (
-                          <div className="flex justify-end">
-                            <div className="bg-blue-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
-                              {message.content}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="max-w-[92%]">
-                            <FastRAG 
-                              answer={{
-                                content: message.content,
-                                metadata: message.metadata,
-                                raw: message.raw,
-                                // Always include these for the component to process correctly
-                                isStreaming: message.metadata?.isStreaming,
-                                supportingContent: message.metadata?.supportingContent,
-                                thoughtProcess: message.metadata?.thoughtProcess
-                              }}
-                              theme="light"
-                              onCitationClicked={(citation) => {
-                                // Handle citation click if needed
-                                console.log('Citation clicked:', citation);
-                              }}
-                            />
-                          </div>
-                        )}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                  <div ref={chatMessageStreamEnd} />
+            <div className="max-w-5xl mx-auto">
+              {/* Organization Switcher for QIG employees */}
+              {canSwitchOrganizations && (
+                <div className="mb-6">
+                  <OrganizationSwitcher />
                 </div>
+              )}
+              
+              <div className="shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {/* Introduction - only show when conversation not started */}
+                  <AnimatePresence>
+                    {!conversationStarted && (
+                      <motion.div
+                        className="mb-8"
+                        initial="hidden"
+                        animate="visible"
+                        exit={{ opacity: 0, y: -20 }}
+                        variants={fadeIn}
+                      >
+                        <motion.div className="text-center mb-8" variants={slideUp}>
+                          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                            Document Intelligence Platform
+                          </h2>
+                          <p className="text-gray-600 max-w-2xl mx-auto">
+                            Get precise answers and insights from your documents with our advanced retrieval-augmented generation system.
+                          </p>
+                        </motion.div>
 
-                {/* Chat input with improved styling */}
-                <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                  <ImprovedChat
-                    ref={chatRef}
-                    onUserMessage={handleUserMessage}
-                    onAssistantMessage={handleAssistantMessage}
-                    onConversationStart={() => setConversationStarted(true)}
-                    onStreamingChange={(streaming) => {
-                      setIsStreaming(streaming);
-                      debugLog('Streaming status changed', streaming ? 'started' : 'ended');
-                      
-                      // When streaming stops, ensure we don't lose the accumulated raw response
-                      if (!streaming) {
-                        debugLog('Streaming ended, final raw response length', currentRawResponseRef.current.length);
-                      }
-                    }}
-                    temperature={temperature}
-                    streamResponses={streamEnabled}
-                    isRAGEnabled={true}
-                    selectedBucketId={selectedBucketId}
-                    // Add include_thought_process to enable thought processes in the API
-                  />
+                        <motion.div
+                          className="grid grid-cols-1 md:grid-cols-3 gap-5"
+                          variants={staggerContainer}
+                        >
+                          {/* Using SampleQuestions hook to get questions for cards */}
+                          <FastRagTopicCards chatRef={chatRef} />
+                        </motion.div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Chat history container with improved styling */}
+                  <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                    <AnimatePresence>
+                      {chatHistory.map((message, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.3 }}
+                          className="mb-4"
+                        >
+                          {message.role === 'user' ? (
+                            <div className="flex justify-end">
+                              <div className="bg-blue-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
+                                {message.content}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="max-w-[92%]">
+                              <FastRAG 
+                                answer={{
+                                  content: message.content,
+                                  metadata: message.metadata,
+                                  raw: message.raw,
+                                  // Always include these for the component to process correctly
+                                  isStreaming: message.metadata?.isStreaming,
+                                  supportingContent: message.metadata?.supportingContent,
+                                  thoughtProcess: message.metadata?.thoughtProcess
+                                }}
+                                theme="light"
+                                onCitationClicked={(citation) => {
+                                  // Handle citation click if needed
+                                  console.log('Citation clicked:', citation);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                    <div ref={chatMessageStreamEnd} />
+                  </div>
+
+                  {/* Chat input with improved styling */}
+                  <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                    <ImprovedChat
+                      ref={chatRef}
+                      onUserMessage={handleUserMessage}
+                      onAssistantMessage={handleAssistantMessage}
+                      onConversationStart={() => setConversationStarted(true)}
+                      onStreamingChange={(streaming) => {
+                        setIsStreaming(streaming);
+                        debugLog('Streaming status changed', streaming ? 'started' : 'ended');
+                        
+                        // When streaming stops, ensure we don't lose the accumulated raw response
+                        if (!streaming) {
+                          debugLog('Streaming ended, final raw response length', currentRawResponseRef.current.length);
+                        }
+                      }}
+                      temperature={temperature}
+                      streamResponses={streamEnabled}
+                      isRAGEnabled={true}
+                      selectedBucketId={selectedBucketId}
+                      // Add include_thought_process to enable thought processes in the API
+                    />
+                  </div>
                 </div>
               </div>
             </div>
