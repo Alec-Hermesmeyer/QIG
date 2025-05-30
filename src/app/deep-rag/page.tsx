@@ -283,7 +283,7 @@ export default function DeepRAGPage() {
                 </div>
 
                 {/* Chat input with improved styling */}
-                <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                <div className={`w-full max-w-4xl mx-auto ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
                   <ImprovedChat
                     ref={chatRef}
                     onUserMessage={handleUserMessage}
