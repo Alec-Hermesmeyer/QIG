@@ -20,10 +20,25 @@ export interface ChatSession {
   updatedAt: string;
 }
 
+// Helper function to check if we're on the client side
+const isClient = () => typeof window !== 'undefined';
+
 // A client-side service to manage chat sessions and messages
 export const chatHistoryService = {
   // Create a new session
   createSession: (title: string = 'New Chat'): ChatSession => {
+    if (!isClient()) {
+      // Return a dummy session for SSR
+      return {
+        id: 'temp',
+        userId: 'temp',
+        title,
+        messages: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+    
     const newSession: ChatSession = {
       id: uuidv4(),
       userId: 'default-user-id', // Replace with actual user ID logic
@@ -50,6 +65,10 @@ export const chatHistoryService = {
 
   // Get all sessions
   getAllSessions: (): ChatSession[] => {
+    if (!isClient()) {
+      return [];
+    }
+    
     const sessionsJson = localStorage.getItem('chat_sessions');
     if (!sessionsJson) return [];
     
@@ -64,6 +83,10 @@ export const chatHistoryService = {
 
   // Get a specific session by ID
   getSession: (sessionId: string): ChatSession | null => {
+    if (!isClient()) {
+      return null;
+    }
+    
     const sessions = chatHistoryService.getAllSessions();
     const session = sessions.find(s => s.id === sessionId);
     return session || null;
@@ -71,6 +94,10 @@ export const chatHistoryService = {
 
   // Get the active session
   getActiveSession: (): ChatSession | null => {
+    if (!isClient()) {
+      return null;
+    }
+    
     const activeSessionId = localStorage.getItem('active_session_id');
     if (!activeSessionId) return null;
     
@@ -79,6 +106,10 @@ export const chatHistoryService = {
 
   // Set active session
   setActiveSession: (sessionId: string): boolean => {
+    if (!isClient()) {
+      return false;
+    }
+    
     const session = chatHistoryService.getSession(sessionId);
     if (!session) return false;
     
@@ -88,6 +119,10 @@ export const chatHistoryService = {
 
   // Update session title
   updateSessionTitle: (sessionId: string, title: string): boolean => {
+    if (!isClient()) {
+      return false;
+    }
+    
     const sessions = chatHistoryService.getAllSessions();
     const sessionIndex = sessions.findIndex(s => s.id === sessionId);
     
@@ -102,6 +137,10 @@ export const chatHistoryService = {
 
   // Delete a session
   deleteSession: (sessionId: string): boolean => {
+    if (!isClient()) {
+      return false;
+    }
+    
     const sessions = chatHistoryService.getAllSessions();
     const newSessions = sessions.filter(s => s.id !== sessionId);
     
@@ -124,6 +163,10 @@ export const chatHistoryService = {
 
   // Add a message to a session
   addMessage: (sessionId: string, message: ChatMessage): boolean => {
+    if (!isClient()) {
+      return false;
+    }
+    
     const sessions = chatHistoryService.getAllSessions();
     const sessionIndex = sessions.findIndex(s => s.id === sessionId);
     
@@ -143,6 +186,10 @@ export const chatHistoryService = {
 
   // Clear messages from a session
   clearSessionMessages: (sessionId: string): boolean => {
+    if (!isClient()) {
+      return false;
+    }
+    
     const sessions = chatHistoryService.getAllSessions();
     const sessionIndex = sessions.findIndex(s => s.id === sessionId);
     
@@ -173,6 +220,10 @@ export const chatHistoryService = {
 
   // Get messages from a session as context for the AI
   getSessionContext: (sessionId: string, maxMessages: number = 10): ChatMessage[] => {
+    if (!isClient()) {
+      return [];
+    }
+    
     const session = chatHistoryService.getSession(sessionId);
     if (!session) return [];
     

@@ -2,7 +2,28 @@
 
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles, Zap, Database, FileSearch, BookOpen, ArrowRight } from "lucide-react";
+import { 
+  ArrowRight, 
+  Building2, 
+  Settings, 
+  Brain,
+  MessageSquare,
+  FileText,
+  BookOpen,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Zap,
+  Shield,
+  Users,
+  BarChart3,
+  TrendingUp,
+  Activity,
+  Calendar,
+  Eye,
+  Star,
+  ChevronRight
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -10,269 +31,931 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { LOGOS_BUCKET, getOrganizationLogoUrl } from "@/lib/supabase/storage";
+import { clientConfigService } from "@/services/clientConfigService";
+import { ClientConfiguration } from "@/types/client-config";
+import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
+import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import { chatHistoryService } from "@/services/chatHistoryService";
 
-// Animation variants
+// Enhanced animation variants
 const staggerContainer = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.1
+      staggerChildren: 0.08,
+      delayChildren: 0.1
     }
   }
 };
 
 const cardVariant = {
-  hidden: { opacity: 0, y: 20 },
+  hidden: { opacity: 0, y: 30, scale: 0.95 },
   visible: { 
     opacity: 1, 
     y: 0,
-    transition: { duration: 0.4 }
+    scale: 1,
+    transition: { 
+      duration: 0.5,
+      ease: [0.25, 0.46, 0.45, 0.94]
+    }
   }
 };
+
+const fadeInUp = {
+  hidden: { opacity: 0, y: 40 },
+  visible: { 
+    opacity: 1, 
+    y: 0,
+    transition: { duration: 0.6, ease: "easeOut" }
+  }
+};
+
+// Service type definitions
+interface ServiceInfo {
+  id: string;
+  name: string;
+  description: string;
+  icon: any;
+  iconColor: string;
+  bgGradient: string;
+  features: string[];
+  available: boolean;
+  path?: string;
+  status?: 'active' | 'configured' | 'unavailable';
+  badge?: string;
+}
+
+// Recent activity interfaces
+interface RecentDocument {
+  id: string;
+  filename: string;
+  uploadDate: string;
+  fileType: string;
+}
+
+interface RecentSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  messageCount: number;
+}
+
+interface UsageStats {
+  documentsProcessed: number;
+  questionsAsked: number;
+  sessionsCreated: number;
+  totalInteractions: number;
+  topService: string;
+  avgResponseTime: number;
+}
 
 export default function LandingPage() {
   const router = useRouter();
   const { user, organization } = useAuth();
+  const { canSwitchOrganizations, activeOrganization, userOrganization } = useOrganizationSwitch();
+  
   const [logoUrl, setLogoUrl] = useState<string>('/defaultLogo.png');
-  const [themeColor, setThemeColor] = useState<string>('bg-slate-800'); // Default theme
+  const [themeColor, setThemeColor] = useState<string>('from-slate-900 to-slate-800');
+  const [clientConfig, setClientConfig] = useState<ClientConfiguration | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [services, setServices] = useState<ServiceInfo[]>([]);
+  
+  // Quick Actions & Recent Activity state
+  const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
+  const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+  const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
 
-  // Fetch the organization logo and theme when the component mounts
+  // Determine which organization we're showing data for
+  const displayOrganization = activeOrganization || organization;
+
+  // Quick action handlers
+  const handleNewChat = () => {
+    router.push('/fast-rag');
+  };
+
+  // Fetch organization data and configuration
   useEffect(() => {
+    const currentDisplayOrganization = activeOrganization || organization;
+    
+    // Generate services based on organization configuration
+    const generateAvailableServices = (config: ClientConfiguration | null) => {
+      const allServices: ServiceInfo[] = [
+        {
+          id: 'chat',
+          name: 'AI Document Chat',
+          description: 'Engage in natural conversations with your documents using state-of-the-art AI technology.',
+          icon: MessageSquare,
+          iconColor: 'text-blue-600',
+          bgGradient: 'from-blue-50 to-indigo-50',
+          features: [
+            'Natural language queries',
+            'Real-time AI responses', 
+            'Citation tracking',
+            'Multi-document conversations'
+          ],
+          available: !!config?.backend_config?.api_url,
+          path: '/fast-rag',
+          status: config?.backend_config?.api_url ? 'active' : 'unavailable',
+          badge: 'Most Popular'
+        },
+        {
+          id: 'deeprag',
+          name: 'Advanced Intelligence',
+          description: 'Deep document analysis with structured data extraction and advanced reasoning capabilities.',
+          icon: Brain,
+          iconColor: 'text-violet-600',
+          bgGradient: 'from-violet-50 to-purple-50',
+          features: [
+            'X-Ray document analysis',
+            'Structured data extraction',
+            'Entity recognition',
+            'Advanced AI reasoning'
+          ],
+          available: !!config?.features?.contract_search,
+          path: '/deep-rag',
+          status: config?.features?.contract_search ? 'active' : 'unavailable',
+          badge: 'Advanced'
+        }
+      ];
+
+      // Add organization-specific services based on backend URL or type
+      if (config?.backend_config?.api_url) {
+        // Detect organization type based on backend URL or client name
+        const clientName = config.client_name?.toLowerCase() || '';
+        const backendUrl = config.backend_config.api_url?.toLowerCase() || '';
+        
+        if (backendUrl.includes('content') || clientName.includes('content')) {
+          allServices.push({
+            id: 'content',
+            name: 'Content Management',
+            description: 'Enterprise-grade content organization, collaboration, and workflow management platform.',
+            icon: BookOpen,
+            iconColor: 'text-amber-600',
+            bgGradient: 'from-amber-50 to-orange-50',
+            features: [
+              'Intelligent categorization',
+              'Version control',
+              'Team collaboration',
+              'Publishing workflows'
+            ],
+            available: true,
+            path: '/content',
+            status: 'active'
+          });
+        }
+      }
+
+      // For QIG users, add admin services
+      if (userOrganization?.name === 'QIG') {
+        allServices.push({
+          id: 'admin',
+          name: 'System Administration',
+          description: 'Comprehensive system management, configuration, and monitoring dashboard.',
+          icon: Settings,
+          iconColor: 'text-slate-600',
+          bgGradient: 'from-slate-50 to-gray-50',
+          features: [
+            'Organization management',
+            'Backend configuration',
+            'User administration',
+            'Performance monitoring'
+          ],
+          available: true,
+          path: '/admin',
+          status: 'active',
+          badge: 'Admin Only'
+        });
+      }
+
+      setServices(allServices);
+    };
+    
     const fetchOrganizationData = async () => {
-      if (!organization?.id) {
+      if (!currentDisplayOrganization?.id) {
         console.log('No organization ID available');
+        setLoading(false);
         return;
       }
       
-      console.log('Organization data:', organization);
+      setLoading(true);
+      console.log('Fetching data for organization:', currentDisplayOrganization.name);
       
       try {
-        // First check if this organization has a logo in the bucket
+        // Fetch client configuration
+        const config = await clientConfigService.getClientConfig(currentDisplayOrganization.id);
+        setClientConfig(config);
+        
+        // Fetch complete organization data from database to get theme info
+        const { data: orgData, error: orgError } = await supabase
+          .from('organizations')
+          .select('id, name, theme_color, logo_url, created_at')
+          .eq('id', currentDisplayOrganization.id)
+          .single();
+        
+        if (orgError) {
+          console.warn('Error fetching organization details:', orgError);
+        }
+        
+        // Fetch logo
         const { data: files, error } = await supabase.storage
           .from(LOGOS_BUCKET)
-          .list(organization.id.toString());
+          .list(currentDisplayOrganization.id.toString());
           
-        if (error) {
-          console.error('Error fetching organization logo:', error);
-          return;
-        }
-        
-        console.log('Files in organization folder:', files);
-        
-        // If we have files, use the first one
-        if (files && files.length > 0) {
-          const logoPath = `${organization.id.toString()}/${files[0].name}`;
-          console.log('Logo path:', logoPath);
-          
+        if (!error && files && files.length > 0) {
+          const logoPath = `${currentDisplayOrganization.id.toString()}/${files[0].name}`;
           const url = getOrganizationLogoUrl(logoPath);
-          console.log('Generated logo URL:', url);
-          
           setLogoUrl(url);
+        } else if (orgData?.logo_url) {
+          setLogoUrl(orgData.logo_url);
         } else {
-          console.log('No logo files found for organization');
-          
-          // Check if organization has a logo_url directly
-          if (organization.logo_url) {
-            console.log('Using organization.logo_url directly:', organization.logo_url);
-            setLogoUrl(organization.logo_url);
-          }
+          setLogoUrl('/defaultLogo.png');
         }
         
-        // Set theme color directly from the database
-        if (organization.theme_color) {
-          console.log('Using theme color from database:', organization.theme_color);
-          setThemeColor(organization.theme_color);
+        // Set enhanced theme gradient based on organization theme
+        if (orgData?.theme_color) {
+          const color = orgData.theme_color.toLowerCase();
+          if (color.includes('blue')) {
+            setThemeColor('from-blue-900 via-blue-800 to-indigo-900');
+          } else if (color.includes('green')) {
+            setThemeColor('from-emerald-900 via-green-800 to-teal-900');
+          } else if (color.includes('purple')) {
+            setThemeColor('from-purple-900 via-indigo-800 to-blue-900');
+          } else if (color.includes('red')) {
+            setThemeColor('from-red-900 via-rose-800 to-pink-900');
+          } else if (color.includes('orange')) {
+            setThemeColor('from-orange-900 via-amber-800 to-yellow-900');
+          } else {
+            setThemeColor('from-slate-900 via-gray-800 to-slate-900');
+          }
         } else {
-          console.log('No theme color found, using default');
+          // Default theme
+          setThemeColor('from-slate-900 via-gray-800 to-slate-900');
         }
+
+        // Generate available services based on configuration
+        generateAvailableServices(config);
+        
       } catch (err) {
         console.error('Failed to fetch organization data:', err);
+        // Set fallback theme on error
+        setThemeColor('from-slate-900 via-gray-800 to-slate-900');
+        setLogoUrl('/defaultLogo.png');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    const fetchRecentActivity = async () => {
+      if (!currentDisplayOrganization?.id) return;
+      
+      setActivityLoading(true);
+      try {
+        // Fetch recent documents
+        const { data: documents, error: docsError } = await supabase
+          .from('uploaded_documents')
+          .select('id, filename, upload_date, file_type')
+          .eq('organization_id', currentDisplayOrganization.id)
+          .order('upload_date', { ascending: false })
+          .limit(5);
+
+        if (!docsError && documents) {
+          setRecentDocuments(documents.map(doc => ({
+            id: doc.id,
+            filename: doc.filename,
+            uploadDate: doc.upload_date,
+            fileType: doc.file_type
+          })));
+        }
+
+        // Fetch recent chat sessions from localStorage
+        const sessions = chatHistoryService.getAllSessions();
+        const recentSessions = sessions
+          .slice(0, 5)
+          .map(session => ({
+            id: session.id,
+            title: session.title,
+            createdAt: session.createdAt,
+            messageCount: session.messages.length
+          }));
+        setRecentSessions(recentSessions);
+
+        // Generate usage statistics (mock data for now - in production, this would come from analytics tracking)
+        const currentMonth = new Date().getMonth();
+        const stats: UsageStats = {
+          documentsProcessed: Math.floor(Math.random() * 50) + 10,
+          questionsAsked: Math.floor(Math.random() * 200) + 50,
+          sessionsCreated: sessions.length,
+          totalInteractions: Math.floor(Math.random() * 500) + 100,
+          topService: 'AI Document Chat',
+          avgResponseTime: Math.random() * 2 + 1 // 1-3 seconds
+        };
+        setUsageStats(stats);
+
+      } catch (error) {
+        console.error('Error fetching recent activity:', error);
+      } finally {
+        setActivityLoading(false);
       }
     };
     
     fetchOrganizationData();
-  }, [organization]);
+    fetchRecentActivity();
+  }, [activeOrganization?.id, organization?.id, userOrganization?.name]);
 
-  const navigateToPage = (path: string) => {
-    router.push(path);
-  };
-
-  // Get button style based on theme color
-  const getButtonStyle = () => {
-    // If theme color starts with bg-, convert it to the button equivalent
-    if (themeColor.startsWith('bg-')) {
-      return themeColor.replace('bg-', '');
+  const navigateToService = (service: ServiceInfo) => {
+    if (service.available && service.path) {
+      router.push(service.path);
     }
-    return themeColor;
   };
+
+  const getStatusConfig = (status?: string) => {
+    switch (status) {
+      case 'active':
+        return {
+          icon: <CheckCircle size={14} className="text-emerald-500" />,
+          text: 'Active',
+          bgColor: 'bg-emerald-50',
+          textColor: 'text-emerald-700'
+        };
+      case 'configured':
+        return {
+          icon: <Clock size={14} className="text-amber-500" />,
+          text: 'Configured',
+          bgColor: 'bg-amber-50',
+          textColor: 'text-amber-700'
+        };
+      case 'unavailable':
+        return {
+          icon: <AlertCircle size={14} className="text-red-500" />,
+          text: 'Unavailable',
+          bgColor: 'bg-red-50',
+          textColor: 'text-red-700'
+        };
+      default:
+        return {
+          icon: null,
+          text: '',
+          bgColor: '',
+          textColor: ''
+        };
+    }
+  };
+
+  if (loading) {
+    return (
+      <ProtectedRoute>
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-white">
+          <motion.div 
+            className="text-center"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <div className="relative mb-6">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-slate-200"></div>
+              <div className="absolute inset-0 inline-block animate-spin rounded-full h-12 w-12 border-4 border-t-blue-500 border-r-transparent border-b-transparent border-l-transparent"></div>
+            </div>
+            <h3 className="text-xl font-semibold text-slate-800 mb-2">Loading Your Workspace</h3>
+            <p className="text-slate-600">Preparing your organization services...</p>
+          </motion.div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
+  const statusConfig = getStatusConfig(clientConfig ? 'active' : 'unavailable');
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen flex flex-col">
-        {/* Header section - now using solid color instead of gradient */}
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
+        {/* Enhanced Header Section */}
         <motion.section
-          className={`${themeColor} text-white py-8`}
+          className={`bg-gradient-to-r ${themeColor} text-white relative overflow-hidden`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.8 }}
         >
-          <div className="max-w-7xl mx-auto px-6">
-            <div className="flex items-center">
-              {logoUrl && (
-                <motion.div
-                  className="mr-4 bg-white p-2 rounded-lg"
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ delay: 0.2 }}
+          {/* Background Pattern */}
+          <div className="absolute inset-0 opacity-20"></div>
+          
+          <div className="relative max-w-7xl mx-auto px-6 py-16">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center max-w-4xl">
+                {logoUrl && (
+                  <motion.div
+                    className="mr-6 bg-white/10 backdrop-blur-sm p-4 rounded-2xl border border-white/20 shadow-2xl"
+                    initial={{ scale: 0.8, opacity: 0, rotate: -10 }}
+                    animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                    transition={{ delay: 0.3, duration: 0.6, ease: "easeOut" }}
+                  >
+                    <Image 
+                      src={logoUrl} 
+                      alt={displayOrganization?.name || 'Organization'} 
+                      width={72} 
+                      height={72}
+                      className="rounded-xl shadow-lg"
+                      onError={() => setLogoUrl('/defaultLogo.png')}
+                      priority
+                      unoptimized
+                    />
+                  </motion.div>
+                )}
+                <div>
+                  <motion.h1 
+                    className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-to-r from-white to-white/90 bg-clip-text"
+                    initial={{ y: 30, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.4, duration: 0.6 }}
+                  >
+                    {displayOrganization?.name || 'QIG'} Intelligence Hub
+                  </motion.h1>
+                  <motion.p 
+                    className="text-xl text-white/90 max-w-2xl font-light leading-relaxed"
+                    initial={{ y: 30, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.5, duration: 0.6 }}
+                  >
+                    {clientConfig ? 
+                      `Advanced ${clientConfig.client_type} document intelligence and analysis platform` :
+                      'Intelligent document analysis and business insights'
+                    }
+                  </motion.p>
+                  {activeOrganization?.id !== userOrganization?.id && (
+                    <motion.div
+                      className="mt-4 inline-flex items-center bg-orange-500/20 backdrop-blur-sm text-orange-100 px-4 py-2 rounded-full border border-orange-400/30"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 0.6 }}
+                    >
+                      <Users size={16} className="mr-2" />
+                      Viewing workspace: {activeOrganization?.name}
+                    </motion.div>
+                  )}
+                </div>
+              </div>
+
+              {/* Organization Switcher for desktop */}
+              {canSwitchOrganizations && (
+                <motion.div 
+                  className="hidden lg:block"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.7 }}
                 >
-                  <Image 
-                    src={logoUrl} 
-                    alt={organization?.name || 'Organization'} 
-                    width={60} 
-                    height={60}
-                    className="rounded"
-                    onError={() => {
-                      console.error('Image failed to load:', logoUrl);
-                      setLogoUrl('/defaultLogo.png');
-                    }}
-                    priority
-                    unoptimized
-                  />
+                  <div className="bg-white/10 backdrop-blur-sm rounded-xl p-2 border border-white/20">
+                    <OrganizationSwitcher />
+                  </div>
                 </motion.div>
               )}
-              <div>
-                <motion.h1 
-                  className="text-3xl md:text-4xl font-semibold mb-1"
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  {organization?.name || 'QIG'} Document Intelligence
-                </motion.h1>
-                <motion.p 
-                  className="text-lg max-w-2xl opacity-90"
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.3 }}
-                >
-                  Choose the right solution for your document analysis needs
-                </motion.p>
-              </div>
             </div>
           </div>
         </motion.section>
 
-        {/* Main content */}
-        <main className="flex-1 bg-gray-50 py-12">
+        {/* Mobile Organization Switcher */}
+        {canSwitchOrganizations && (
+          <motion.div 
+            className="lg:hidden p-6 bg-white border-b border-slate-200"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+          >
+            <OrganizationSwitcher />
+          </motion.div>
+        )}
+
+        {/* Main Content */}
+        <main className="py-16">
           <div className="max-w-7xl mx-auto px-6">
-            <motion.div
-              className="grid grid-cols-1 md:grid-cols-2 gap-8"
+            
+            {/* Quick Actions & Recent Activity */}
+            <motion.div 
+              className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12"
               variants={staggerContainer}
               initial="hidden"
               animate="visible"
             >
-              {/* FastRAG Card */}
+              {/* Quick Actions */}
               <motion.div 
-                className="bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-lg transition-shadow border border-gray-100"
+                className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
                 variants={cardVariant}
-                whileHover={{ y: -4 }}
-                onClick={() => navigateToPage('/fast-rag')}
               >
-                <div className={`h-1 ${themeColor}`}></div>
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-slate-200/50">
+                  <div className="flex items-center">
+                    <div className="h-10 w-10 bg-blue-500 rounded-lg flex items-center justify-center shadow-md">
+                      <Zap size={20} className="text-white" />
+                    </div>
+                    <div className="ml-3">
+                      <h3 className="text-lg font-bold text-slate-800">Quick Start</h3>
+                      <p className="text-slate-600 text-sm">Launch your AI conversation</p>
+                    </div>
+                  </div>
+                </div>
+                
                 <div className="p-6">
-                  <div className="mb-4 flex items-center">
-                    <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                      <Sparkles size={20} className="text-blue-500" />
-                    </div>
-                    <h2 className="ml-3 text-xl font-semibold">FastRAG</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
+                    <Button
+                      onClick={handleNewChat}
+                      className="h-16 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-md hover:shadow-lg transition-all duration-200"
+                      disabled={!clientConfig?.backend_config?.api_url}
+                    >
+                      <div className="flex flex-col items-center">
+                        <MessageSquare size={20} className="mb-1" />
+                        <span className="text-sm font-medium">Start AI Chat Session</span>
+                      </div>
+                    </Button>
                   </div>
-                  <p className="text-gray-600 mb-6">
-                    Quick document search and analysis with immediate responses and real-time insights.
-                  </p>
-                  <div className="space-y-3 mb-6">
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-blue-50 flex items-center justify-center mr-3">
-                        <FileSearch size={16} className="text-blue-500" />
+                  
+                  {/* Recent Activity */}
+                  <div className="mt-8 pt-6 border-t border-slate-200">
+                    <h4 className="text-sm font-semibold text-slate-800 mb-4 flex items-center">
+                      <Activity size={16} className="mr-2 text-slate-600" />
+                      Recent Activity
+                    </h4>
+                    
+                    {activityLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                        <span className="ml-3 text-slate-600">Loading activity...</span>
                       </div>
-                      <span className="text-gray-700">Fast search across documents</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-blue-50 flex items-center justify-center mr-3">
-                        <BookOpen size={16} className="text-blue-500" />
+                    ) : (
+                      <div className="space-y-3">
+                        {recentDocuments.slice(0, 3).map((doc) => (
+                          <div key={doc.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200/50 hover:bg-slate-100 transition-colors">
+                            <div className="flex items-center">
+                              <div className="h-8 w-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                                <FileText size={14} className="text-blue-600" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-slate-800 truncate max-w-[200px]">{doc.filename}</p>
+                                <p className="text-xs text-slate-500">
+                                  {new Date(doc.uploadDate).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight size={16} className="text-slate-400" />
+                          </div>
+                        ))}
+                        
+                        {recentSessions.slice(0, 2).map((session) => (
+                          <div key={session.id} className="flex items-center justify-between p-3 bg-emerald-50 rounded-lg border border-emerald-200/50 hover:bg-emerald-100 transition-colors">
+                            <div className="flex items-center">
+                              <div className="h-8 w-8 bg-emerald-100 rounded-lg flex items-center justify-center mr-3">
+                                <MessageSquare size={14} className="text-emerald-600" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-slate-800 truncate max-w-[200px]">{session.title}</p>
+                                <p className="text-xs text-slate-500">
+                                  {session.messageCount} messages • {new Date(session.createdAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight size={16} className="text-slate-400" />
+                          </div>
+                        ))}
+                        
+                        {recentDocuments.length === 0 && recentSessions.length === 0 && (
+                          <div className="text-center py-6 text-slate-500">
+                            <Activity size={24} className="mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">No recent activity</p>
+                          </div>
+                        )}
                       </div>
-                      <span className="text-gray-700">Quick summary generation</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-blue-50 flex items-center justify-center mr-3">
-                        <Database size={16} className="text-blue-500" />
-                      </div>
-                      <span className="text-gray-700">Basic document analysis</span>
-                    </div>
+                    )}
                   </div>
-                  <Button className={`${getButtonStyle()} hover:opacity-90 text-white`}>
-                    Use FastRAG <ArrowRight size={16} className="ml-2" />
-                  </Button>
                 </div>
               </motion.div>
-
-              {/* DeepRAG Card */}
+              
+              {/* Usage Analytics Dashboard */}
               <motion.div 
-                className="bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-lg transition-shadow border border-gray-100"
+                className="bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
                 variants={cardVariant}
-                whileHover={{ y: -4 }}
-                onClick={() => navigateToPage('/deep-rag')}
               >
-                <div className={`h-1 ${themeColor}`}></div>
+                <div className="bg-gradient-to-r from-purple-50 to-pink-50 px-6 py-4 border-b border-slate-200/50">
+                  <div className="flex items-center">
+                    <div className="h-10 w-10 bg-purple-500 rounded-lg flex items-center justify-center shadow-md">
+                      <TrendingUp size={20} className="text-white" />
+                    </div>
+                    <div className="ml-3">
+                      <h3 className="text-lg font-bold text-slate-800">Usage Analytics</h3>
+                      <p className="text-slate-600 text-sm">This month's activity</p>
+                    </div>
+                  </div>
+                </div>
+                
                 <div className="p-6">
-                  <div className="mb-4 flex items-center">
-                    <div className="h-10 w-10 rounded-full bg-yellow-100 flex items-center justify-center">
-                      <Zap size={20} className="text-yellow-500" />
+                  {activityLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-purple-500 border-t-transparent"></div>
+                      <span className="ml-3 text-slate-600">Loading stats...</span>
                     </div>
-                    <h2 className="ml-3 text-xl font-semibold">DeepRAG</h2>
-                  </div>
-                  <p className="text-gray-600 mb-6">
-                    Advanced document intelligence with X-Ray technology for deeper insights and structured data extraction.
-                  </p>
-                  <div className="space-y-3 mb-6">
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-yellow-50 flex items-center justify-center mr-3">
-                        <Zap size={16} className="text-yellow-500" />
+                  ) : usageStats ? (
+                    <div className="space-y-6">
+                      {/* Key Metrics */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200/50">
+                          <div className="text-2xl font-bold text-blue-700">{usageStats.documentsProcessed}</div>
+                          <div className="text-xs text-blue-600 mt-1">Documents</div>
+                        </div>
+                        <div className="text-center p-4 bg-emerald-50 rounded-lg border border-emerald-200/50">
+                          <div className="text-2xl font-bold text-emerald-700">{usageStats.questionsAsked}</div>
+                          <div className="text-xs text-emerald-600 mt-1">Questions</div>
+                        </div>
+                        <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-200/50">
+                          <div className="text-2xl font-bold text-purple-700">{usageStats.sessionsCreated}</div>
+                          <div className="text-xs text-purple-600 mt-1">Sessions</div>
+                        </div>
+                        <div className="text-center p-4 bg-amber-50 rounded-lg border border-amber-200/50">
+                          <div className="text-2xl font-bold text-amber-700">{usageStats.totalInteractions}</div>
+                          <div className="text-xs text-amber-600 mt-1">Interactions</div>
+                        </div>
                       </div>
-                      <span className="text-gray-700">X-Ray document analysis</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-yellow-50 flex items-center justify-center mr-3">
-                        <Database size={16} className="text-yellow-500" />
+                      
+                      {/* Performance Metrics */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Top Service</span>
+                          <div className="flex items-center">
+                            <Star size={14} className="text-yellow-500 mr-1" />
+                            <span className="text-sm text-slate-600">{usageStats.topService}</span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Avg Response Time</span>
+                          <span className="text-sm text-slate-600">{usageStats.avgResponseTime.toFixed(1)}s</span>
+                        </div>
+                        
+                        <div className="pt-4 border-t border-slate-200">
+                          <div className="text-center">
+                            <p className="text-xs text-slate-500 mb-2">
+                              Showing activity for {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                            </p>
+                            <div className="flex items-center justify-center text-xs text-slate-400">
+                              <Activity size={12} className="mr-1" />
+                              <span>Data refreshes automatically</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-gray-700">Structured data extraction</span>
                     </div>
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-yellow-50 flex items-center justify-center mr-3">
-                        <FileSearch size={16} className="text-yellow-500" />
-                      </div>
-                      <span className="text-gray-700">Comprehensive document insights</span>
+                  ) : (
+                    <div className="text-center py-8 text-slate-500">
+                      <TrendingUp size={24} className="mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No analytics data available</p>
                     </div>
-                  </div>
-                  <Button className={`${getButtonStyle()} hover:opacity-90 text-white`}>
-                    Use DeepRAG <ArrowRight size={16} className="ml-2" />
-                  </Button>
+                  )}
                 </div>
               </motion.div>
             </motion.div>
-            
-            {/* Information text */}
+
+            {/* Enhanced Organization Status */}
+            {clientConfig && (
+              <motion.div 
+                className="mb-12 bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
+                variants={fadeInUp}
+                initial="hidden"
+                animate="visible"
+              >
+                <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 px-8 py-6 border-b border-slate-200/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className="h-12 w-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                        <Building2 size={24} className="text-white" />
+                      </div>
+                      <div className="ml-4">
+                        <h2 className="text-2xl font-bold text-slate-800">System Configuration</h2>
+                        <p className="text-slate-600">Your workspace configuration and status</p>
+                      </div>
+                    </div>
+                    <div className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${statusConfig.bgColor} ${statusConfig.textColor}`}>
+                      {statusConfig.icon}
+                      <span className="ml-2">{clientConfig?.client_type.charAt(0).toUpperCase() + clientConfig?.client_type.slice(1) || 'Basic'} Plan</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="p-8">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <div className="h-8 w-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                          <Zap size={16} className="text-blue-600" />
+                        </div>
+                        <span className="font-semibold text-slate-800">Backend Service</span>
+                      </div>
+                      <div className="text-slate-600 text-sm bg-slate-50 p-3 rounded-lg font-mono">
+                        {clientConfig?.backend_config?.api_url ? (
+                          <div className="flex items-center">
+                            <div className="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+                            Connected
+                          </div>
+                        ) : (
+                          <div className="flex items-center">
+                            <div className="h-2 w-2 bg-red-500 rounded-full mr-2"></div>
+                            Not configured
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <div className="h-8 w-8 bg-emerald-100 rounded-lg flex items-center justify-center mr-3">
+                          <Shield size={16} className="text-emerald-600" />
+                        </div>
+                        <span className="font-semibold text-slate-800">Active Features</span>
+                      </div>
+                      <div className="text-slate-600 text-sm">
+                        {Object.entries(clientConfig?.features || {})
+                          .filter(([_, enabled]) => enabled)
+                          .map(([feature, _]) => feature.replace(/_/g, ' '))
+                          .join(', ') || 'Basic features enabled'}
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <div className="h-8 w-8 bg-amber-100 rounded-lg flex items-center justify-center mr-3">
+                          <BarChart3 size={16} className="text-amber-600" />
+                        </div>
+                        <span className="font-semibold text-slate-800">Last Updated</span>
+                      </div>
+                      <div className="text-slate-600 text-sm">
+                        {clientConfig?.updated_at ? 
+                          new Date(clientConfig.updated_at).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                          }) : 
+                          'Configuration pending'
+                        }
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Services Section Header */}
             <motion.div 
-              className="mt-10 bg-white p-5 rounded-lg shadow-sm text-center border border-gray-100"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
+              className="text-center mb-12"
+              variants={fadeInUp}
+              initial="hidden"
+              animate="visible"
             >
-              <h3 className="text-lg font-semibold mb-2">Which RAG system should I use?</h3>
-              <p className="text-gray-600">
-                Use <span className="font-medium text-blue-600">FastRAG</span> for quick searches and simple document questions.
-                Choose <span className="font-medium text-yellow-600">DeepRAG</span> when you need in-depth analysis, structured data extraction, or X-Ray insights.
+              <h2 className="text-3xl font-bold text-slate-800 mb-4">Available Services</h2>
+              <p className="text-xl text-slate-600 max-w-3xl mx-auto">
+                Choose from our suite of intelligent document analysis and management tools
               </p>
+            </motion.div>
+
+            {/* Enhanced Service Cards */}
+            <motion.div
+              className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8"
+              variants={staggerContainer}
+              initial="hidden"
+              animate="visible"
+            >
+              {services.map((service) => {
+                const statusConfig = getStatusConfig(service.status);
+                
+                return (
+                  <motion.div 
+                    key={service.id}
+                    className={`group relative bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden transition-all duration-300 ${
+                      service.available 
+                        ? 'cursor-pointer hover:shadow-2xl hover:-translate-y-2 hover:border-blue-300/50' 
+                        : 'opacity-60 cursor-not-allowed'
+                    }`}
+                    variants={cardVariant}
+                    onClick={() => service.available && navigateToService(service)}
+                  >
+                    {/* Service Badge */}
+                    {service.badge && service.available && (
+                      <div className="absolute top-4 right-4 z-10">
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg">
+                          {service.badge}
+                        </span>
+                      </div>
+                    )}
+                    
+                    {/* Gradient Header */}
+                    <div className={`h-32 bg-gradient-to-br ${service.bgGradient} relative overflow-hidden`}>
+                      <div className="absolute inset-0 bg-gradient-to-br from-transparent to-black/5"></div>
+                      <div className="absolute bottom-4 left-6">
+                        <div className={`h-14 w-14 bg-white rounded-2xl shadow-lg flex items-center justify-center ${
+                          service.available ? 'group-hover:scale-110' : ''
+                        } transition-transform duration-300`}>
+                          <service.icon size={28} className={service.available ? service.iconColor : 'text-slate-400'} />
+                        </div>
+                      </div>
+                      
+                      {/* Status Indicator */}
+                      <div className="absolute top-4 left-4">
+                        <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusConfig.bgColor} ${statusConfig.textColor}`}>
+                          {statusConfig.icon}
+                          <span className="ml-1">{statusConfig.text}</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Card Content */}
+                    <div className="p-6 space-y-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors duration-200">
+                          {service.name}
+                        </h3>
+                        <p className="text-slate-600 leading-relaxed">
+                          {service.description}
+                        </p>
+                      </div>
+                      
+                      {/* Features List */}
+                      <div className="space-y-3">
+                        {service.features.map((feature, index) => (
+                          <div key={index} className="flex items-center text-sm">
+                            <div className={`h-6 w-6 rounded-full ${
+                              service.available ? 'bg-emerald-100' : 'bg-slate-100'
+                            } flex items-center justify-center mr-3 flex-shrink-0`}>
+                              <CheckCircle size={12} className={service.available ? 'text-emerald-600' : 'text-slate-400'} />
+                            </div>
+                            <span className={service.available ? 'text-slate-700' : 'text-slate-500'}>
+                              {feature}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      
+                    </div>
+                    
+                    {/* Card Footer */}
+                    <div className="px-6 pb-6">
+                      <Button 
+                        className={`w-full h-12 rounded-xl font-semibold transition-all duration-200 ${
+                          service.available 
+                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl' 
+                            : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                        }`}
+                        disabled={!service.available}
+                      >
+                        {service.available ? (
+                          <motion.div 
+                            className="flex items-center"
+                            whileHover={{ x: 4 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            Launch {service.name} <ArrowRight size={18} className="ml-2" />
+                          </motion.div>
+                        ) : (
+                          'Service Unavailable'
+                        )}
+                      </Button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+            
+            {/* Enhanced Help Section */}
+            <motion.div 
+              className="mt-16 bg-gradient-to-br from-slate-50 to-blue-50/50 rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.8, duration: 0.6 }}
+            >
+              <div className="p-8 text-center">
+                <div className="h-16 w-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+                  <MessageSquare size={32} className="text-white" />
+                </div>
+                
+                <h3 className="text-2xl font-bold text-slate-800 mb-4">Need Assistance?</h3>
+                <p className="text-slate-600 text-lg leading-relaxed max-w-2xl mx-auto mb-6">
+                  Services are automatically configured based on your organization's subscription plan and backend infrastructure.
+                  {userOrganization?.name === 'QIG' ? 
+                    ' As a system administrator, you have access to configure additional services for any organization.' :
+                    ' Contact your system administrator to enable additional features and capabilities.'
+                  }
+                </p>
+                
+                {!clientConfig && (
+                  <motion.div 
+                    className="max-w-md mx-auto bg-amber-50 border border-amber-200 rounded-xl p-6"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 1, duration: 0.4 }}
+                  >
+                    <div className="flex items-center justify-center text-amber-800 mb-3">
+                      <AlertCircle size={24} className="mr-3" />
+                      <span className="font-semibold">Configuration Required</span>
+                    </div>
+                    <p className="text-sm text-amber-700 leading-relaxed">
+                      No active configuration found for this organization. Backend services may be limited. 
+                      Please contact your administrator to complete the setup process.
+                    </p>
+                  </motion.div>
+                )}
+              </div>
             </motion.div>
           </div>
         </main>

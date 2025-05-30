@@ -45,6 +45,8 @@ interface OrganizationSwitchProviderProps {
   children: ReactNode;
 }
 
+const ACTIVE_ORG_STORAGE_KEY = 'qig-active-organization';
+
 export function OrganizationSwitchProvider({ children }: OrganizationSwitchProviderProps) {
   const { user, organization: authOrganization } = useAuth();
   
@@ -59,6 +61,28 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
   useEffect(() => {
     loadOrganizations();
   }, [authOrganization, user]);
+
+  // Load persisted organization selection on mount
+  useEffect(() => {
+    if (canSwitchOrganizations && availableOrganizations.length > 0) {
+      try {
+        const savedOrgId = localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
+        if (savedOrgId) {
+          const savedOrg = availableOrganizations.find(org => org.id === savedOrgId);
+          if (savedOrg) {
+            setActiveOrganization(savedOrg);
+            console.log(`Restored saved organization: ${savedOrg.name}`);
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load saved organization:', error);
+      }
+      
+      // Fallback to user's organization if no valid saved org
+      setActiveOrganization(authOrganization);
+    }
+  }, [canSwitchOrganizations, availableOrganizations, authOrganization]);
 
   const loadOrganizations = async () => {
     try {
@@ -86,8 +110,7 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
           setAvailableOrganizations(orgs || []);
         }
 
-        // Default to user's own organization initially
-        setActiveOrganization(authOrganization);
+        // Don't set activeOrganization here - let the persistence effect handle it
       } else {
         // Non-QIG users can only see their own organization
         setAvailableOrganizations([authOrganization]);
@@ -113,6 +136,14 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
     const targetOrg = availableOrganizations.find(org => org.id === organizationId);
     if (targetOrg) {
       setActiveOrganization(targetOrg);
+      
+      // Persist the selection
+      try {
+        localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, organizationId);
+      } catch (error) {
+        console.warn('Failed to save organization selection:', error);
+      }
+      
       console.log(`Switched to organization: ${targetOrg.name}`);
     } else {
       console.error('Target organization not found');
@@ -122,6 +153,14 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
   const resetToUserOrganization = () => {
     if (userOrganization) {
       setActiveOrganization(userOrganization);
+      
+      // Clear the saved selection
+      try {
+        localStorage.removeItem(ACTIVE_ORG_STORAGE_KEY);
+      } catch (error) {
+        console.warn('Failed to clear saved organization:', error);
+      }
+      
       console.log(`Reset to user organization: ${userOrganization.name}`);
     }
   };
