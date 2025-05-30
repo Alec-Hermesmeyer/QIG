@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText, Shield, Eye, EyeOff } from "lucide-react";
 
 // Import the AnswerParser functionality
 import { parseAnswerToHtml, setupCitationClickHandlers, renderCitationList, CitationInfo } from "./AnswerParser";
@@ -15,6 +15,14 @@ import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
 
 // Import types
 import { Source, XRayChunk, EnhancedAnswerProps, SearchResults } from "@/types/types";
+
+// Import redaction service
+import { redactionService, RedactionResult } from '@/services/redactionService';
+
+// Import hooks
+import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { useOrganizationSwitch } from '@/contexts/OrganizationSwitchContext';
 
 // Define extended CitationInfo type that includes the properties we need
 interface ExtendedCitationInfo {
@@ -95,6 +103,17 @@ export default function FastRAG({
   const [hasSupportingContent, setHasSupportingContent] = useState(false);
   const [supportingContent, setSupportingContent] = useState<any[]>([]);
   const [azureThoughtProcess, setAzureThoughtProcess] = useState('');
+  
+  // Redaction state
+  const [isRedacted, setIsRedacted] = useState(false);
+  const [redactionResult, setRedactionResult] = useState<RedactionResult | null>(null);
+  const [isRedacting, setIsRedacting] = useState(false);
+  const [originalContent, setOriginalContent] = useState<string>('');
+  
+  // Hooks
+  const { organizationAwareFetch } = useOrganizationAwareAPI();
+  const { organization } = useAuth();
+  const { activeOrganization } = useOrganizationSwitch();
   
   // References
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -683,6 +702,65 @@ export default function FastRAG({
   const hasSupportingContentData = extractedSupportingContent.length > 0 || extractedSources.length > 0 || citationInfos.length > 0;
   const hasSources = extractedSources && extractedSources.length > 0;
 
+  // Check if redaction is available for the current organization
+  const isRedactionAvailable = useMemo(() => {
+    const available = redactionService.isRedactionAvailable(activeOrganization?.name);
+    console.log('FastRAG redaction check:', {
+      activeOrgName: activeOrganization?.name,
+      authOrgName: organization?.name,
+      isAvailable: available
+    });
+    return available;
+  }, [activeOrganization?.name, organization?.name]);
+
+  // Redaction handlers
+  const handleRedactContent = useCallback(async () => {
+    if (!extractedContent || isRedacting) return;
+    
+    setIsRedacting(true);
+    try {
+      // Store original content if not already stored
+      if (!originalContent) {
+        setOriginalContent(extractedContent);
+      }
+      
+      const result = await redactionService.redactForOpenRecords(
+        extractedContent,
+        organizationAwareFetch
+      );
+      
+      setRedactionResult(result);
+      setIsRedacted(true);
+      
+      // Update the displayed content
+      if (result.isRedacted) {
+        setParsedAnswerHtml(result.redactedText);
+      }
+    } catch (error) {
+      console.error('Error redacting content:', error);
+      // You could add a toast notification here
+    } finally {
+      setIsRedacting(false);
+    }
+  }, [extractedContent, originalContent, organizationAwareFetch, isRedacting]);
+
+  const handleRestoreContent = useCallback(() => {
+    if (!originalContent || !redactionResult) return;
+    
+    // Restore original content
+    setParsedAnswerHtml(originalContent);
+    setIsRedacted(false);
+    setRedactionResult(null);
+  }, [originalContent, redactionResult]);
+
+  const handleToggleRedaction = useCallback(() => {
+    if (isRedacted) {
+      handleRestoreContent();
+    } else {
+      handleRedactContent();
+    }
+  }, [isRedacted, handleRestoreContent, handleRedactContent]);
+
   // Animation variants
   const containerVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -852,11 +930,71 @@ export default function FastRAG({
                 <div
                   id={answerElementId}
                   ref={contentRef}
-                  className="prose max-w-none"
+                  className="prose prose-slate max-w-none prose-headings:text-slate-900 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:text-slate-700 prose-p:leading-relaxed prose-li:text-slate-700 prose-strong:text-slate-900 prose-em:text-slate-600 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-ol:pl-6 prose-ul:pl-6 prose-li:marker:text-slate-400"
                   style={{ color: themeStyles.textColor }}
                 >
-                  <div dangerouslySetInnerHTML={{ __html: parsedAnswerHtml || (typeof processedContent === 'string' ? processedContent : '') }} />
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
+                  >
+                    {parsedAnswerHtml || (typeof processedContent === 'string' ? processedContent : '')}
+                  </ReactMarkdown>
                 </div>
+
+                {/* Redaction button for Open Records service */}
+                {isRedactionAvailable && (
+                  <div className="mt-4 flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="flex items-center space-x-2">
+                      <Shield size={16} className="text-amber-600" />
+                      <span className="text-sm font-medium text-amber-800">
+                        Sensitive Information Protection
+                      </span>
+                      {redactionResult && redactionResult.redactionCount > 0 && (
+                        <span className="px-2 py-1 bg-amber-200 text-amber-800 text-xs rounded-full">
+                          {redactionResult.redactionCount} items {isRedacted ? 'redacted' : 'found'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {isRedacted && (
+                        <button
+                          onClick={handleRestoreContent}
+                          className="flex items-center space-x-1 px-3 py-1 text-xs bg-amber-200 hover:bg-amber-300 text-amber-800 rounded-md transition-colors"
+                          disabled={isRedacting}
+                        >
+                          <Eye size={12} />
+                          <span>Show Original</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={handleToggleRedaction}
+                        className={`flex items-center space-x-1 px-3 py-1 text-xs rounded-md transition-colors ${
+                          isRedacted 
+                            ? 'bg-green-100 hover:bg-green-200 text-green-800' 
+                            : 'bg-red-100 hover:bg-red-200 text-red-800'
+                        }`}
+                        disabled={isRedacting}
+                      >
+                        {isRedacting ? (
+                          <>
+                            <div className="animate-spin h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full"></div>
+                            <span>Processing...</span>
+                          </>
+                        ) : isRedacted ? (
+                          <>
+                            <Eye size={12} />
+                            <span>Content Redacted</span>
+                          </>
+                        ) : (
+                          <>
+                            <EyeOff size={12} />
+                            <span>Redact Sensitive Info</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {isStreaming && (
                   <motion.span
@@ -1250,6 +1388,37 @@ export default function FastRAG({
 
       {/* Add custom styling for Azure citations */}
       <style jsx global>{`
+        /* Answer content formatting */
+        .prose ol {
+          padding-left: 1.5rem;
+          margin-bottom: 1rem;
+        }
+        .prose ol li {
+          margin-bottom: 0.5rem;
+          line-height: 1.6;
+        }
+        .prose strong {
+          font-weight: 600;
+          color: #1f2937;
+        }
+        .prose p {
+          margin-bottom: 1rem;
+          line-height: 1.7;
+        }
+        .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+          margin-top: 1.5rem;
+          margin-bottom: 0.75rem;
+          font-weight: 600;
+        }
+        .prose [data-filename] {
+          color: #2563eb;
+          cursor: pointer;
+          font-weight: 500;
+        }
+        .prose [data-filename]:hover {
+          text-decoration: underline;
+        }
+        
         /* Azure citation styling */
         .azure-citation {
           color: ${themeStyles.primaryColor};
