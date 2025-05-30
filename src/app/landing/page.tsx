@@ -13,6 +13,7 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Zap,
   Shield,
   Users,
@@ -22,13 +23,15 @@ import {
   Calendar,
   Eye,
   Star,
-  ChevronRight
+  ChevronRight,
+  Target,
+  Timer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { LOGOS_BUCKET, getOrganizationLogoUrl } from "@/lib/supabase/storage";
 import { clientConfigService } from "@/services/clientConfigService";
@@ -116,7 +119,7 @@ export default function LandingPage() {
   const { canSwitchOrganizations, activeOrganization, userOrganization } = useOrganizationSwitch();
   
   const [logoUrl, setLogoUrl] = useState<string>('/defaultLogo.png');
-  const [themeColor, setThemeColor] = useState<string>('from-slate-900 to-slate-800');
+  const [themeColor, setThemeColor] = useState<string>('from-slate-900 via-gray-800 to-slate-900');
   const [clientConfig, setClientConfig] = useState<ClientConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -126,6 +129,48 @@ export default function LandingPage() {
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
+
+  // Refs to track loading state and prevent race conditions
+  const loadingRef = useRef(false);
+  const initializedRef = useRef(false);
+
+  // Handle window visibility changes to prevent stuck loading states
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && loadingRef.current) {
+        // If we're stuck in loading when window becomes visible, reset it
+        console.log('Landing: Window became visible, checking loading state...');
+        setTimeout(() => {
+          if (loadingRef.current && initializedRef.current) {
+            console.log('Landing: Resetting stuck loading state');
+            setLoading(false);
+            loadingRef.current = false;
+          }
+        }, 1000); // Give 1 second for any pending operations
+      }
+    };
+
+    const handleFocus = () => {
+      // Similar handling for window focus
+      if (loadingRef.current && initializedRef.current) {
+        setTimeout(() => {
+          if (loadingRef.current) {
+            console.log('Landing: Window focused, resetting stuck loading state');
+            setLoading(false);
+            loadingRef.current = false;
+          }
+        }, 500);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   // Determine which organization we're showing data for
   const displayOrganization = activeOrganization || organization;
@@ -137,6 +182,12 @@ export default function LandingPage() {
 
   // Fetch organization data and configuration
   useEffect(() => {
+    // Prevent multiple simultaneous loading attempts
+    if (loadingRef.current) {
+      console.log('Already loading landing data, skipping...');
+      return;
+    }
+
     const currentDisplayOrganization = activeOrganization || organization;
     
     // Generate services based on organization configuration
@@ -236,10 +287,12 @@ export default function LandingPage() {
       if (!currentDisplayOrganization?.id) {
         console.log('No organization ID available');
         setLoading(false);
+        loadingRef.current = false;
         return;
       }
       
       setLoading(true);
+      loadingRef.current = true;
       console.log('Fetching data for organization:', currentDisplayOrganization.name);
       
       try {
@@ -297,13 +350,20 @@ export default function LandingPage() {
         // Generate available services based on configuration
         generateAvailableServices(config);
         
+        // Mark as initialized on first successful load
+        initializedRef.current = true;
+        
       } catch (err) {
         console.error('Failed to fetch organization data:', err);
         // Set fallback theme on error
         setThemeColor('from-slate-900 via-gray-800 to-slate-900');
         setLogoUrl('/defaultLogo.png');
       } finally {
-        setLoading(false);
+        // Use a small timeout to ensure state updates are processed
+        setTimeout(() => {
+          setLoading(false);
+          loadingRef.current = false;
+        }, 100);
       }
     };
     

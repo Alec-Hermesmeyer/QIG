@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { createClient } from '@supabase/supabase-js';
 
@@ -54,9 +54,51 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
   const [userOrganization, setUserOrganization] = useState<Organization | null>(null);
   const [availableOrganizations, setAvailableOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Refs to track loading state and prevent race conditions
+  const loadingRef = useRef(false);
+  const initializedRef = useRef(false);
 
   // Check if user can switch organizations (QIG employees only)
   const canSwitchOrganizations = authOrganization?.name === 'QIG';
+
+  // Handle window visibility changes to prevent stuck loading states
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && loadingRef.current) {
+        // If we're stuck in loading when window becomes visible, reset it
+        console.log('Window became visible, checking loading state...');
+        setTimeout(() => {
+          if (loadingRef.current && initializedRef.current) {
+            console.log('Resetting stuck loading state');
+            setLoading(false);
+            loadingRef.current = false;
+          }
+        }, 1000); // Give 1 second for any pending operations
+      }
+    };
+
+    const handleFocus = () => {
+      // Similar handling for window focus
+      if (loadingRef.current && initializedRef.current) {
+        setTimeout(() => {
+          if (loadingRef.current) {
+            console.log('Window focused, resetting stuck loading state');
+            setLoading(false);
+            loadingRef.current = false;
+          }
+        }, 500);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   useEffect(() => {
     loadOrganizations();
@@ -64,7 +106,7 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
 
   // Load persisted organization selection on mount
   useEffect(() => {
-    if (canSwitchOrganizations && availableOrganizations.length > 0) {
+    if (canSwitchOrganizations && availableOrganizations.length > 0 && !initializedRef.current) {
       try {
         const savedOrgId = localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
         if (savedOrgId) {
@@ -72,6 +114,7 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
           if (savedOrg) {
             setActiveOrganization(savedOrg);
             console.log(`Restored saved organization: ${savedOrg.name}`);
+            initializedRef.current = true;
             return;
           }
         }
@@ -81,15 +124,24 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
       
       // Fallback to user's organization if no valid saved org
       setActiveOrganization(authOrganization);
+      initializedRef.current = true;
     }
   }, [canSwitchOrganizations, availableOrganizations, authOrganization]);
 
   const loadOrganizations = async () => {
+    // Prevent multiple simultaneous loading attempts
+    if (loadingRef.current) {
+      console.log('Already loading organizations, skipping...');
+      return;
+    }
+
     try {
       setLoading(true);
+      loadingRef.current = true;
 
       if (!authOrganization) {
         setLoading(false);
+        loadingRef.current = false;
         return;
       }
 
@@ -115,15 +167,21 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
         // Non-QIG users can only see their own organization
         setAvailableOrganizations([authOrganization]);
         setActiveOrganization(authOrganization);
+        initializedRef.current = true;
       }
     } catch (error) {
       console.error('Error in loadOrganizations:', error);
       if (authOrganization) {
         setAvailableOrganizations([authOrganization]);
         setActiveOrganization(authOrganization);
+        initializedRef.current = true;
       }
     } finally {
-      setLoading(false);
+      // Use a small timeout to ensure state updates are processed
+      setTimeout(() => {
+        setLoading(false);
+        loadingRef.current = false;
+      }, 100);
     }
   };
 
