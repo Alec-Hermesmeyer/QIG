@@ -1,19 +1,22 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { History, Settings, Info, Zap, FileSearch, Database, BarChart4 } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Zap, Info, History, SearchIcon, FileText, Shield, MessagesSquare, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImprovedChatHandle, ImprovedChat } from "@/components/chat";
 import DeepRAG from "@/components/DeepRag";
+import DeepRagTopicCards from "@/components/DeepRagTopicCards";
+import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import { RAGProvider } from '@/components/RagProvider';
 import { RAGControl } from '@/components/RagControl';
-import { Source } from "@/types/types";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import DeepRagTopicCards from "@/components/DeepRagTopicCards";
-import ProtectedRoute from "@/components/ProtectedRoute";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
+import { ChatHistoryPanel } from "@/components/ChatHistoryPanel";
+import { useChatContext } from "@/components/ChatProvider";
 
 // Animation variants
 const fadeIn = {
@@ -37,107 +40,256 @@ const staggerContainer = {
 };
 
 export default function DeepRAGPage() {
-  // State for conversation and streaming
   const [conversationStarted, setConversationStarted] = useState(false);
-  const [chatHistory, setChatHistory] = useState<Array<{ 
-    role: string; 
-    content: string | any; 
-    searchResults?: any;
-    metadata?: any;
-  }>>([]);
+  const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string; metadata?: any; raw?: string }>>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  
-  // RAG state
-  const [isRAGEnabled, setIsRAGEnabled] = useState(true); // Default enabled for this page
+  const [currentStreamingContent, setCurrentStreamingContent] = useState("");
+  const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
+  const [isRAGEnabled, setIsRAGEnabled] = useState(true);
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
-  
-  // Chat configuration
   const [temperature, setTemperature] = useState(0.3);
-  const [streamEnabled, setStreamEnabled] = useState(false); // Default to non-streaming for DeepRAG
+  const [streamEnabled, setStreamEnabled] = useState(true);
   
   const chatRef = useRef<ImprovedChatHandle>(null);
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
+  
+  const { user } = useAuth();
+  const { canSwitchOrganizations } = useOrganizationSwitch();
+
+  // Get IndexedDB chat context
+  const {
+    activeSession,
+    addMessage,
+    createSession,
+    selectSession,
+    showChatHistory,
+    setShowChatHistory,
+  } = useChatContext();
+
+  // Debug mode
+  const DEBUG = false;
+  
+  const debugLog = (message: string, data?: any) => {
+    if (DEBUG) {
+      console.log(`[DeepRAG] ${message}`, data);
+    }
+  };
+
+  // Refs to track accumulated data
+  const currentRawResponseRef = useRef<string>("");
+  const isStreamingTransitioning = useRef(false);
+  const streamingIndexRef = useRef<number | null>(null);
+  const currentStreamingContentRef = useRef<string>("");
+
+  // Update refs when state changes
+  useEffect(() => {
+    streamingIndexRef.current = streamingIndex;
+  }, [streamingIndex]);
+
+  useEffect(() => {
+    currentStreamingContentRef.current = currentStreamingContent;
+  }, [currentStreamingContent]);
 
   // Handle user message
-  const handleUserMessage = (content: string) => {
+  const handleUserMessage = useCallback(async (content: string) => {
     setChatHistory(prev => [...prev, { role: 'user', content }]);
     setConversationStarted(true);
-  };
+    
+    // Save to IndexedDB
+    await addMessage({
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Reset raw response for new conversation
+    currentRawResponseRef.current = "";
+  }, [addMessage]);
 
-  // Handle assistant message - Improved to properly extract and format sources
-  const handleAssistantMessage = (content: string, metadata?: any) => {
-    console.log("DeepRAG received assistant message:", { content, metadata });
+  // Handle assistant message
+  const handleAssistantMessage = useCallback(async (content: string, metadata?: any) => {
+    debugLog('Message received', { 
+      contentPreview: content.substring(0, 50) + '...', 
+      isPartial: metadata?.isPartial,
+      hasRaw: metadata?.raw !== undefined
+    });
     
-    // Deep clone the metadata to avoid reference issues
-    const metadataCopy = metadata ? JSON.parse(JSON.stringify(metadata)) : {};
-    
-    // Extract sources from various possible locations
-    let sources: Source[] = [];
-    
-    // First try to get sources from metadata
-    if (metadataCopy?.sources && Array.isArray(metadataCopy.sources)) {
-      sources = metadataCopy.sources;
-    } 
-    // Then try searchResults.sources
-    else if (metadataCopy?.searchResults?.sources && Array.isArray(metadataCopy.searchResults.sources)) {
-      sources = metadataCopy.searchResults.sources;
-    }
-    // Then try supportingContent if it's array-like
-    else if (metadataCopy?.supportingContent && Array.isArray(metadataCopy.supportingContent)) {
-      sources = metadataCopy.supportingContent.map((item: any, index: number) => ({
-        id: item.id || `source_${index}`,
-        fileName: item.fileName || item.title || `Source ${index + 1}`,
-        text: item.text || item.content || '',
-        score: item.score || 0,
-        metadata: item.metadata || {}
-      }));
+    // Accumulate raw response if provided
+    if (metadata?.raw) {
+      const rawData = metadata.raw;
+      currentRawResponseRef.current += rawData;
+      debugLog('Accumulated raw data', { length: currentRawResponseRef.current.length });
+    } else {
+      // If no raw data, treat content as raw
+      currentRawResponseRef.current += content;
     }
     
-    // Process sources to ensure proper structure
-    const processedSources = sources.map((source: any, index: number) => ({
-      id: source.id || `source_${index}`,
-      fileName: source.fileName || source.title || source.name || `Source ${index + 1}`,
-      text: source.text || source.content || source.excerpt || '',
-      metadata: source.metadata || {},
-      sourceUrl: source.sourceUrl || source.url || '',
-      score: source.score || source.relevance || 0,
-      rawScore: source.rawScore,
-      scoreSource: source.scoreSource,
-      highlights: source.highlights || [],
-      hasXray: Boolean(source.hasXray || source.xray),
-      xray: source.xray || null
-    }));
+    const isStreamingChunk = metadata?.isPartial === true;
     
-    // Extract thoughts from various possible locations
-    const thoughts = 
-      metadataCopy?.thoughts || 
-      metadataCopy?.thoughtProcess || 
-      metadataCopy?.reasoning || 
-      (metadataCopy?.result?.thoughts && typeof metadataCopy.result.thoughts === 'string' 
-        ? metadataCopy.result.thoughts 
-        : '');
-    
-    setChatHistory(prev => [...prev, { 
-      role: 'assistant', 
-      content, 
-      searchResults: {
-        sources: processedSources,
-        count: processedSources.length
-      },
-      metadata: {
-        ...metadataCopy,
-        sources: processedSources,
-        thoughts: thoughts
+    if (isStreamingChunk) {
+      // Accumulate content for streaming
+      setCurrentStreamingContent(prevContent => prevContent + content);
+      
+      if (streamingIndexRef.current === null) {
+        // First chunk - create a new message
+        setChatHistory(prev => {
+          const newMessage = { 
+            role: 'assistant', 
+            content, 
+            metadata: {
+              isStreaming: true,
+              supportingContent: [],
+              thoughtProcess: ''
+            },
+            raw: currentRawResponseRef.current
+          };
+          const newHistory = [...prev, newMessage];
+          setStreamingIndex(newHistory.length - 1);
+          return newHistory;
+        });
+      } else {
+        // Update existing message with accumulated content
+        setChatHistory(prev => {
+          const newHistory = [...prev];
+          if (newHistory[streamingIndexRef.current!]) {
+            newHistory[streamingIndexRef.current!] = {
+              ...newHistory[streamingIndexRef.current!],
+              content: currentStreamingContentRef.current + content,
+              metadata: {
+                ...newHistory[streamingIndexRef.current!].metadata,
+                isStreaming: true
+              },
+              raw: currentRawResponseRef.current 
+            };
+          }
+          return newHistory;
+        });
       }
-    }]);
+    } else {
+      // Final message with complete content
+      const finalContent = currentStreamingContentRef.current + content;
+      
+      // Extract supporting content from metadata if available
+      const supportingContent = extractSupportingContent(metadata);
+      
+      // Extract thought process from metadata if available
+      const thoughtProcess = extractThoughtProcess(metadata);
+      
+      if (streamingIndexRef.current !== null) {
+        // Update the streaming message with final content and metadata
+        setChatHistory(prev => {
+          const newHistory = [...prev];
+          if (newHistory[streamingIndexRef.current!]) {
+            newHistory[streamingIndexRef.current!] = {
+              role: 'assistant',
+              content: finalContent,
+              metadata: {
+                isStreaming: false,
+                supportingContent,
+                thoughtProcess
+              },
+              raw: currentRawResponseRef.current
+            };
+          }
+          return newHistory;
+        });
+        
+        // Save final message to IndexedDB
+        await addMessage({
+          role: 'assistant',
+          content: finalContent,
+          timestamp: new Date().toISOString(),
+          rawResponse: {
+            raw: currentRawResponseRef.current,
+            supportingContent,
+            thoughtProcess
+          },
+          supportingContent,
+          thoughts: thoughtProcess
+        });
+      } else {
+        // Add new message if no streaming was happening
+        setChatHistory(prev => [...prev, { 
+          role: 'assistant', 
+          content: finalContent,
+          metadata: {
+            isStreaming: false,
+            supportingContent,
+            thoughtProcess
+          },
+          raw: currentRawResponseRef.current
+        }]);
+        
+        // Save to IndexedDB
+        await addMessage({
+          role: 'assistant',
+          content: finalContent,
+          timestamp: new Date().toISOString(),
+          rawResponse: {
+            raw: currentRawResponseRef.current,
+            supportingContent,
+            thoughtProcess
+          },
+          supportingContent,
+          thoughts: thoughtProcess
+        });
+      }
+      
+      // Reset streaming state
+      setStreamingIndex(null);
+      setCurrentStreamingContent('');
+    }
+  }, [addMessage]);
+
+  // Extract supporting content from metadata
+  const extractSupportingContent = (metadata?: any): any[] => {
+    if (!metadata) return [];
+    
+    // Look for sources in various possible locations
+    const sources = metadata.sources || 
+                   metadata.supportingContent || 
+                   metadata.citations || 
+                   metadata.supporting_content ||
+                   [];
+    
+    if (Array.isArray(sources)) {
+      return sources;
+    }
+    
+    // If sources is a single object, wrap it in an array
+    if (typeof sources === 'object' && sources !== null) {
+      return [sources];
+    }
+    
+    return [];
   };
 
-  // Scroll to latest message
-  useEffect(() => {
-    if (chatMessageStreamEnd.current) {
-      chatMessageStreamEnd.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [chatHistory, isStreaming]);
+  // Extract thought process from metadata
+  const extractThoughtProcess = (metadata?: any): string => {
+    if (!metadata) return '';
+    
+    return metadata.thoughtProcess || 
+           metadata.thinking || 
+           metadata.reasoning || 
+           metadata.analysis ||
+           '';
+  };
+
+  // Clear chat history
+  const clearChat = () => {
+    setChatHistory([]);
+    setConversationStarted(false);
+    setIsStreaming(false);
+    setStreamingIndex(null);
+    setCurrentStreamingContent('');
+    currentRawResponseRef.current = "";
+  };
+
+  // New session handler
+  const handleNewSession = async () => {
+    clearChat();
+    await createSession();
+  };
 
   // Handle RAG toggle
   const handleRAGToggle = (enabled: boolean) => {
@@ -149,11 +301,62 @@ export default function DeepRAGPage() {
     setSelectedBucketId(bucketId);
   };
 
-  // Clear chat history
-  const clearChat = () => {
-    setChatHistory([]);
-    setConversationStarted(false);
-  };
+  // Monitor streaming state and update the message when streaming ends
+  useEffect(() => {
+    if (!isStreaming && streamingIndex !== null && !isStreamingTransitioning.current) {
+      debugLog('Streaming ended, finalizing message');
+      
+      // Prevent multiple simultaneous updates
+      isStreamingTransitioning.current = true;
+      
+      // Wait a bit longer to ensure all content is processed
+      const timer = setTimeout(() => {
+        setChatHistory(prev => {
+          if (!prev[streamingIndex]) {
+            isStreamingTransitioning.current = false;
+            return prev;
+          }
+          
+          const currentMessage = prev[streamingIndex];
+          // Preserve the current content when updating the metadata
+          const updatedMessage = {
+            ...currentMessage,
+            // Ensure we keep the content
+            content: currentMessage.content,
+            metadata: {
+              ...currentMessage.metadata,
+              isStreaming: false
+            },
+            raw: currentRawResponseRef.current
+          };
+          
+          const newHistory = [...prev];
+          newHistory[streamingIndex] = updatedMessage;
+          
+          // Reset streaming state after update
+          setTimeout(() => {
+            setStreamingIndex(null);
+            setCurrentStreamingContent('');
+            isStreamingTransitioning.current = false;
+          }, 100);
+          
+          return newHistory;
+        });
+      }, 500);
+      
+      return () => {
+        clearTimeout(timer);
+        isStreamingTransitioning.current = false;
+      };
+    }
+  }, [isStreaming, streamingIndex]);
+  
+  // Scroll to the bottom when chat updates
+  useEffect(() => {
+    if (chatMessageStreamEnd.current) {
+      chatMessageStreamEnd.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatHistory]);
 
   return (
     <ProtectedRoute>
@@ -166,7 +369,7 @@ export default function DeepRAGPage() {
                 <div className="flex items-center">
                   <h1 className="text-xl font-semibold text-gray-900 flex items-center">
                     <span className="bg-amber-100 text-amber-700 p-1 rounded mr-2">
-                      <Zap size={18} />
+                      <Brain size={18} />
                     </span>
                     DeepRAG
                     <TooltipProvider>
@@ -201,8 +404,15 @@ export default function DeepRAGPage() {
                     <History size={16} className="mr-1.5" />
                     Clear Chat
                   </Button>
-                  
-                  
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setShowChatHistory(true)}
+                    className="text-gray-700 border-gray-300 hover:bg-gray-100"
+                  >
+                    <History size={16} className="mr-1.5" />
+                    History
+                  </Button>
                 </div>
               </div>
             </div>
@@ -210,92 +420,107 @@ export default function DeepRAGPage() {
 
           {/* Main content */}
           <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-7xl mx-auto  rounded-xl shadow-sm overflow-hidden">
-              <div className="p-6">
-                {/* Introduction - only show when conversation not started */}
-                <AnimatePresence>
-                  {!conversationStarted && (
-                    <motion.div
-                      className="mb-8"
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, y: -20 }}
-                      variants={fadeIn}
-                    >
-                      <motion.div className="text-center mb-8" variants={slideUp}>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-3 flex items-center justify-center">
-                          <Zap size={24} className="text-amber-500 mr-2" />
-                          Advanced Document Intelligence
-                        </h2>
-                        <p className="text-gray-600 max-w-2xl mx-auto">
-                          DeepRAG uses X-Ray technology to analyze document structure, extract meaningful data, and provide comprehensive insights.
-                        </p>
-                      </motion.div>
-
-                      <motion.div
-                        className="grid grid-cols-1 md:grid-cols-3 gap-5"
-                        variants={staggerContainer}
-                      >
-                        {/* Using DeepRagTopicCards to display sample questions from Supabase */}
-                        <DeepRagTopicCards chatRef={chatRef} />
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Chat history container with improved styling */}
-                <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                  <AnimatePresence>
-                    {chatHistory.map((message, index) => (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.3 }}
-                        className="mb-4"
-                      >
-                        {message.role === 'user' ? (
-                          <div className="flex justify-end">
-                            <div className="bg-amber-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
-                              {message.content}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="max-w-[92%]">
-                            <DeepRAG 
-                              answer={{
-                                content: typeof message.content === 'string' ? message.content : 
-                                        (message.content?.content || JSON.stringify(message.content)),
-                                thoughts: message.metadata?.thoughts || '',
-                                searchResults: message.searchResults,
-                                sources: message.searchResults?.sources
-                              }}
-                              isStreaming={isStreaming && index === chatHistory.length - 1}
-                              theme="light"
-                            />
-                          </div>
-                        )}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                  <div ref={chatMessageStreamEnd} />
+            <div className="max-w-5xl mx-auto">
+              {/* Organization Switcher for QIG employees */}
+              {canSwitchOrganizations && (
+                <div className="mb-6">
+                  <OrganizationSwitcher />
                 </div>
+              )}
+              
+              <div className="shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {/* Introduction - only show when conversation not started */}
+                  <AnimatePresence>
+                    {!conversationStarted && (
+                      <motion.div
+                        className="mb-8"
+                        initial="hidden"
+                        animate="visible"
+                        exit={{ opacity: 0, y: -20 }}
+                        variants={fadeIn}
+                      >
+                        <motion.div className="text-center mb-8" variants={slideUp}>
+                          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                            Advanced Document Analysis Platform
+                          </h2>
+                          <p className="text-gray-600 max-w-2xl mx-auto">
+                            Deep insights and structured data extraction from your documents using X-Ray technology and advanced AI reasoning.
+                          </p>
+                        </motion.div>
 
-                {/* Chat input with improved styling */}
-                <div className={`w-full max-w-4xl mx-auto ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                  <ImprovedChat
-                    ref={chatRef}
-                    onUserMessage={handleUserMessage}
-                    onAssistantMessage={handleAssistantMessage}
-                    onConversationStart={() => setConversationStarted(true)}
-                    onStreamingChange={setIsStreaming}
-                    temperature={temperature}
-                    streamResponses={streamEnabled}
-                    isRAGEnabled={isRAGEnabled}
-                    selectedBucketId={selectedBucketId}
-                    useRAG={true} // Force RAG for DeepRAG page
-                  />
+                        <motion.div
+                          className="grid grid-cols-1 md:grid-cols-3 gap-5"
+                          variants={staggerContainer}
+                        >
+                          {/* Using DeepRagTopicCards for sample questions */}
+                          <DeepRagTopicCards chatRef={chatRef} />
+                        </motion.div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Chat history container with improved styling */}
+                  <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                    <AnimatePresence>
+                      {chatHistory.map((message, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.3 }}
+                          className="mb-4"
+                        >
+                          {message.role === 'user' ? (
+                            <div className="flex justify-end">
+                              <div className="bg-amber-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
+                                {message.content}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="max-w-[92%]">
+                              <DeepRAG 
+                                answer={{
+                                  content: message.content,
+                                  metadata: message.metadata,
+                                  // Always include these for the component to process correctly
+                                  supportingContent: message.metadata?.supportingContent,
+                                  thoughtProcess: message.metadata?.thoughtProcess
+                                }}
+                                theme="light"
+                                isStreaming={message.metadata?.isStreaming}
+                              />
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                    <div ref={chatMessageStreamEnd} />
+                  </div>
+
+                  {/* Chat input with improved styling */}
+                  <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                    <ImprovedChat
+                      ref={chatRef}
+                      onUserMessage={handleUserMessage}
+                      onAssistantMessage={handleAssistantMessage}
+                      onConversationStart={() => setConversationStarted(true)}
+                      onStreamingChange={(streaming) => {
+                        setIsStreaming(streaming);
+                        debugLog('Streaming status changed', streaming ? 'started' : 'ended');
+                        
+                        // When streaming stops, ensure we don't lose the accumulated raw response
+                        if (!streaming) {
+                          debugLog('Streaming ended, final raw response length', currentRawResponseRef.current.length);
+                        }
+                      }}
+                      temperature={temperature}
+                      streamResponses={streamEnabled}
+                      isRAGEnabled={isRAGEnabled}
+                      selectedBucketId={selectedBucketId}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -306,7 +531,7 @@ export default function DeepRAGPage() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-center text-sm text-gray-500">
                 <div>
-                  DeepRAG Advanced Analytics Platform
+                  DeepRAG Advanced Document Analysis Platform
                 </div>
                 <div className="flex space-x-4">
                   <a href="#" className="hover:text-gray-700 transition-colors">Documentation</a>
@@ -315,6 +540,15 @@ export default function DeepRAGPage() {
               </div>
             </div>
           </footer>
+          
+          {/* Chat History Panel */}
+          <ChatHistoryPanel
+            isOpen={showChatHistory}
+            onClose={() => setShowChatHistory(false)}
+            onSelectSession={selectSession}
+            onNewSession={handleNewSession}
+            activeSessionId={activeSession?.id || null}
+          />
         </div>
       </RAGProvider>
     </ProtectedRoute>

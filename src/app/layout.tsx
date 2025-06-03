@@ -1,6 +1,8 @@
 // app/layout.tsx
 import { AuthProvider } from '@/lib/auth/AuthContext';
 import { OrganizationSwitchProvider } from '@/contexts/OrganizationSwitchContext';
+import { ChatProvider } from '@/components/ChatProvider';
+import { ApiWarmupProvider } from '@/components/ApiWarmupProvider';
 import './globals.css';
 import type { Metadata } from 'next';
 import { ToastProvider } from "@/components/ui/toast";
@@ -24,14 +26,18 @@ export default function RootLayout({
       <body className={inter.className}>
         <AuthProvider>
           <OrganizationSwitchProvider>
-            <ToastProvider>
-              <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-                <Sidebar />
-                <div className="flex-1 overflow-auto">
-                  {children}
-                </div>
-              </div>
-            </ToastProvider>
+            <ChatProvider>
+              <ApiWarmupProvider>
+                <ToastProvider>
+                  <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+                    <Sidebar />
+                    <div className="flex-1 overflow-auto">
+                      {children}
+                    </div>
+                  </div>
+                </ToastProvider>
+              </ApiWarmupProvider>
+            </ChatProvider>
           </OrganizationSwitchProvider>
         </AuthProvider>
       </body>

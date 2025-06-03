@@ -25,7 +25,8 @@ import {
   Star,
   ChevronRight,
   Target,
-  Timer
+  Timer,
+  TrendingDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/AuthContext";
@@ -38,7 +39,8 @@ import { clientConfigService } from "@/services/clientConfigService";
 import { ClientConfiguration } from "@/types/client-config";
 import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
-import { chatHistoryService } from "@/services/chatHistoryService";
+import { chatAnalyticsService, ChatAnalytics } from "@/services/chatAnalyticsService";
+import { ChatProvider } from "@/components/ChatProvider";
 
 // Enhanced animation variants
 const staggerContainer = {
@@ -111,9 +113,20 @@ interface UsageStats {
   totalInteractions: number;
   topService: string;
   avgResponseTime: number;
+  recentDocuments: number;
+  activeToday: boolean;
+  monthlyGrowth: number;
 }
 
 export default function LandingPage() {
+  return (
+    <ChatProvider>
+      <LandingPageContent />
+    </ChatProvider>
+  );
+}
+
+function LandingPageContent() {
   const router = useRouter();
   const { user, organization } = useAuth();
   const { canSwitchOrganizations, activeOrganization, userOrganization } = useOrganizationSwitch();
@@ -178,6 +191,14 @@ export default function LandingPage() {
   // Quick action handlers
   const handleNewChat = () => {
     router.push('/fast-rag');
+  };
+
+  const handleUploadDocuments = () => {
+    router.push('/upload');
+  };
+
+  const handleViewAnalytics = () => {
+    router.push('/analytics');
   };
 
   // Fetch organization data and configuration
@@ -389,27 +410,31 @@ export default function LandingPage() {
           })));
         }
 
-        // Fetch recent chat sessions from localStorage
-        const sessions = chatHistoryService.getAllSessions();
-        const recentSessions = sessions
-          .slice(0, 5)
-          .map(session => ({
-            id: session.id,
-            title: session.title,
-            createdAt: session.createdAt,
-            messageCount: session.messages.length
-          }));
-        setRecentSessions(recentSessions);
+        // Fetch chat analytics from IndexedDB
+        const analytics = await chatAnalyticsService.getChatAnalytics();
+        
+        // Set recent sessions from analytics
+        setRecentSessions(analytics.recentSessions.slice(0, 5));
 
-        // Generate usage statistics (mock data for now - in production, this would come from analytics tracking)
+        // Calculate documents uploaded this month
         const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        const currentMonthDocs = documents ? documents.filter(doc => {
+          const docDate = new Date(doc.upload_date);
+          return docDate.getMonth() === currentMonth && docDate.getFullYear() === currentYear;
+        }).length : 0;
+
+        // Create enhanced usage statistics
         const stats: UsageStats = {
-          documentsProcessed: Math.floor(Math.random() * 50) + 10,
-          questionsAsked: Math.floor(Math.random() * 200) + 50,
-          sessionsCreated: sessions.length,
-          totalInteractions: Math.floor(Math.random() * 500) + 100,
-          topService: 'AI Document Chat',
-          avgResponseTime: Math.random() * 2 + 1 // 1-3 seconds
+          documentsProcessed: documents?.length || 0,
+          questionsAsked: analytics.totalUserMessages,
+          sessionsCreated: analytics.totalSessions,
+          totalInteractions: analytics.totalMessages,
+          topService: analytics.totalSessions > 0 ? 'AI Document Chat' : 'No activity',
+          avgResponseTime: 1.8, // Keep as estimated average for now
+          recentDocuments: currentMonthDocs,
+          activeToday: analytics.activeToday,
+          monthlyGrowth: analytics.monthlySessionGrowth
         };
         setUsageStats(stats);
 
@@ -588,8 +613,8 @@ export default function LandingPage() {
                     animate={{ scale: 1, opacity: 1, rotate: 0 }}
                     transition={{ delay: 0.3, duration: 0.6, ease: "easeOut" }}
                   >
-                    <Image 
-                      src={logoUrl} 
+                    <Image
+                      src={logoUrl}
                       alt={displayOrganization?.name || 'Organization'} 
                       width={72} 
                       height={72}
@@ -636,7 +661,7 @@ export default function LandingPage() {
 
               {/* Organization Switcher for desktop */}
               {canSwitchOrganizations && (
-                <motion.div 
+                <motion.div
                   className="hidden lg:block"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -666,33 +691,34 @@ export default function LandingPage() {
         {/* Main Content */}
         <main className="py-16">
           <div className="max-w-7xl mx-auto px-6">
-            
-            {/* Quick Actions & Recent Activity */}
+
+            {/* Enhanced Quick Start & Analytics Dashboard */}
             <motion.div 
-              className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12"
+              className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12"
               variants={staggerContainer}
               initial="hidden"
               animate="visible"
             >
-              {/* Quick Actions */}
+              {/* Quick Start & Recent Activity */}
               <motion.div 
-                className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
+                className="bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden"
                 variants={cardVariant}
               >
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-slate-200/50">
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 px-6 py-4 border-b border-slate-200/50">
                   <div className="flex items-center">
-                    <div className="h-10 w-10 bg-blue-500 rounded-lg flex items-center justify-center shadow-md">
+                    <div className="h-10 w-10 bg-emerald-500 rounded-lg flex items-center justify-center shadow-md">
                       <Zap size={20} className="text-white" />
                     </div>
                     <div className="ml-3">
                       <h3 className="text-lg font-bold text-slate-800">Quick Start</h3>
-                      <p className="text-slate-600 text-sm">Launch your AI conversation</p>
+                      <p className="text-slate-600 text-sm">Get started with your workspace</p>
                     </div>
                   </div>
                 </div>
                 
                 <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
+                  {/* Quick Actions */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <Button
                       onClick={handleNewChat}
                       className="h-16 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-md hover:shadow-lg transition-all duration-200"
@@ -700,13 +726,68 @@ export default function LandingPage() {
                     >
                       <div className="flex flex-col items-center">
                         <MessageSquare size={20} className="mb-1" />
-                        <span className="text-sm font-medium">Start AI Chat Session</span>
+                        <span className="text-sm font-medium">Start AI Chat</span>
+                      </div>
+                    </Button>
+                    
+                    <Button
+                      onClick={handleUploadDocuments}
+                      variant="outline"
+                      className="h-16 border-2 border-blue-200 hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
+                    >
+                      <div className="flex flex-col items-center">
+                        <FileText size={20} className="mb-1 text-blue-600" />
+                        <span className="text-sm font-medium text-blue-700">Upload Documents</span>
                       </div>
                     </Button>
                   </div>
+                    
+                  {/* Additional Quick Actions */}
+                  <div className="grid grid-cols-1 gap-3 mb-6">
+                    <button
+                      onClick={handleViewAnalytics}
+                      className="flex items-center justify-center p-3 bg-purple-50 hover:bg-purple-100 rounded-lg border border-purple-200 transition-colors"
+                    >
+                      <BarChart3 size={16} className="mr-2 text-purple-600" />
+                      <span className="text-sm text-purple-700">View Detailed Analytics</span>
+                    </button>
+                  </div>
+                  
+                  {/* Quick Stats Preview */}
+                  {usageStats && (
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200/50 mb-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center">
+                          <Target size={16} className="text-blue-600 mr-2" />
+                          <span className="text-sm font-medium text-blue-800">Quick Overview</span>
+                        </div>
+                        {usageStats.activeToday && (
+                          <div className="flex items-center text-xs text-emerald-600">
+                            <div className="w-2 h-2 bg-emerald-500 rounded-full mr-1 animate-pulse"></div>
+                            Active today
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-blue-700">{usageStats.documentsProcessed}</div>
+                          <div className="text-xs text-blue-600">Documents</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-emerald-700">{usageStats.sessionsCreated}</div>
+                          <div className="text-xs text-emerald-600">Sessions</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-purple-700">{usageStats.questionsAsked}</div>
+                          <div className="text-xs text-purple-600">Questions</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Recent Activity */}
-                  <div className="mt-8 pt-6 border-t border-slate-200">
+                  <div className="pt-6 border-t border-slate-200">
                     <h4 className="text-sm font-semibold text-slate-800 mb-4 flex items-center">
                       <Activity size={16} className="mr-2 text-slate-600" />
                       Recent Activity
@@ -757,6 +838,7 @@ export default function LandingPage() {
                           <div className="text-center py-6 text-slate-500">
                             <Activity size={24} className="mx-auto mb-2 opacity-50" />
                             <p className="text-sm">No recent activity</p>
+                            <p className="text-xs mt-1">Start by uploading documents or creating a chat session</p>
                           </div>
                         )}
                       </div>
@@ -777,7 +859,7 @@ export default function LandingPage() {
                     </div>
                     <div className="ml-3">
                       <h3 className="text-lg font-bold text-slate-800">Usage Analytics</h3>
-                      <p className="text-slate-600 text-sm">This month's activity</p>
+                      <p className="text-slate-600 text-sm">Real-time workspace insights</p>
                     </div>
                   </div>
                 </div>
@@ -794,26 +876,32 @@ export default function LandingPage() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200/50">
                           <div className="text-2xl font-bold text-blue-700">{usageStats.documentsProcessed}</div>
-                          <div className="text-xs text-blue-600 mt-1">Documents</div>
+                          <div className="text-xs text-blue-600 mt-1">Total Documents</div>
+                          {usageStats.recentDocuments > 0 && (
+                            <div className="text-xs text-emerald-600 mt-1">+{usageStats.recentDocuments} this month</div>
+                          )}
                         </div>
                         <div className="text-center p-4 bg-emerald-50 rounded-lg border border-emerald-200/50">
                           <div className="text-2xl font-bold text-emerald-700">{usageStats.questionsAsked}</div>
-                          <div className="text-xs text-emerald-600 mt-1">Questions</div>
+                          <div className="text-xs text-emerald-600 mt-1">Questions Asked</div>
+                          <div className="text-xs text-slate-500 mt-1">Real conversations</div>
                         </div>
                         <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-200/50">
                           <div className="text-2xl font-bold text-purple-700">{usageStats.sessionsCreated}</div>
-                          <div className="text-xs text-purple-600 mt-1">Sessions</div>
+                          <div className="text-xs text-purple-600 mt-1">Chat Sessions</div>
+                          <div className="text-xs text-slate-500 mt-1">All time</div>
                         </div>
                         <div className="text-center p-4 bg-amber-50 rounded-lg border border-amber-200/50">
                           <div className="text-2xl font-bold text-amber-700">{usageStats.totalInteractions}</div>
-                          <div className="text-xs text-amber-600 mt-1">Interactions</div>
+                          <div className="text-xs text-amber-600 mt-1">Total Messages</div>
+                          <div className="text-xs text-slate-500 mt-1">Including responses</div>
                         </div>
                       </div>
                       
                       {/* Performance Metrics */}
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-slate-700">Top Service</span>
+                          <span className="text-sm font-medium text-slate-700">Most Used Service</span>
                           <div className="flex items-center">
                             <Star size={14} className="text-yellow-500 mr-1" />
                             <span className="text-sm text-slate-600">{usageStats.topService}</span>
@@ -825,6 +913,20 @@ export default function LandingPage() {
                           <span className="text-sm text-slate-600">{usageStats.avgResponseTime.toFixed(1)}s</span>
                         </div>
                         
+                        {usageStats.monthlyGrowth !== 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-slate-700">Monthly Growth</span>
+                            <div className={`flex items-center ${usageStats.monthlyGrowth > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {usageStats.monthlyGrowth > 0 ? (
+                                <TrendingUp size={14} className="mr-1" />
+                              ) : (
+                                <TrendingDown size={14} className="mr-1" />
+                              )}
+                              <span className="text-sm font-medium">{Math.abs(usageStats.monthlyGrowth)}%</span>
+                            </div>
+                          </div>
+                        )}
+                        
                         <div className="pt-4 border-t border-slate-200">
                           <div className="text-center">
                             <p className="text-xs text-slate-500 mb-2">
@@ -832,8 +934,14 @@ export default function LandingPage() {
                             </p>
                             <div className="flex items-center justify-center text-xs text-slate-400">
                               <Activity size={12} className="mr-1" />
-                              <span>Data refreshes automatically</span>
+                              <span>Data updates in real-time</span>
                             </div>
+                            {usageStats.activeToday && (
+                              <div className="flex items-center justify-center text-xs text-emerald-600 mt-1">
+                                <div className="w-2 h-2 bg-emerald-500 rounded-full mr-1 animate-pulse"></div>
+                                <span>Active session today</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -842,6 +950,7 @@ export default function LandingPage() {
                     <div className="text-center py-8 text-slate-500">
                       <TrendingUp size={24} className="mx-auto mb-2 opacity-50" />
                       <p className="text-sm">No analytics data available</p>
+                      <p className="text-xs mt-1">Start using the platform to see insights</p>
                     </div>
                   )}
                 </div>
@@ -867,9 +976,9 @@ export default function LandingPage() {
                         <p className="text-slate-600">Your workspace configuration and status</p>
                       </div>
                     </div>
-                    <div className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${statusConfig.bgColor} ${statusConfig.textColor}`}>
-                      {statusConfig.icon}
-                      <span className="ml-2">{clientConfig?.client_type.charAt(0).toUpperCase() + clientConfig?.client_type.slice(1) || 'Basic'} Plan</span>
+                    <div className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-emerald-50 text-emerald-700">
+                      <CheckCircle size={14} className="text-emerald-500 mr-2" />
+                      <span>{clientConfig?.client_type.charAt(0).toUpperCase() + clientConfig?.client_type.slice(1) || 'Basic'} Plan</span>
                     </div>
                   </div>
                 </div>

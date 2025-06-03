@@ -15,6 +15,9 @@ import FastRagTopicCards from "@/components/FastRagTopicCards";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { OrganizationSwitcher } from "@/components/OrganizationSwitcher";
 import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { ChatHistoryPanel } from "@/components/ChatHistoryPanel";
+import { useChatContext } from "@/components/ChatProvider";
 
 // Animation variants
 const fadeIn = {
@@ -38,38 +41,40 @@ const staggerContainer = {
 };
 
 export default function FastRAGPage() {
-  const { canSwitchOrganizations } = useOrganizationSwitch();
-  
-  // State for conversation and streaming
   const [conversationStarted, setConversationStarted] = useState(false);
   const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string; metadata?: any; raw?: string }>>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStreamingContent, setCurrentStreamingContent] = useState("");
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
-  
-  // RAG state - Using constant instead of state since it's always enabled
-  const isRAGEnabled = true; // Always enabled on this page
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
-  
-  // Chat configuration
-  const [temperature, setTemperature] = useState(0.3);
+  const [temperature, setTemperature] = useState(0.7);
   const [streamEnabled, setStreamEnabled] = useState(true);
-
-  // Debug mode
-  const debugMode = true;
-  const debugLog = (message: string, data?: any) => {
-    if (debugMode) {
-      if (data) {
-        console.log(`[FastRAGPage] ${message}:`, data);
-      } else {
-        console.log(`[FastRAGPage] ${message}`);
-      }
-    }
-  };
-
+  
   const chatRef = useRef<ImprovedChatHandle>(null);
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
   
+  const { user } = useAuth();
+  const { canSwitchOrganizations } = useOrganizationSwitch();
+
+  // Get IndexedDB chat context
+  const {
+    activeSession,
+    addMessage,
+    createSession,
+    selectSession,
+    showChatHistory,
+    setShowChatHistory,
+  } = useChatContext();
+
+  // Debug mode
+  const DEBUG = false;
+  
+  const debugLog = (message: string, data?: any) => {
+    if (DEBUG) {
+      console.log(`[FastRAG] ${message}`, data);
+    }
+  };
+
   // Refs to track accumulated data
   const currentRawResponseRef = useRef<string>("");
   const isStreamingTransitioning = useRef(false);
@@ -86,15 +91,23 @@ export default function FastRAGPage() {
   }, [currentStreamingContent]);
 
   // Handle user message
-  const handleUserMessage = useCallback((content: string) => {
+  const handleUserMessage = useCallback(async (content: string) => {
     setChatHistory(prev => [...prev, { role: 'user', content }]);
     setConversationStarted(true);
+    
+    // Save to IndexedDB
+    await addMessage({
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString()
+    });
+    
     // Reset raw response for new conversation
     currentRawResponseRef.current = "";
-  }, []);
+  }, [addMessage]);
 
   // Handle assistant message
-  const handleAssistantMessage = useCallback((content: string, metadata?: any) => {
+  const handleAssistantMessage = useCallback(async (content: string, metadata?: any) => {
     debugLog('Message received', { 
       contentPreview: content.substring(0, 50) + '...', 
       isPartial: metadata?.isPartial,
@@ -154,19 +167,15 @@ export default function FastRAGPage() {
       }
     } else {
       // Final message with complete content
+      const finalContent = currentStreamingContentRef.current + content;
+      
+      // Extract supporting content from metadata if available
+      const supportingContent = extractSupportingContent(metadata);
+      
+      // Extract thought process from metadata if available
+      const thoughtProcess = extractThoughtProcess(metadata);
+      
       if (streamingIndexRef.current !== null) {
-        // Save the accumulated content to ensure it's not lost
-        const finalContent = currentStreamingContentRef.current + content;
-        
-        // IMPORTANT: Mark that we're transitioning from streaming to complete
-        isStreamingTransitioning.current = true;
-        
-        // Extract supporting content from metadata if available
-        const supportingContent = extractSupportingContent(metadata);
-        
-        // Extract thought process from metadata if available
-        const thoughtProcess = extractThoughtProcess(metadata);
-        
         // Update the streaming message with final content and metadata
         setChatHistory(prev => {
           const newHistory = [...prev];
@@ -185,20 +194,21 @@ export default function FastRAGPage() {
           return newHistory;
         });
         
-        // Reset streaming state with a longer delay to ensure the transition is complete
+        // Save final message to IndexedDB
+        await addMessage({
+          role: 'assistant',
+          content: finalContent,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Reset streaming state
         setTimeout(() => {
           setStreamingIndex(null);
           setCurrentStreamingContent('');
           isStreamingTransitioning.current = false;
-        }, 1000);
+        }, 100);
       } else {
         // Non-streaming message - add directly
-        // Extract supporting content from metadata if available
-        const supportingContent = extractSupportingContent(metadata);
-        
-        // Extract thought process from metadata if available
-        const thoughtProcess = extractThoughtProcess(metadata);
-        
         setChatHistory(prev => [...prev, {
           role: 'assistant',
           content,
@@ -209,9 +219,16 @@ export default function FastRAGPage() {
           },
           raw: metadata?.raw || content
         }]);
+        
+        // Save to IndexedDB
+        await addMessage({
+          role: 'assistant',
+          content,
+          timestamp: new Date().toISOString()
+        });
       }
     }
-  }, []);
+  }, [addMessage]);
 
   // Extract supporting content from various locations in metadata
   const extractSupportingContent = (metadata?: any): any[] => {
@@ -271,11 +288,6 @@ export default function FastRAGPage() {
     return '';
   };
 
-  // Handle bucket selection (maintained for bucket selection dropdown)
-  const handleBucketSelect = (bucketId: string | null) => {
-    setSelectedBucketId(bucketId);
-  };
-
   // Clear chat history
   const clearChat = () => {
     setChatHistory([]);
@@ -283,6 +295,12 @@ export default function FastRAGPage() {
     setStreamingIndex(null);
     setCurrentStreamingContent("");
     currentRawResponseRef.current = "";
+  };
+
+  // New session handler
+  const handleNewSession = async () => {
+    clearChat();
+    await createSession();
   };
 
   // Monitor streaming state and update the message when streaming ends
@@ -381,8 +399,15 @@ export default function FastRAGPage() {
                     <History size={16} className="mr-1.5" />
                     Clear Chat
                   </Button>
-                  
-                  
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setShowChatHistory(true)}
+                    className="text-gray-700 border-gray-300 hover:bg-gray-100"
+                  >
+                    <History size={16} className="mr-1.5" />
+                    History
+                  </Button>
                 </div>
               </div>
             </div>
@@ -461,7 +486,7 @@ export default function FastRAGPage() {
                                   thoughtProcess: message.metadata?.thoughtProcess
                                 }}
                                 theme="light"
-                                onCitationClicked={(citation) => {
+                                onCitationClicked={(citation: any) => {
                                   // Handle citation click if needed
                                   console.log('Citation clicked:', citation);
                                 }}
@@ -494,7 +519,6 @@ export default function FastRAGPage() {
                       streamResponses={streamEnabled}
                       isRAGEnabled={true}
                       selectedBucketId={selectedBucketId}
-                      // Add include_thought_process to enable thought processes in the API
                     />
                   </div>
                 </div>
@@ -516,6 +540,15 @@ export default function FastRAGPage() {
               </div>
             </div>
           </footer>
+          
+          {/* Chat History Panel */}
+          <ChatHistoryPanel
+            isOpen={showChatHistory}
+            onClose={() => setShowChatHistory(false)}
+            onSelectSession={selectSession}
+            onNewSession={handleNewSession}
+            activeSessionId={activeSession?.id || null}
+          />
         </div>
       </RAGProvider>
     </ProtectedRoute>

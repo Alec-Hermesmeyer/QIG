@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { useDebounce } from '@/lib/hooks/use-debounce';
+import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
 
 // Define bucket interface with additional metadata
 interface Bucket {
@@ -40,6 +41,8 @@ export function RAGControl({
   showDescription = true,
   variant = 'default'
 }: RAGControlProps) {
+  const { organizationAwareFetch, activeOrganization } = useOrganizationAwareAPI();
+  
   // Local state
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [filteredBuckets, setFilteredBuckets] = useState<Bucket[]>([]);
@@ -58,12 +61,12 @@ export function RAGControl({
     return () => setIsMounted(false);
   }, []);
 
-  // Load buckets when component mounts or RAG is enabled
+  // Load buckets when component mounts, RAG is enabled, or organization changes
   useEffect(() => {
     if (isMounted && enabled) {
       loadBuckets();
     }
-  }, [isMounted, enabled]);
+  }, [isMounted, enabled, activeOrganization?.id]);
   
   // Filter buckets based on search query
   useEffect(() => {
@@ -95,7 +98,7 @@ export function RAGControl({
   const isCompact = variant === 'compact';
   const isExpanded = variant === 'expanded';
 
-  // Function to load buckets with error handling
+  // Function to load buckets with error handling and organization awareness
   const loadBuckets = async () => {
     if (!isMounted) return;
     
@@ -103,7 +106,8 @@ export function RAGControl({
     setError(null);
     
     try {
-      const response = await fetch('/api/groundx/buckets');
+      console.log('Loading buckets for organization:', activeOrganization?.name);
+      const response = await organizationAwareFetch('/api/groundx/buckets');
       
       if (!response.ok) {
         throw new Error(`Failed to load buckets: ${response.status} ${response.statusText}`);
@@ -121,18 +125,22 @@ export function RAGControl({
         setBuckets(sortedBuckets);
         setFilteredBuckets(sortedBuckets);
         
+        console.log(`Loaded ${sortedBuckets.length} buckets for ${activeOrganization?.name}:`, 
+          sortedBuckets.map(b => b.name));
+        
         // Auto-select first bucket if available and none is selected
         if (sortedBuckets.length > 0 && !selectedBucketId) {
           onBucketSelect(String(sortedBuckets[0].id));
         }
       } else {
         // If no buckets found
+        console.log('No buckets found for organization:', activeOrganization?.name);
         setBuckets([]);
         setFilteredBuckets([]);
         onBucketSelect(null);
       }
     } catch (err) {
-      console.error('Error loading buckets:', err);
+      console.error('Error loading buckets for organization:', activeOrganization?.name, err);
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoading(false);

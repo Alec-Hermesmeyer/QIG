@@ -4,9 +4,10 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Zap, Sparkles, Home, Settings, FileText, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Zap, Sparkles, Home, Settings, FileText, User, Monitor } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useOrganizationSwitch } from '@/contexts/OrganizationSwitchContext';
 
 interface SidebarProps {
   className?: string;
@@ -16,6 +17,7 @@ export function Sidebar({ className }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
   const { organization } = useAuth();
+  const { canSwitchOrganizations } = useOrganizationSwitch();
 
   // Check localStorage for user preference on sidebar collapse state
   useEffect(() => {
@@ -38,6 +40,20 @@ export function Sidebar({ className }: SidebarProps) {
     { name: 'DeepRAG', href: '/deep-rag', icon: Zap },
     { name: 'Profile', href: '/profile', icon: User },
     { name: 'Settings', href: '/settings', icon: Settings }
+  ];
+
+  const navigationItems = [
+    ...navItems,
+    // QIG Internal Tools (only visible to QIG team members)
+    ...(canSwitchOrganizations ? [
+      {
+        name: 'QIG Monitoring',
+        href: '/admin/monitoring',
+        icon: Monitor,
+        description: 'System health and monitoring dashboard',
+        badge: 'Internal'
+      }
+    ] : [])
   ];
 
   return (
@@ -79,7 +95,7 @@ export function Sidebar({ className }: SidebarProps) {
       {/* Navigation Links */}
       <nav className="flex-1 pt-4 pb-4 overflow-y-auto">
         <ul className="space-y-1 px-2">
-          {navItems.map((item) => {
+          {navigationItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             

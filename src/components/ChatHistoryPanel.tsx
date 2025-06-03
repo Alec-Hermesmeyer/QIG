@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, MessageSquare, Edit, Trash2, Check, Plus } from 'lucide-react';
-import { chatHistoryService, ChatSession } from '@/services/chatHistoryService';
+import { indexedDBChatService, ChatSession } from '@/services/indexedDBChatService';
 
 interface ChatHistoryPanelProps {
   isOpen: boolean;
@@ -23,31 +23,48 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [editingSession, setEditingSession] = useState<string | null>(null);
   const [editedTitle, setEditedTitle] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   // Load sessions when the panel opens
   useEffect(() => {
     if (isOpen) {
-      const allSessions = chatHistoryService.getAllSessions();
-      setSessions(allSessions);
+      loadSessions();
     }
   }, [isOpen]);
 
-  const handleDeleteSession = (sessionId: string, event: React.MouseEvent) => {
+  const loadSessions = async () => {
+    setIsLoading(true);
+    try {
+      const allSessions = await indexedDBChatService.getAllSessions();
+      setSessions(allSessions);
+    } catch (error) {
+      console.error('Error loading sessions:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     
     if (confirm('Are you sure you want to delete this chat history?')) {
-      const success = chatHistoryService.deleteSession(sessionId);
-      if (success) {
-        setSessions(prev => prev.filter(s => s.id !== sessionId));
-        
-        // If we deleted the active session and there are other sessions
-        if (sessionId === activeSessionId && sessions.length > 1) {
-          // Find the next session to select
-          const nextSession = sessions.find(s => s.id !== sessionId);
-          if (nextSession) {
-            onSelectSession(nextSession.id);
+      try {
+        const success = await indexedDBChatService.deleteSession(sessionId);
+        if (success) {
+          setSessions(prev => prev.filter(s => s.id !== sessionId));
+          
+          // If we deleted the active session and there are other sessions
+          if (sessionId === activeSessionId && sessions.length > 1) {
+            // Find the next session to select
+            const nextSession = sessions.find(s => s.id !== sessionId);
+            if (nextSession) {
+              onSelectSession(nextSession.id);
+            }
           }
         }
+      } catch (error) {
+        console.error('Error deleting session:', error);
+        alert('Failed to delete session. Please try again.');
       }
     }
   };
@@ -58,20 +75,25 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     setEditedTitle(currentTitle);
   };
 
-  const handleSaveTitle = (sessionId: string, event: React.MouseEvent) => {
+  const handleSaveTitle = async (sessionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     if (editedTitle.trim() === '') return;
     
-    const success = chatHistoryService.updateSessionTitle(sessionId, editedTitle.trim());
-    if (success) {
-      setSessions(prev => 
-        prev.map(session => 
-          session.id === sessionId 
-            ? { ...session, title: editedTitle.trim() } 
-            : session
-        )
-      );
-      setEditingSession(null);
+    try {
+      const success = await indexedDBChatService.updateSessionTitle(sessionId, editedTitle.trim());
+      if (success) {
+        setSessions(prev => 
+          prev.map(session => 
+            session.id === sessionId 
+              ? { ...session, title: editedTitle.trim() } 
+              : session
+          )
+        );
+        setEditingSession(null);
+      }
+    } catch (error) {
+      console.error('Error updating session title:', error);
+      alert('Failed to update session title. Please try again.');
     }
   };
 
@@ -181,7 +203,12 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             
             {/* Sessions List */}
             <div className="flex-1 overflow-y-auto p-2">
-              {sessions.length === 0 ? (
+              {isLoading ? (
+                <div className="text-gray-500 text-center p-6">
+                  <div className="w-6 h-6 border-2 border-gray-300 border-t-indigo-600 rounded-full animate-spin mx-auto mb-2"></div>
+                  Loading chat history...
+                </div>
+              ) : sessions.length === 0 ? (
                 <div className="text-gray-500 text-center p-6">
                   No chat history found
                 </div>
@@ -246,7 +273,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
                         </div>
                         <div className="text-xs text-gray-500 ml-6">
                           {formatDate(session.updatedAt)}
-                          {session.messages.length > 0 && ` • ${session.messages.length} message${session.messages.length !== 1 ? 's' : ''}`}
+                          {session.messageCount > 0 && ` • ${session.messageCount} message${session.messageCount !== 1 ? 's' : ''}`}
                         </div>
                       </div>
                     </motion.div>

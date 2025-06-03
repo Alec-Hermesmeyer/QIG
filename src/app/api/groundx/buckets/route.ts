@@ -31,6 +31,9 @@ export async function GET(request: NextRequest) {
       );
     }
     
+    // Check for organization override header (QIG users switching organizations)
+    const organizationOverride = request.headers.get('x-organization-override');
+    
     // Get the user's profile to find their organization
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
@@ -45,11 +48,31 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    // Get the organization details
+    // Determine which organization to use for bucket filtering
+    let targetOrganizationId = profile.organization_id;
+    
+    // If organization override is provided, verify the user is from QIG and use the override
+    if (organizationOverride) {
+      // First check if the user's organization is QIG
+      const { data: userOrg, error: userOrgError } = await supabase
+        .from('organizations')
+        .select('name')
+        .eq('id', profile.organization_id)
+        .single();
+        
+      if (userOrg?.name === 'QIG') {
+        targetOrganizationId = organizationOverride;
+        console.log(`QIG user overriding organization to: ${organizationOverride}`);
+      } else {
+        console.warn('Non-QIG user attempted organization override');
+      }
+    }
+    
+    // Get the target organization details
     const { data: organization, error: orgError } = await supabase
       .from('organizations')
       .select('name')
-      .eq('id', profile.organization_id)
+      .eq('id', targetOrganizationId)
       .single();
       
     if (orgError || !organization) {

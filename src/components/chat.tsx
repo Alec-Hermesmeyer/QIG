@@ -6,13 +6,15 @@ import {
   useRef,
   useEffect,
   forwardRef,
-  useImperativeHandle
+  useImperativeHandle,
+  useCallback
 } from 'react';
 import { Send, Search, Mic, MicOff, Volume2, Loader2, VolumeX, Volume } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRAG } from './RagChatProvider';
 import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
+import { useApiWarmup } from '@/hooks/useApiWarmup';
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -122,6 +124,12 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     searchConfig
   } = props;
 
+  // Initialize API warmup
+  const { warmupBeforeChat, isWarming } = useApiWarmup({
+    warmupOnChatNavigation: true,
+    debug: process.env.NODE_ENV === 'development'
+  });
+
   // Initialize organization-aware API hook
   const { organizationAwareFetch, activeOrganization, isActingAsOtherOrg } = useOrganizationAwareAPI();
  
@@ -202,6 +210,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   // Wake words and action words configuration
   const WAKE_WORDS = ['hey assistant', 'hello chat', 'hey chat', 'assistant'];
   const ACTION_WORDS = ['send', 'submit', 'go', 'execute'];
+
+  // Track if we've triggered warmup for this session
+  const [hasTriggeredWarmup, setHasTriggeredWarmup] = useState(false);
 
   // Update config when props change
   useEffect(() => {
@@ -2052,6 +2063,18 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     console.log('[HANDS-FREE] 🔄 isHandsFreeMode state changed to:', isHandsFreeMode);
   }, [isHandsFreeMode]);
 
+  // Handle input change with warmup trigger
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    setInput(newValue);
+    
+    // Trigger warmup when user starts typing (only once per session)
+    if (newValue.length > 0 && !hasTriggeredWarmup && !isWarming) {
+      setHasTriggeredWarmup(true);
+      warmupBeforeChat();
+    }
+  }, [hasTriggeredWarmup, isWarming, warmupBeforeChat]);
+
   return (
     <motion.div 
       className="w-full max-w-4xl mt-auto"
@@ -2291,7 +2314,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           ref={inputRef}
           type="text"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={handleInputChange}
           placeholder={isRecording ? "Speak or type your message..." : "Type your message..."}
           className="flex-1 h-12 px-4 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white shadow-md"
           disabled={isLoading || isDisabled}
@@ -2387,6 +2410,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           {isRecording && <span> | Speech Recording: Active</span>}
           {isPlaying && <span> | Audio: Playing</span>}
           {isHandsFreeMode && <span> | Hands-free: {isListeningForWakeWord ? 'Listening' : isWakeWordDetected ? 'Wake Word Detected' : 'On'}</span>}
+          {isWarming && <span> | 🔥 Warming APIs</span>}
+          {hasTriggeredWarmup && <span> | ✅ Warmup Triggered</span>}
           
           {/* Debug info for hands-free */}
           {isHandsFreeMode && (

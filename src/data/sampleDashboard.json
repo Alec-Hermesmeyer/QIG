@@ -1,0 +1,75 @@
+{
+  "title": "Executive Analytics Dashboard",
+  "description": "Real-time business intelligence and performance metrics",
+  "widgets": [
+    {
+      "id": "revenue",
+      "type": "metric",
+      "title": "Monthly Revenue",
+      "value": 1250000,
+      "change": "+12.5%",
+      "trend": "up"
+    },
+    {
+      "id": "users",
+      "type": "metric",
+      "title": "Active Users",
+      "value": 45670,
+      "change": "+8.2%",
+      "trend": "up"
+    },
+    {
+      "id": "conversion",
+      "type": "metric",
+      "title": "Conversion Rate",
+      "value": "3.4%",
+      "change": "-0.2%",
+      "trend": "down"
+    },
+    {
+      "id": "performance",
+      "type": "gauge",
+      "title": "System Performance",
+      "value": 94,
+      "max": 100,
+      "unit": "%"
+    },
+    {
+      "id": "sales_chart",
+      "type": "chart",
+      "title": "Sales Trend",
+      "chartType": "line",
+      "data": {
+        "labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+        "datasets": [
+          {
+            "label": "Sales",
+            "data": [120, 145, 160, 178, 195, 210],
+            "color": "#3b82f6"
+          }
+        ]
+      }
+    },
+    {
+      "id": "top_products",
+      "type": "list",
+      "title": "Top Products",
+      "items": [
+        {"name": "Premium Package", "sales": 1250, "revenue": "$125,000"},
+        {"name": "Standard Package", "sales": 890, "revenue": "$67,200"},
+        {"name": "Basic Package", "sales": 567, "revenue": "$28,350"}
+      ]
+    }
+  ],
+  "layout": {
+    "columns": 3,
+    "spacing": "medium",
+    "theme": "light",
+    "refresh_rate": 30
+  },
+  "filters": {
+    "date_range": "last_30_days",
+    "regions": ["north_america", "europe", "asia"],
+    "products": ["all"]
+  }
+} 
