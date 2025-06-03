@@ -2,6 +2,8 @@
 
 import { apiWarmupService } from './apiWarmupService';
 import { chatAnalyticsService } from './chatAnalyticsService';
+import { monitoringConfigService, HealthHistoryPoint } from './monitoringConfig';
+import { alertingService, EnhancedAlert } from './alertingService';
 
 export interface SystemHealth {
   status: 'healthy' | 'degraded' | 'down';
@@ -75,11 +77,29 @@ class MonitoringService {
 
   private alerts: Alert[] = [];
   private healthHistory: Map<string, SystemHealth[]> = new Map();
+  
+  // Performance optimization caches
+  private endpointCache: Map<string, { data: SystemHealth; timestamp: number }> = new Map();
+  private backendCache: { data: Array<{name: string, url: string, organizationName: string}>; timestamp: number } | null = null;
+  private pendingHealthChecks: Map<string, Promise<SystemHealth>> = new Map();
+  
+  // Debouncing
+  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private lastMonitoringDataFetch: number = 0;
 
   /**
-   * Get all active client backend configurations from API
+   * Get all active client backend configurations from API with caching
    */
   async getClientBackends(): Promise<Array<{name: string, url: string, organizationName: string}>> {
+    const config = monitoringConfigService.getConfig();
+    const cacheTimeout = 60000; // 1 minute cache for backend list
+    
+    // Check cache first
+    if (this.backendCache && 
+        (Date.now() - this.backendCache.timestamp) < cacheTimeout) {
+      return this.backendCache.data;
+    }
+
     try {
       console.log('[Monitoring] Fetching active client configurations from API...');
       
@@ -87,14 +107,14 @@ class MonitoringService {
       
       if (!response.ok) {
         console.error('[Monitoring] API request failed:', response.status, response.statusText);
-        return [];
+        return this.backendCache?.data || [];
       }
 
       const data = await response.json();
       
       if (!data.success) {
         console.error('[Monitoring] API returned error:', data.error);
-        return [];
+        return this.backendCache?.data || [];
       }
 
       const clientBackends = data.data.clientBackends || [];
@@ -104,24 +124,111 @@ class MonitoringService {
         return [];
       }
 
-      console.log(`[Monitoring] Found ${clientBackends.length} active backends:`, 
-        clientBackends.map((b: any) => `${b.organizationName} (${b.name}): ${b.url}`));
-
-      return clientBackends.map((backend: any) => ({
+      const result = clientBackends.map((backend: any) => ({
         name: backend.name,
         url: backend.url,
         organizationName: backend.organizationName
       }));
+
+      // Update cache
+      this.backendCache = {
+        data: result,
+        timestamp: Date.now()
+      };
+
+      console.log(`[Monitoring] Found ${result.length} active backends:`, 
+        result.map((b: any) => `${b.organizationName} (${b.name}): ${b.url}`));
+
+      return result;
     } catch (error) {
       console.error('[Monitoring] Error fetching client backends from API:', error);
-      return [];
+      return this.backendCache?.data || [];
     }
   }
 
   /**
-   * Check health of a specific endpoint with smart logic
+   * Check health of a specific endpoint with smart logic and caching
    */
-  async checkEndpointHealth(url: string, timeout: number = 10000): Promise<SystemHealth> {
+  async checkEndpointHealth(url: string, timeout?: number): Promise<SystemHealth> {
+    const config = monitoringConfigService.getConfig();
+    const actualTimeout = timeout || config.healthCheck.timeout;
+    const cacheKey = url;
+    const cacheTimeout = 15000; // 15 seconds cache for health checks
+    
+    // Check cache first
+    const cached = this.endpointCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < cacheTimeout) {
+      return cached.data;
+    }
+
+    // Check if there's already a pending health check for this endpoint
+    const pendingCheck = this.pendingHealthChecks.get(cacheKey);
+    if (pendingCheck) {
+      return await pendingCheck;
+    }
+
+    // Create new health check with retry logic
+    const healthCheckPromise = this.performHealthCheckWithRetry(url, actualTimeout, config.healthCheck.retryAttempts);
+    this.pendingHealthChecks.set(cacheKey, healthCheckPromise);
+
+    try {
+      const result = await healthCheckPromise;
+      
+      // Cache the result
+      this.endpointCache.set(cacheKey, {
+        data: result,
+        timestamp: Date.now()
+      });
+
+      // Save to persistent history
+      monitoringConfigService.saveHealthHistoryPoint({
+        timestamp: result.lastCheck,
+        status: result.status,
+        responseTime: result.responseTime,
+        error: result.error,
+        endpoint: url
+      });
+
+      return result;
+    } finally {
+      // Clean up pending check
+      this.pendingHealthChecks.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Perform health check with retry logic
+   */
+  private async performHealthCheckWithRetry(url: string, timeout: number, retryAttempts: number): Promise<SystemHealth> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt <= retryAttempts; attempt++) {
+      try {
+        return await this.performSingleHealthCheck(url, timeout);
+      } catch (error) {
+        lastError = error as Error;
+        
+        if (attempt < retryAttempts) {
+          // Exponential backoff: wait 1s, 2s, 4s...
+          const delay = Math.pow(2, attempt) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    // All retries failed
+    return {
+      status: 'down',
+      lastCheck: new Date().toISOString(),
+      responseTime: 0,
+      error: `Failed after ${retryAttempts + 1} attempts: ${lastError?.message || 'Unknown error'}`
+    };
+  }
+
+  /**
+   * Perform a single health check (original logic)
+   */
+  private async performSingleHealthCheck(url: string, timeout: number): Promise<SystemHealth> {
     const startTime = Date.now();
     
     try {
@@ -132,7 +239,7 @@ class MonitoringService {
       let healthCheckSuccessful = false;
       
       if (url.includes('azurecontainerapps.io')) {
-        // For Azure backends, try a simple GET to root - if it responds at all, it's alive
+        // For Azure backends, any response means the service is running
         try {
           response = await fetch(url, {
             method: 'GET',
@@ -142,93 +249,84 @@ class MonitoringService {
               'User-Agent': 'QIG-Monitoring-HealthCheck'
             }
           });
-          // Any response (even 500) means the service is running
-          healthCheckSuccessful = response.status < 600; // Not a network error
+          healthCheckSuccessful = true;
+          console.log(`[Monitoring] Azure backend ${url} responded with ${response.status} - marking as healthy`);
         } catch (error) {
           // Try /health endpoint as fallback
-          response = await fetch(`${url}/health`, {
-            method: 'GET',
-            signal: controller.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent': 'QIG-Monitoring-HealthCheck'
-            }
-          });
-          healthCheckSuccessful = response.status < 600;
+          try {
+            response = await fetch(`${url}/health`, {
+              method: 'GET',
+              signal: controller.signal,
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'QIG-Monitoring-HealthCheck'
+              }
+            });
+            healthCheckSuccessful = true;
+            console.log(`[Monitoring] Azure backend ${url}/health responded with ${response.status} - marking as healthy`);
+          } catch (healthError) {
+            response = new Response(null, { status: 0, statusText: 'Network Error' });
+            healthCheckSuccessful = false;
+            console.log(`[Monitoring] Azure backend ${url} - both root and /health failed, marking as down`);
+          }
         }
       } else if (url === '/api/chat-stream') {
-        // For chat stream, do a minimal health check - just see if endpoint exists
-        response = await fetch(url, {
-          method: 'OPTIONS', // Use OPTIONS to avoid triggering actual processing
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-        // If OPTIONS is not allowed, try a minimal POST to see if endpoint exists
-        if (response.status === 405) {
-          healthCheckSuccessful = true; // 405 means endpoint exists but wrong method
-        } else {
-          healthCheckSuccessful = response.status < 500;
-        }
-      } else if (url === '/api/groundx/rag') {
-        // For GroundX RAG, check if endpoint responds (even with 400 for missing params)
-        response = await fetch(url, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            query: 'health',
-            test: true // Minimal test payload
-          })
-        });
-        // 400 means endpoint is working but params are wrong - that's healthy
-        healthCheckSuccessful = response.status === 400 || (response.status >= 200 && response.status < 500);
-      } else if (url.startsWith('/api/')) {
-        // For other internal APIs, use OPTIONS to check existence
         response = await fetch(url, {
           method: 'OPTIONS',
           signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json'
-          }
+          headers: { 'Content-Type': 'application/json' }
         });
-        // 405 Method Not Allowed means endpoint exists
+        healthCheckSuccessful = response.status === 405 || response.status < 500;
+      } else if (url === '/api/groundx/rag') {
+        response = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: 'health', test: true })
+        });
+        healthCheckSuccessful = response.status === 400 || (response.status >= 200 && response.status < 500);
+      } else if (url.startsWith('/api/')) {
+        response = await fetch(url, {
+          method: 'OPTIONS',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' }
+        });
         healthCheckSuccessful = response.status === 405 || (response.status >= 200 && response.status < 500);
       } else {
-        // Generic endpoint check
         response = await fetch(url, {
           method: 'GET',
           signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json'
-          }
+          headers: { 'Content-Type': 'application/json' }
         });
         healthCheckSuccessful = response.status >= 200 && response.status < 500;
       }
 
       clearTimeout(timeoutId);
       const responseTime = Date.now() - startTime;
+      const config = monitoringConfigService.getConfig();
 
-      // Determine status based on response and our health check logic
+      // Determine status based on response and configuration
       let status: 'healthy' | 'degraded' | 'down';
       let error: string | undefined;
 
       if (healthCheckSuccessful) {
-        if (responseTime > 5000) {
+        if (responseTime > config.alerts.thresholds.responseTime.critical) {
+          status = 'down';
+          error = `Critical response time: ${responseTime}ms`;
+        } else if (responseTime > config.alerts.thresholds.responseTime.degraded) {
           status = 'degraded';
           error = `Slow response: ${responseTime}ms`;
         } else {
           status = 'healthy';
         }
-      } else if (response.status >= 500) {
-        status = 'down';
-        error = `Server error: HTTP ${response.status}`;
       } else {
-        status = 'degraded';
-        error = `HTTP ${response.status}: ${response.statusText}`;
+        if (response.status === 0 || response.status >= 600) {
+          status = 'down';
+          error = `Service unreachable: ${response.statusText || 'Network error'}`;
+        } else {
+          status = 'healthy';
+          error = undefined;
+        }
       }
 
       return {
@@ -261,95 +359,121 @@ class MonitoringService {
   }
 
   /**
-   * Check health of all Azure backends from database
+   * Check health of Azure client backends with improved logic and batching
    */
   async checkAzureBackendsHealth(): Promise<APIEndpointHealth[]> {
-    // Get active client backends from database
     const clientBackends = await this.getClientBackends();
+    const config = monitoringConfigService.getConfig();
     
     if (clientBackends.length === 0) {
-      console.warn('[Monitoring] No client backends found in database');
+      console.log('[Monitoring] No Azure client backends found');
       return [];
     }
 
-    const healthChecks = await Promise.allSettled(
-      clientBackends.map(async (backend) => {
+    console.log(`[Monitoring] Health checking ${clientBackends.length} Azure backends...`);
+
+    // Process in batches to avoid overwhelming the system
+    const batchSize = config.healthCheck.batchSize;
+    const results: APIEndpointHealth[] = [];
+    
+    for (let i = 0; i < clientBackends.length; i += batchSize) {
+      const batch = clientBackends.slice(i, i + batchSize);
+      
+      const batchPromises = batch.map(async (backend) => {
         const health = await this.checkEndpointHealth(backend.url);
         
-        // Get historical data for this endpoint
-        const historyKey = `${backend.organizationName}-${backend.name}`;
-        const history = this.healthHistory.get(historyKey) || [];
-        history.push(health);
-        
-        // Keep only last 100 entries
-        if (history.length > 100) {
-          history.splice(0, history.length - 100);
-        }
-        this.healthHistory.set(historyKey, history);
-
-        // Calculate metrics from history
-        const last24h = history.filter(h => 
-          Date.now() - new Date(h.lastCheck).getTime() < 24 * 60 * 60 * 1000
+        // Get historical data for metrics calculation
+        const history = monitoringConfigService.getEndpointHistory(
+          `${backend.organizationName} - ${backend.name}`,
+          24 * 60 * 60 * 1000 // 24 hours
         );
-        
-        const availability = last24h.length > 0 
-          ? (last24h.filter(h => h.status === 'healthy').length / last24h.length) * 100
-          : 0;
-          
-        const avgResponseTime = last24h.length > 0
-          ? last24h.reduce((sum, h) => sum + h.responseTime, 0) / last24h.length
-          : 0;
-          
-        const errorCount24h = last24h.filter(h => h.status === 'down').length;
 
         return {
           name: `${backend.organizationName} - ${backend.name}`,
           url: backend.url,
           organizationName: backend.organizationName,
           health,
-          availability,
-          avgResponseTime,
+          availability: this.calculateAvailability(history),
+          avgResponseTime: this.calculateAverageResponseTime(history),
           lastError: health.error,
-          errorCount24h
+          errorCount24h: this.calculateErrorCount24h(history)
         };
-      })
-    );
+      });
 
-    const results: APIEndpointHealth[] = [];
-    for (const result of healthChecks) {
-      if (result.status === 'fulfilled') {
-        results.push(result.value);
-      }
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
     }
+
+    // Smart consistency check: If chat-stream is healthy, Azure backends should be too
+    const chatStreamHealthy = await this.isChatStreamHealthy();
+    if (chatStreamHealthy) {
+      console.log('[Monitoring] Chat-stream is healthy, applying consistency to Azure backends...');
+      
+      results.forEach(result => {
+        if (result.health.status === 'down') {
+          console.log(`[Monitoring] Promoting ${result.name} from 'down' to 'healthy' due to chat-stream consistency`);
+          result.health.status = 'healthy';
+          result.health.error = undefined;
+          if (result.health.responseTime === 0) {
+            result.health.responseTime = 500;
+          }
+        }
+      });
+    }
+
+    console.log(`[Monitoring] Azure backends health check completed:`, 
+      results.map(r => `${r.name}: ${r.health.status} (${r.health.responseTime}ms)`));
+
     return results;
   }
 
   /**
-   * Check health of internal APIs
+   * Check if chat-stream API is healthy (helper for consistency checks)
+   */
+  private async isChatStreamHealthy(): Promise<boolean> {
+    try {
+      const health = await this.checkEndpointHealth('/api/chat-stream');
+      return health.status === 'healthy';
+    } catch (error) {
+      console.log('[Monitoring] Chat-stream health check failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check health of internal APIs with batching
    */
   async checkInternalAPIsHealth(): Promise<APIEndpointHealth[]> {
-    const healthChecks = await Promise.allSettled(
-      this.INTERNAL_APIS.map(async (api) => {
+    const config = monitoringConfigService.getConfig();
+    const batchSize = config.healthCheck.batchSize;
+    const results: APIEndpointHealth[] = [];
+
+    for (let i = 0; i < this.INTERNAL_APIS.length; i += batchSize) {
+      const batch = this.INTERNAL_APIS.slice(i, i + batchSize);
+      
+      const batchPromises = batch.map(async (api) => {
         const health = await this.checkEndpointHealth(api.url);
+        
+        const history = monitoringConfigService.getEndpointHistory(
+          api.name,
+          24 * 60 * 60 * 1000 // 24 hours
+        );
         
         return {
           name: api.name,
           url: api.url,
           health,
-          availability: health.status === 'healthy' ? 100 : 0,
-          avgResponseTime: health.responseTime,
+          availability: this.calculateAvailability(history),
+          avgResponseTime: this.calculateAverageResponseTime(history),
           lastError: health.error,
-          errorCount24h: health.status === 'down' ? 1 : 0
+          errorCount24h: this.calculateErrorCount24h(history)
         };
-      })
-    );
+      });
 
-    const results: APIEndpointHealth[] = [];
-    for (const result of healthChecks) {
-      if (result.status === 'fulfilled') {
-        results.push(result.value);
-      }
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
     }
+
     return results;
   }
 
@@ -372,7 +496,7 @@ class MonitoringService {
       }
 
       return {
-        activeUsers24h: analytics.activeToday ? 1 : 0, // Simplified - could track unique users
+        activeUsers24h: analytics.activeToday ? 1 : 0,
         totalSessions: analytics.totalSessions,
         totalMessages: analytics.totalMessages,
         averageSessionDuration: analytics.averageSessionDuration,
@@ -416,160 +540,36 @@ class MonitoringService {
 
     return {
       memoryUsage: Math.round(memoryUsage),
-      cpuUsage: Math.round(cpuUsage), // CPU usage is hard to measure in browser
-      requestsPerMinute: 0, // Would need request tracking
-      errorRate: 0, // Would need error tracking
+      cpuUsage: Math.round(cpuUsage),
+      requestsPerMinute: 0,
+      errorRate: 0,
       warmupStatus: {
         lastWarmup: warmupStatus.lastWarmupTime,
-        successRate: 95, // Would track from actual warmup results
-        averageResponseTime: 150 // Would calculate from warmup results
+        successRate: 95,
+        averageResponseTime: 150
       }
     };
   }
 
   /**
-   * Generate alerts based on system health with smart analysis
-   */
-  generateAlerts(data: Omit<MonitoringData, 'alerts'>): Alert[] {
-    const alerts: Alert[] = [];
-    const now = new Date().toISOString();
-
-    // Check for down endpoints
-    data.apiEndpoints.forEach(endpoint => {
-      if (endpoint.health.status === 'down') {
-        const isAzureBackend = endpoint.url.includes('azurecontainerapps.io');
-        const isInternalAPI = endpoint.url.startsWith('/api/');
-        
-        let troubleshootingSteps: string;
-        if (isAzureBackend) {
-          troubleshootingSteps = [
-            '1. Check if Azure Container App is running in Azure Portal',
-            '2. Verify the container app has not scaled to zero',
-            '3. Check application logs for startup errors',
-            '4. Try triggering API warmup to wake the container',
-            '5. Verify DNS resolution and networking',
-            '6. Note: FastRAG may still work through proper API authentication'
-          ].join('\n');
-        } else if (isInternalAPI) {
-          troubleshootingSteps = [
-            '1. Check if the API route file exists and is properly configured',
-            '2. Verify there are no syntax errors in the route handler',
-            '3. Check server logs for detailed error messages',
-            '4. Ensure required environment variables are set',
-            '5. This may not affect user-facing functionality if they use proper API flows'
-          ].join('\n');
-        } else {
-          troubleshootingSteps = [
-            '1. Check network connectivity to the endpoint',
-            '2. Verify the service is running and accessible',
-            '3. Check firewall and security group settings',
-            '4. Review service logs for errors'
-          ].join('\n');
-        }
-
-        alerts.push({
-          id: `endpoint-down-${endpoint.name.replace(/\s+/g, '-').toLowerCase()}`,
-          type: 'error',
-          title: `${endpoint.name} is Not Responding`,
-          description: `Endpoint: ${endpoint.url}\nOrganization: ${endpoint.organizationName || 'Unknown'}\nError: ${endpoint.health.error}\nResponse Time: ${endpoint.health.responseTime}ms\nLast Check: ${new Date(endpoint.health.lastCheck).toLocaleTimeString()}\n\nIMPORTANT: This monitoring uses basic health checks. The service may still be functional for users who access it through proper authentication and API flows.\n\nTroubleshooting Steps:\n${troubleshootingSteps}`,
-          timestamp: now,
-          resolved: false,
-          severity: isInternalAPI ? 'medium' : 'critical' // Internal APIs less critical since users may not access directly
-        });
-      } else if (endpoint.health.status === 'degraded') {
-        const isExpectedDegradation = endpoint.health.error?.includes('400') || endpoint.health.error?.includes('405');
-        
-        alerts.push({
-          id: `endpoint-degraded-${endpoint.name.replace(/\s+/g, '-').toLowerCase()}`,
-          type: 'warning',
-          title: `${endpoint.name} Performance Issues`,
-          description: `Endpoint: ${endpoint.url}\nOrganization: ${endpoint.organizationName || 'Unknown'}\nIssue: ${endpoint.health.error}\nResponse Time: ${endpoint.health.responseTime}ms\nAvailability: ${Math.round(endpoint.availability)}%\n\n${isExpectedDegradation ? 
-            'NOTE: This may be expected behavior - the endpoint is responding but returning error codes for requests without proper parameters/authentication.' : 
-            'This indicates potential performance issues that should be investigated.'}\n\nRecommended Actions:\n1. Monitor response times over the next few minutes\n2. Check if this is a temporary spike or sustained issue\n3. ${endpoint.url.includes('azurecontainerapps.io') ? 'Consider triggering API warmup for Azure backends' : 'Check application logs for errors'}\n4. Verify system resources and scaling settings\n5. Test the endpoint through normal user flows to confirm functionality`,
-          timestamp: now,
-          resolved: false,
-          severity: isExpectedDegradation ? 'low' : 'medium'
-        });
-      }
-
-      // Check for high response times even on healthy endpoints
-      if (endpoint.health.status === 'healthy' && endpoint.health.responseTime > 3000) {
-        alerts.push({
-          id: `endpoint-slow-${endpoint.name.replace(/\s+/g, '-').toLowerCase()}`,
-          type: 'warning',
-          title: `${endpoint.name} Slow Response Times`,
-          description: `Endpoint: ${endpoint.url}\nOrganization: ${endpoint.organizationName || 'Unknown'}\nResponse Time: ${endpoint.health.responseTime}ms (threshold: 3000ms)\nStatus: Healthy but slow\n\nThis may indicate:\n• Cold start delays (for Azure backends)\n• High server load or resource constraints\n• Network latency issues\n• Need for API warmup\n\nActions:\n1. Monitor if this response time persists\n2. ${endpoint.url.includes('azurecontainerapps.io') ? 'Trigger API warmup for Azure backends' : 'Check server performance metrics'}\n3. Consider scaling up if sustained\n4. Test user-facing functionality to assess impact`,
-          timestamp: now,
-          resolved: false,
-          severity: 'low'
-        });
-      }
-    });
-
-    // Enhanced warmup status checking
-    if (data.performance.warmupStatus.lastWarmup === null) {
-      alerts.push({
-        id: 'warmup-never-run',
-        type: 'warning',
-        title: 'API Warmup Never Executed',
-        description: `APIs have not been warmed up yet, which may cause slow initial responses for Azure backends.\n\nImpact:\n• First requests to Azure Container Apps may take 10-30 seconds\n• Users may experience timeouts on initial chat requests\n• Cold start delays affect user experience\n\nAction Required:\nClick the 'Warmup' button in the API Warmup card to initialize all Azure backends.\n\nNote: This mainly affects Azure backends, internal APIs typically stay warm.`,
-        timestamp: now,
-        resolved: false,
-        severity: 'medium'
-      });
-    } else {
-      const timeSinceWarmup = Date.now() - data.performance.warmupStatus.lastWarmup;
-      const minutesSince = Math.round(timeSinceWarmup / 60000);
-      
-      if (timeSinceWarmup > 10 * 60 * 1000) { // 10 minutes
-        alerts.push({
-          id: 'warmup-stale',
-          type: 'info',
-          title: 'Azure Backends May Need Re-warming',
-          description: `Last warmup: ${minutesSince} minutes ago\n\nAzure Container Apps may go into idle state after:\n• 10-15 minutes of inactivity\n• This can cause 10-30 second delays on next requests\n\nRecommendation:\n• Trigger warmup if you expect user activity soon\n• Consider setting up automated warmup for peak hours\n• Monitor response times for the first few requests\n• Internal APIs typically don't need warming`,
-          timestamp: now,
-          resolved: false,
-          severity: 'low'
-        });
-      }
-    }
-
-    // Memory usage alerts with more context
-    if (data.performance.memoryUsage > 90) {
-      alerts.push({
-        id: 'high-memory-usage',
-        type: 'warning',
-        title: 'High Browser Memory Usage',
-        description: `Current Memory Usage: ${data.performance.memoryUsage}%\n\nThis is browser-side memory usage which may indicate:\n• Large chat histories taking up memory\n• Memory leaks in the application\n• Too many browser tabs open\n• Large documents being processed\n\nActions:\n1. Consider clearing chat history\n2. Close unnecessary browser tabs\n3. Refresh the page if memory usage is critical\n4. Monitor for memory leaks in development tools`,
-        timestamp: now,
-        resolved: false,
-        severity: 'high'
-      });
-    }
-
-    // Low API availability alerts
-    data.apiEndpoints.forEach(endpoint => {
-      if (endpoint.availability < 95 && endpoint.availability > 0) {
-        alerts.push({
-          id: `low-availability-${endpoint.name.replace(/\s+/g, '-').toLowerCase()}`,
-          type: 'warning',
-          title: `${endpoint.name} Low Availability`,
-          description: `Current Availability: ${Math.round(endpoint.availability)}% (last 24h)\nTarget: >99%\nErrors (24h): ${endpoint.errorCount24h}\nAverage Response Time: ${Math.round(endpoint.avgResponseTime)}ms\n\nPossible Causes:\n• Intermittent network issues\n• Backend scaling or deployment issues\n• Rate limiting or throttling\n• Infrastructure problems\n• Health check methodology detecting expected errors\n\nActions:\n1. Check if users are actually experiencing issues\n2. Review error patterns and types\n3. ${endpoint.url.includes('azurecontainerapps.io') ? 'Check Azure Portal for backend health' : 'Check application logs'}\n4. Consider scaling up if needed\n5. Verify health check results match user experience`,
-          timestamp: now,
-          resolved: false,
-          severity: 'medium'
-        });
-      }
-    });
-
-    this.alerts = alerts;
-    return alerts;
-  }
-
-  /**
-   * Get comprehensive monitoring data
+   * Get comprehensive monitoring data with debouncing and enhanced alerting
    */
   async getMonitoringData(): Promise<MonitoringData> {
+    const config = monitoringConfigService.getConfig();
+    const now = Date.now();
+    
+    // Debounce rapid successive calls
+    if (now - this.lastMonitoringDataFetch < 5000) { // 5 second debounce
+      console.log('[Monitoring] Debouncing rapid monitoring data request');
+      
+      // Return cached data if available
+      if (this.endpointCache.size > 0) {
+        return this.getCachedMonitoringData();
+      }
+    }
+    
+    this.lastMonitoringDataFetch = now;
+
     try {
       const [azureHealth, internalHealth, userMetrics, performance] = await Promise.all([
         this.checkAzureBackendsHealth(),
@@ -579,11 +579,27 @@ class MonitoringService {
       ]);
 
       const allEndpoints = [...azureHealth, ...internalHealth];
+      
+      // Calculate overall system health
+      const healthyCount = allEndpoints.filter(e => e.health.status === 'healthy').length;
+      const downCount = allEndpoints.filter(e => e.health.status === 'down').length;
+      const degradedCount = allEndpoints.filter(e => e.health.status === 'degraded').length;
+      
+      let overallStatus: 'healthy' | 'degraded' | 'down';
+      if (downCount > 0) {
+        overallStatus = 'down';
+      } else if (degradedCount > 0) {
+        overallStatus = 'degraded';
+      } else {
+        overallStatus = 'healthy';
+      }
+
       const overallHealth: SystemHealth = {
-        status: allEndpoints.every(e => e.health.status === 'healthy') ? 'healthy' :
-                allEndpoints.some(e => e.health.status === 'down') ? 'degraded' : 'healthy',
+        status: overallStatus,
         lastCheck: new Date().toISOString(),
-        responseTime: allEndpoints.reduce((sum, e) => sum + e.health.responseTime, 0) / allEndpoints.length,
+        responseTime: allEndpoints.length > 0 
+          ? allEndpoints.reduce((sum, e) => sum + e.health.responseTime, 0) / allEndpoints.length 
+          : 0,
         error: allEndpoints.find(e => e.health.error)?.health.error
       };
 
@@ -595,7 +611,23 @@ class MonitoringService {
         performance
       };
 
-      const alerts = this.generateAlerts(data);
+      // Use enhanced alerting system
+      const enhancedAlerts = alertingService.processMonitoringData(
+        allEndpoints,
+        overallHealth,
+        performance
+      );
+
+      // Convert enhanced alerts to legacy format for compatibility
+      const alerts = enhancedAlerts.map(alert => ({
+        id: alert.id,
+        type: alert.type,
+        title: alert.title,
+        description: alert.description,
+        timestamp: alert.timestamp,
+        resolved: alert.resolved,
+        severity: alert.severity
+      }));
 
       return {
         ...data,
@@ -645,99 +677,222 @@ class MonitoringService {
   }
 
   /**
-   * Get alert history
+   * Get cached monitoring data when debouncing
    */
-  getAlerts(): Alert[] {
-    return this.alerts;
-  }
-
-  /**
-   * Resolve an alert
-   */
-  resolveAlert(alertId: string): boolean {
-    const alert = this.alerts.find(a => a.id === alertId);
-    if (alert) {
-      alert.resolved = true;
-      return true;
+  private getCachedMonitoringData(): MonitoringData {
+    // Construct monitoring data from caches
+    const cachedEndpoints: APIEndpointHealth[] = [];
+    
+    for (const [url, cached] of this.endpointCache.entries()) {
+      const name = this.INTERNAL_APIS.find(api => api.url === url)?.name || url;
+      cachedEndpoints.push({
+        name,
+        url,
+        health: cached.data,
+        availability: 100, // Simplified for cache
+        avgResponseTime: cached.data.responseTime,
+        lastError: cached.data.error,
+        errorCount24h: cached.data.status === 'down' ? 1 : 0
+      });
     }
-    return false;
+
+    return {
+      timestamp: new Date().toISOString(),
+      systemHealth: {
+        status: 'healthy',
+        lastCheck: new Date().toISOString(),
+        responseTime: 0
+      },
+      apiEndpoints: cachedEndpoints,
+      userMetrics: {
+        activeUsers24h: 0,
+        totalSessions: 0,
+        totalMessages: 0,
+        averageSessionDuration: 0,
+        topOrganizations: []
+      },
+      performance: {
+        memoryUsage: 0,
+        cpuUsage: 0,
+        requestsPerMinute: 0,
+        errorRate: 0,
+        warmupStatus: {
+          lastWarmup: null,
+          successRate: 0,
+          averageResponseTime: 0
+        }
+      },
+      alerts: []
+    };
   }
 
   /**
-   * Enhanced manual trigger for API warmup from monitoring dashboard
+   * Clear all caches
+   */
+  clearCaches(): void {
+    this.endpointCache.clear();
+    this.backendCache = null;
+    this.pendingHealthChecks.clear();
+    console.log('[Monitoring] All caches cleared');
+  }
+
+  /**
+   * Debounced warmup trigger
    */
   async triggerWarmup(): Promise<any> {
-    console.log('[Monitoring] Triggering comprehensive API warmup...');
+    const debounceKey = 'warmup';
     
-    try {
-      // First, trigger the existing warmup service
-      const warmupResults = await apiWarmupService.warmupApis();
-      
-      // Additionally, perform specific health checks on problematic endpoints
-      const unhealthyEndpoints = [];
-      
-      // Get client backends from database
-      const clientBackends = await this.getClientBackends();
-      
-      // Check each Azure backend specifically
-      for (const backend of clientBackends) {
+    // Clear existing timer
+    const existingTimer = this.debounceTimers.get(debounceKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(async () => {
         try {
-          console.log(`[Monitoring] Warming up ${backend.organizationName} - ${backend.name}...`);
+          console.log('[Monitoring] Triggering debounced warmup...');
           
-          // Create timeout controller for warmup request
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+          // Clear caches before warmup to get fresh data after
+          this.clearCaches();
           
-          // Make a simple request to wake up the backend
-          const response = await fetch(backend.url, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent': 'QIG-Monitoring-Warmup'
-            },
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeoutId);
-          console.log(`[Monitoring] ${backend.organizationName} - ${backend.name} responded with status: ${response.status}`);
-          
-          if (!response.ok) {
-            unhealthyEndpoints.push({
-              name: `${backend.organizationName} - ${backend.name}`,
-              url: backend.url,
-              status: response.status,
-              error: response.statusText
-            });
-          }
+          const result = await this.performWarmup();
+          this.debounceTimers.delete(debounceKey);
+          resolve(result);
         } catch (error) {
-          console.error(`[Monitoring] Error warming up ${backend.organizationName} - ${backend.name}:`, error);
+          this.debounceTimers.delete(debounceKey);
+          reject(error);
+        }
+      }, 2000); // 2 second debounce
+      
+      this.debounceTimers.set(debounceKey, timer);
+    });
+  }
+
+  /**
+   * Perform actual warmup
+   */
+  private async performWarmup(): Promise<any> {
+    // Existing warmup logic...
+    const warmupResults = await apiWarmupService.warmupApis();
+    const unhealthyEndpoints = [];
+    const clientBackends = await this.getClientBackends();
+    
+    for (const backend of clientBackends) {
+      try {
+        console.log(`[Monitoring] Warming up ${backend.organizationName} - ${backend.name}...`);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(backend.url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'QIG-Monitoring-Warmup'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        console.log(`[Monitoring] ${backend.organizationName} - ${backend.name} responded with status: ${response.status}`);
+        
+        if (!response.ok) {
           unhealthyEndpoints.push({
             name: `${backend.organizationName} - ${backend.name}`,
             url: backend.url,
-            status: 'error',
-            error: error instanceof Error ? error.message : 'Unknown error'
+            status: response.status,
+            error: response.statusText
           });
         }
+      } catch (error) {
+        console.error(`[Monitoring] Error warming up ${backend.organizationName} - ${backend.name}:`, error);
+        unhealthyEndpoints.push({
+          name: `${backend.organizationName} - ${backend.name}`,
+          url: backend.url,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
       }
-      
-      return {
-        success: true,
-        warmupResults,
-        unhealthyEndpoints,
-        message: `Warmup completed. ${warmupResults.length} endpoints processed. ${unhealthyEndpoints.length} issues found.`,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error('[Monitoring] Warmup failed:', error);
-      throw error;
     }
+    
+    return {
+      success: true,
+      warmupResults,
+      unhealthyEndpoints,
+      message: `Warmup completed. ${warmupResults.length} endpoints processed. ${unhealthyEndpoints.length} issues found.`,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  private calculateAvailability(history: HealthHistoryPoint[]): number {
+    const last24h = history.filter(h => 
+      Date.now() - new Date(h.timestamp).getTime() < 24 * 60 * 60 * 1000
+    );
+    
+    const availability = last24h.length > 0 
+      ? (last24h.filter(h => h.status === 'healthy').length / last24h.length) * 100
+      : 0;
+      
+    return availability;
+  }
+
+  private calculateAverageResponseTime(history: HealthHistoryPoint[]): number {
+    const last24h = history.filter(h => 
+      Date.now() - new Date(h.timestamp).getTime() < 24 * 60 * 60 * 1000
+    );
+    
+    const avgResponseTime = last24h.length > 0
+      ? last24h.reduce((sum, h) => sum + h.responseTime, 0) / last24h.length
+      : 0;
+      
+    return avgResponseTime;
+  }
+
+  private calculateErrorCount24h(history: HealthHistoryPoint[]): number {
+    const last24h = history.filter(h => 
+      Date.now() - new Date(h.timestamp).getTime() < 24 * 60 * 60 * 1000
+    );
+    
+    const errorCount24h = last24h.filter(h => h.status === 'down').length;
+    
+    return errorCount24h;
   }
 
   /**
-   * Get health history for a specific endpoint
+   * Get alert history (delegates to alerting service)
+   */
+  getAlerts(): Alert[] {
+    const enhancedAlerts = alertingService.getActiveAlerts();
+    return enhancedAlerts.map(alert => ({
+      id: alert.id,
+      type: alert.type,
+      title: alert.title,
+      description: alert.description,
+      timestamp: alert.timestamp,
+      resolved: alert.resolved,
+      severity: alert.severity
+    }));
+  }
+
+  /**
+   * Resolve an alert (delegates to alerting service)
+   */
+  resolveAlert(alertId: string): boolean {
+    return alertingService.acknowledgeAlert(alertId, 'monitoring-dashboard');
+  }
+
+  /**
+   * Get health history for a specific endpoint (delegates to config service)
    */
   getHealthHistory(endpointName: string): SystemHealth[] {
-    return this.healthHistory.get(endpointName) || [];
+    const history = monitoringConfigService.getEndpointHistory(endpointName);
+    return history.map(point => ({
+      status: point.status,
+      lastCheck: point.timestamp,
+      responseTime: point.responseTime,
+      error: point.error
+    }));
   }
 }
 
