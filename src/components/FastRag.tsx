@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText, Shield, Eye, EyeOff } from "lucide-react";
 
@@ -70,6 +71,71 @@ export const getDocumentType = (fileName?: string) => {
     case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'svg': return 'image';
     default: return 'document';
   }
+};
+
+// Utility function to detect if content is HTML
+const isHtmlContent = (content: string): boolean => {
+  if (!content || typeof content !== 'string') return false;
+  
+  // Check for common HTML tags
+  const htmlTagPattern = /<\/?[a-z][\s\S]*>/i;
+  const hasHtmlTags = htmlTagPattern.test(content);
+  
+  // Additional check for common HTML entities
+  const hasHtmlEntities = /&[a-z]+;/i.test(content);
+  
+  return hasHtmlTags || hasHtmlEntities;
+};
+
+// Utility function to convert HTML to Markdown (basic conversion)
+const htmlToMarkdown = (html: string): string => {
+  return html
+    // Convert headings
+    .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n')
+    .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n')
+    .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n')
+    .replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1\n')
+    .replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1\n')
+    .replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1\n')
+    
+    // Convert paragraphs
+    .replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n')
+    
+    // Convert bold and italic
+    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**')
+    .replace(/<b[^>]*>(.*?)<\/b>/gi, '**$1**')
+    .replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*')
+    .replace(/<i[^>]*>(.*?)<\/i>/gi, '*$1*')
+    
+    // Convert lists
+    .replace(/<ol[^>]*>/gi, '\n')
+    .replace(/<\/ol>/gi, '\n')
+    .replace(/<ul[^>]*>/gi, '\n')
+    .replace(/<\/ul>/gi, '\n')
+    .replace(/<li[^>]*>(.*?)<\/li>/gi, (match, content, offset, string) => {
+      // Check if we're in an ordered list by looking backward
+      const beforeMatch = string.substring(0, offset);
+      const lastOlTag = beforeMatch.lastIndexOf('<ol');
+      const lastUlTag = beforeMatch.lastIndexOf('<ul');
+      const lastOlClose = beforeMatch.lastIndexOf('</ol>');
+      const lastUlClose = beforeMatch.lastIndexOf('</ul>');
+      
+      // Determine if we're in an ordered or unordered list
+      const inOrderedList = lastOlTag > lastOlClose && lastOlTag > lastUlTag;
+      const prefix = inOrderedList ? '1. ' : '- ';
+      
+      return `${prefix}${content}\n`;
+    })
+    
+    // Convert line breaks
+    .replace(/<br[^>]*>/gi, '\n')
+    
+    // Remove remaining HTML tags
+    .replace(/<[^>]*>/g, '')
+    
+    // Clean up extra whitespace
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .trim();
 };
 
 export default function FastRAG({
@@ -508,8 +574,22 @@ export default function FastRAG({
   const processedContent = useMemo(() => {
     if (!extractedContent || typeof extractedContent !== 'string') return extractedContent;
     
+    // Check if content is HTML
+    const isHtml = isHtmlContent(extractedContent);
+    
+    let processedText = extractedContent;
+    
+    // If it's HTML, we have two options:
+    // 1. Convert to Markdown for ReactMarkdown to handle
+    // 2. Keep as HTML and use rehypeRaw plugin
+    // We'll use option 1 for better consistency
+    if (isHtml) {
+      console.log('Detected HTML content, converting to Markdown');
+      processedText = htmlToMarkdown(extractedContent);
+    }
+    
     // Replace citation patterns like [filename.ext#page=123] with clickable spans
-    return extractedContent.replace(/\[(.*?(?:\.(pdf|docx?|txt))?(?:#page=(\d+))?)\]/g, (match, citation, ext, page) => {
+    return processedText.replace(/\[(.*?(?:\.(pdf|docx?|txt))?(?:#page=(\d+))?)\]/g, (match, citation, ext, page) => {
       const fileName = citation.split('#')[0];
       return `<span class="azure-citation" data-filename="${fileName}" ${page ? `data-page="${page}"` : ''}>${match}</span>`;
     });
@@ -934,6 +1014,7 @@ export default function FastRAG({
                 >
                   <ReactMarkdown 
                     remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
                   >
                     {parsedAnswerHtml || (typeof processedContent === 'string' ? processedContent : '')}
                   </ReactMarkdown>
