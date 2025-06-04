@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { apiWarmupService } from '../services/apiWarmupService';
 
 interface WarmupStatus {
@@ -51,23 +51,30 @@ export function useApiWarmup(options: UseApiWarmupOptions = {}) {
     shouldWarmup: true
   });
 
+  // Use refs to avoid dependency cycles
+  const isWarmingRef = useRef(false);
+  const hasAutoWarmedRef = useRef(false);
+
   // Update status from service
   const updateStatus = useCallback(() => {
     const serviceStatus = apiWarmupService.getWarmupStatus();
-    setStatus({
+    const newStatus = {
       isWarming: serviceStatus.inProgress,
       lastWarmupTime: serviceStatus.lastWarmupTime,
       shouldWarmup: serviceStatus.shouldWarmup
-    });
+    };
+    setStatus(newStatus);
+    isWarmingRef.current = serviceStatus.inProgress;
   }, []);
 
   // Warm up APIs manually
   const warmupApis = useCallback(async () => {
-    if (status.isWarming) {
+    if (isWarmingRef.current) {
       if (debug) console.log('Warmup already in progress');
       return [];
     }
 
+    isWarmingRef.current = true;
     setStatus(prev => ({ ...prev, isWarming: true }));
     
     try {
@@ -86,18 +93,19 @@ export function useApiWarmup(options: UseApiWarmupOptions = {}) {
       updateStatus();
       throw error;
     }
-  }, [status.isWarming, debug, updateStatus]);
+  }, [debug, updateStatus]);
 
-  // Warm up APIs in background (fire and forget)
+  // Warm up APIs in background (fire and forget) - fixed to break dependency cycle
   const warmupApisBackground = useCallback(() => {
-    if (status.isWarming) return;
+    if (isWarmingRef.current) return;
     
+    isWarmingRef.current = true;
     setStatus(prev => ({ ...prev, isWarming: true }));
     apiWarmupService.warmupApisBackground();
     
     // Update status after a short delay
     setTimeout(updateStatus, 1000);
-  }, [status.isWarming, updateStatus]);
+  }, [updateStatus]); // Removed status.isWarming dependency
 
   // Warm up APIs before chat usage
   const warmupBeforeChat = useCallback(async () => {
@@ -109,19 +117,27 @@ export function useApiWarmup(options: UseApiWarmupOptions = {}) {
       }
       await warmupApis();
     } else if (debug) {
-      console.log('APIs already warmed up recently, skipping...');
+      // Only log this once per session to reduce spam
+      const lastLogTime = sessionStorage.getItem('warmup_skip_logged');
+      const now = Date.now().toString();
+      if (!lastLogTime || (Date.now() - parseInt(lastLogTime)) > 60000) { // Only log once per minute
+        console.log('APIs warmed up recently, skipping...');
+        sessionStorage.setItem('warmup_skip_logged', now);
+      }
     }
   }, [warmupOnChatNavigation, status.shouldWarmup, status.lastWarmupTime, warmupApis, debug]);
 
-  // Auto warmup on mount
+  // Auto warmup on mount - only once per component lifecycle
   useEffect(() => {
-    if (autoWarmup) {
+    if (autoWarmup && !hasAutoWarmedRef.current) {
+      hasAutoWarmedRef.current = true;
+      // Only log in debug mode to reduce console spam
       if (debug) {
         console.log('Auto-warming APIs on mount...');
       }
       warmupApisBackground();
     }
-  }, [autoWarmup, warmupApisBackground, debug]);
+  }, [autoWarmup, debug]); // Removed warmupApisBackground dependency
 
   // Periodic status updates
   useEffect(() => {

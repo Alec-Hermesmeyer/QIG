@@ -79,18 +79,19 @@ class ApiWarmupService {
     });
 
     // GraphRAG API - ping endpoint
-    endpoints.push({
-      name: 'GraphRAG Query API',
-      url: '/graph/api/v1/property_graph/query/',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        query: 'warmup'
-      }),
-      timeout: this.REQUEST_TIMEOUT
-    });
+    // NOTE: Disabled because endpoint doesn't exist yet
+    // endpoints.push({
+    //   name: 'GraphRAG Query API',
+    //   url: '/graph/api/v1/property_graph/query/',
+    //   method: 'POST',
+    //   headers: {
+    //     'Content-Type': 'application/json'
+    //   },
+    //   body: JSON.stringify({
+    //     query: 'warmup'
+    //   }),
+    //   timeout: this.REQUEST_TIMEOUT
+    // });
 
     return endpoints;
   }
@@ -139,14 +140,23 @@ class ApiWarmupService {
    */
   async warmupApis(): Promise<WarmupResult[]> {
     if (this.warmupInProgress) {
-      console.log('API warmup already in progress, skipping...');
+      // Only log in development to reduce spam
+      if (process.env.NODE_ENV === 'development') {
+        console.log('API warmup already in progress, skipping...');
+      }
       return [];
     }
 
     // Check if we've warmed up recently
     const now = Date.now();
     if (this.lastWarmupTime && (now - this.lastWarmupTime) < this.WARMUP_INTERVAL) {
-      console.log('APIs warmed up recently, skipping...');
+      // Only log once per session to reduce spam
+      const lastLogKey = 'warmup_skip_logged';
+      const lastLogTime = sessionStorage.getItem(lastLogKey);
+      if (!lastLogTime || (now - parseInt(lastLogTime)) > 60000) { // Once per minute
+        console.log('APIs warmed up recently, skipping...');
+        sessionStorage.setItem(lastLogKey, now.toString());
+      }
       return [];
     }
 
@@ -172,13 +182,13 @@ class ApiWarmupService {
         }
       });
 
-      // Log results
+      // Log results - only show summary in production
       const successful = warmupResults.filter(r => r.success).length;
       const total = warmupResults.length;
       
       console.log(`API warmup completed: ${successful}/${total} endpoints warmed up successfully`);
       
-      // Log individual results in development
+      // Log individual results only in development
       if (process.env.NODE_ENV === 'development') {
         warmupResults.forEach(result => {
           const status = result.success ? '✅' : '❌';
@@ -233,10 +243,5 @@ export const apiWarmupService = new ApiWarmupService();
 // Export the class for testing or custom instances
 export { ApiWarmupService };
 
-// Auto-warmup when service is imported (but only in browser)
-if (typeof window !== 'undefined') {
-  // Small delay to let the app initialize
-  setTimeout(() => {
-    apiWarmupService.warmupApisBackground();
-  }, 2000);
-} 
+// Note: Auto-warmup is now handled by the ApiWarmupProvider component
+// to avoid repeated warmup attempts during service imports 

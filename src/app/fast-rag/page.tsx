@@ -18,6 +18,7 @@ import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { ChatHistoryPanel } from "@/components/ChatHistoryPanel";
 import { useChatContext } from "@/components/ChatProvider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Animation variants
 const fadeIn = {
@@ -361,196 +362,198 @@ export default function FastRAGPage() {
   }, [chatHistory]);
 
   return (
-    <ProtectedRoute>
-      <RAGProvider>
-        <div className="min-h-screen flex flex-col bg-gray-50">
-          {/* Header */}
-          <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center h-16">
-                <div className="flex items-center">
-                  <h1 className="text-xl font-semibold text-gray-900 flex items-center">
-                    <span className="bg-blue-100 text-blue-800 p-1 rounded mr-2">
-                      <SearchIcon size={18} />
-                    </span>
-                    FastRAG
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span><Info size={16} className="ml-2 text-gray-400 cursor-help" /></span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="w-64 text-sm">FastRAG provides real-time document search and AI-powered answers.</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <Badge variant="outline" className="ml-3 text-xs font-normal bg-blue-50">
-                      v2.0
-                    </Badge>
-                  </h1>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={clearChat}
-                    className="text-gray-700 border-gray-300 hover:bg-gray-100"
-                  >
-                    <History size={16} className="mr-1.5" />
-                    Clear Chat
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => setShowChatHistory(true)}
-                    className="text-gray-700 border-gray-300 hover:bg-gray-100"
-                  >
-                    <History size={16} className="mr-1.5" />
-                    History
-                  </Button>
+    <ErrorBoundary level="page" context="fast-rag">
+      <ProtectedRoute>
+        <RAGProvider>
+          <div className="min-h-screen flex flex-col bg-gray-50">
+            {/* Header */}
+            <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center h-16">
+                  <div className="flex items-center">
+                    <h1 className="text-xl font-semibold text-gray-900 flex items-center">
+                      <span className="bg-blue-100 text-blue-800 p-1 rounded mr-2">
+                        <SearchIcon size={18} />
+                      </span>
+                      FastRAG
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span><Info size={16} className="ml-2 text-gray-400 cursor-help" /></span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="w-64 text-sm">FastRAG provides real-time document search and AI-powered answers.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <Badge variant="outline" className="ml-3 text-xs font-normal bg-blue-50">
+                        v2.0
+                      </Badge>
+                    </h1>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={clearChat}
+                      className="text-gray-700 border-gray-300 hover:bg-gray-100"
+                    >
+                      <History size={16} className="mr-1.5" />
+                      Clear Chat
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setShowChatHistory(true)}
+                      className="text-gray-700 border-gray-300 hover:bg-gray-100"
+                    >
+                      <History size={16} className="mr-1.5" />
+                      History
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </header>
+            </header>
 
-          {/* Main content */}
-          <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-5xl mx-auto">
-              {/* Organization Switcher for QIG employees */}
-              {canSwitchOrganizations && (
-                <div className="mb-6">
-                  <OrganizationSwitcher />
-                </div>
-              )}
-              
-              <div className="shadow-sm overflow-hidden">
-                <div className="p-6">
-                  {/* Introduction - only show when conversation not started */}
-                  <AnimatePresence>
-                    {!conversationStarted && (
-                      <motion.div
-                        className="mb-8"
-                        initial="hidden"
-                        animate="visible"
-                        exit={{ opacity: 0, y: -20 }}
-                        variants={fadeIn}
-                      >
-                        <motion.div className="text-center mb-8" variants={slideUp}>
-                          <h2 className="text-2xl font-bold text-gray-900 mb-3">
-                            Document Intelligence Platform
-                          </h2>
-                          <p className="text-gray-600 max-w-2xl mx-auto">
-                            Get precise answers and insights from your documents with our advanced retrieval-augmented generation system.
-                          </p>
-                        </motion.div>
-
-                        <motion.div
-                          className="grid grid-cols-1 md:grid-cols-3 gap-5"
-                          variants={staggerContainer}
-                        >
-                          {/* Using SampleQuestions hook to get questions for cards */}
-                          <FastRagTopicCards chatRef={chatRef} />
-                        </motion.div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Chat history container with improved styling */}
-                  <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+            {/* Main content */}
+            <main className="flex-1 py-6 px-4 sm:px-6 lg:px-8">
+              <div className="max-w-5xl mx-auto">
+                {/* Organization Switcher for QIG employees */}
+                {canSwitchOrganizations && (
+                  <div className="mb-6">
+                    <OrganizationSwitcher />
+                  </div>
+                )}
+                
+                <div className="shadow-sm overflow-hidden">
+                  <div className="p-6">
+                    {/* Introduction - only show when conversation not started */}
                     <AnimatePresence>
-                      {chatHistory.map((message, index) => (
+                      {!conversationStarted && (
                         <motion.div
-                          key={index}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -10 }}
-                          transition={{ duration: 0.3 }}
-                          className="mb-4"
+                          className="mb-8"
+                          initial="hidden"
+                          animate="visible"
+                          exit={{ opacity: 0, y: -20 }}
+                          variants={fadeIn}
                         >
-                          {message.role === 'user' ? (
-                            <div className="flex justify-end">
-                              <div className="bg-blue-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
-                                {message.content}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="max-w-[92%]">
-                              <FastRAG 
-                                answer={{
-                                  content: message.content,
-                                  metadata: message.metadata,
-                                  raw: message.raw,
-                                  // Always include these for the component to process correctly
-                                  isStreaming: message.metadata?.isStreaming,
-                                  supportingContent: message.metadata?.supportingContent,
-                                  thoughtProcess: message.metadata?.thoughtProcess
-                                }}
-                                theme="light"
-                                onCitationClicked={(citation: any) => {
-                                  // Handle citation click if needed
-                                  console.log('Citation clicked:', citation);
-                                }}
-                              />
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                    <div ref={chatMessageStreamEnd} />
-                  </div>
+                          <motion.div className="text-center mb-8" variants={slideUp}>
+                            <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                              Document Intelligence Platform
+                            </h2>
+                            <p className="text-gray-600 max-w-2xl mx-auto">
+                              Get precise answers and insights from your documents with our advanced retrieval-augmented generation system.
+                            </p>
+                          </motion.div>
 
-                  {/* Chat input with improved styling */}
-                  <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
-                    <ImprovedChat
-                      ref={chatRef}
-                      onUserMessage={handleUserMessage}
-                      onAssistantMessage={handleAssistantMessage}
-                      onConversationStart={() => setConversationStarted(true)}
-                      onStreamingChange={(streaming) => {
-                        setIsStreaming(streaming);
-                        debugLog('Streaming status changed', streaming ? 'started' : 'ended');
-                        
-                        // When streaming stops, ensure we don't lose the accumulated raw response
-                        if (!streaming) {
-                          debugLog('Streaming ended, final raw response length', currentRawResponseRef.current.length);
-                        }
-                      }}
-                      temperature={temperature}
-                      streamResponses={streamEnabled}
-                      isRAGEnabled={true}
-                      selectedBucketId={selectedBucketId}
-                    />
+                          <motion.div
+                            className="grid grid-cols-1 md:grid-cols-3 gap-5"
+                            variants={staggerContainer}
+                          >
+                            {/* Using SampleQuestions hook to get questions for cards */}
+                            <FastRagTopicCards chatRef={chatRef} />
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Chat history container with improved styling */}
+                    <div className={`mb-6 ${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                      <AnimatePresence>
+                        {chatHistory.map((message, index) => (
+                          <motion.div
+                            key={index}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ duration: 0.3 }}
+                            className="mb-4"
+                          >
+                            {message.role === 'user' ? (
+                              <div className="flex justify-end">
+                                <div className="bg-blue-600 text-white p-3 px-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
+                                  {message.content}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="max-w-[92%]">
+                                <FastRAG 
+                                  answer={{
+                                    content: message.content,
+                                    metadata: message.metadata,
+                                    raw: message.raw,
+                                    // Always include these for the component to process correctly
+                                    isStreaming: message.metadata?.isStreaming,
+                                    supportingContent: message.metadata?.supportingContent,
+                                    thoughtProcess: message.metadata?.thoughtProcess
+                                  }}
+                                  theme="light"
+                                  onCitationClicked={(citation: any) => {
+                                    // Handle citation click if needed
+                                    console.log('Citation clicked:', citation);
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                      <div ref={chatMessageStreamEnd} />
+                    </div>
+
+                    {/* Chat input with improved styling */}
+                    <div className={`${conversationStarted ? '' : 'border-t border-gray-200 pt-6'}`}>
+                      <ImprovedChat
+                        ref={chatRef}
+                        onUserMessage={handleUserMessage}
+                        onAssistantMessage={handleAssistantMessage}
+                        onConversationStart={() => setConversationStarted(true)}
+                        onStreamingChange={(streaming) => {
+                          setIsStreaming(streaming);
+                          debugLog('Streaming status changed', streaming ? 'started' : 'ended');
+                          
+                          // When streaming stops, ensure we don't lose the accumulated raw response
+                          if (!streaming) {
+                            debugLog('Streaming ended, final raw response length', currentRawResponseRef.current.length);
+                          }
+                        }}
+                        temperature={temperature}
+                        streamResponses={streamEnabled}
+                        isRAGEnabled={true}
+                        selectedBucketId={selectedBucketId}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </main>
-          
-          {/* Footer */}
-          <footer className="bg-white border-t border-gray-200 py-4">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center text-sm text-gray-500">
-                <div>
-                  FastRAG Document Intelligence Platform
-                </div>
-                <div className="flex space-x-4">
-                  <a href="#" className="hover:text-gray-700 transition-colors">Documentation</a>
-                  <a href="#" className="hover:text-gray-700 transition-colors">Support</a>
+            </main>
+            
+            {/* Footer */}
+            <footer className="bg-white border-t border-gray-200 py-4">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center text-sm text-gray-500">
+                  <div>
+                    FastRAG Document Intelligence Platform
+                  </div>
+                  <div className="flex space-x-4">
+                    <a href="#" className="hover:text-gray-700 transition-colors">Documentation</a>
+                    <a href="#" className="hover:text-gray-700 transition-colors">Support</a>
+                  </div>
                 </div>
               </div>
-            </div>
-          </footer>
-          
-          {/* Chat History Panel */}
-          <ChatHistoryPanel
-            isOpen={showChatHistory}
-            onClose={() => setShowChatHistory(false)}
-            onSelectSession={selectSession}
-            onNewSession={handleNewSession}
-            activeSessionId={activeSession?.id || null}
-          />
-        </div>
-      </RAGProvider>
-    </ProtectedRoute>
+            </footer>
+            
+            {/* Chat History Panel */}
+            <ChatHistoryPanel
+              isOpen={showChatHistory}
+              onClose={() => setShowChatHistory(false)}
+              onSelectSession={selectSession}
+              onNewSession={handleNewSession}
+              activeSessionId={activeSession?.id || null}
+            />
+          </div>
+        </RAGProvider>
+      </ProtectedRoute>
+    </ErrorBoundary>
   );
 }

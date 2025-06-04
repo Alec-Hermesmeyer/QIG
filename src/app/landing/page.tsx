@@ -31,6 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Image from "next/image";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase/client";
@@ -120,9 +121,13 @@ interface UsageStats {
 
 export default function LandingPage() {
   return (
-    <ChatProvider>
-      <LandingPageContent />
-    </ChatProvider>
+    <ErrorBoundary level="page" context="landing-page">
+      <ChatProvider>
+        <ErrorBoundary>
+          <LandingPageContent />
+        </ErrorBoundary>
+      </ChatProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -723,14 +723,21 @@ class AlertingService {
    * Persist alerts to localStorage
    */
   private persistAlerts(): void {
+    // Check if we're on the client side
+    if (typeof window === 'undefined') return;
+    
     try {
       const data = {
-        activeAlerts: Array.from(this.activeAlerts.entries()),
+        alerts: Array.from(this.activeAlerts.values()).map((alert: EnhancedAlert) => ({
+          ...alert,
+          // Remove any circular references
+          rule: alert.ruleId ? { id: alert.ruleId, name: this.alertRules.find(r => r.id === alert.ruleId)?.name } : undefined
+        })),
         alertHistory: this.alertHistory.slice(-100), // Keep last 100 resolved alerts
         alertRules: this.alertRules,
-        consecutiveFailures: Array.from(this.consecutiveFailures.entries())
+        consecutiveFailures: Array.from(this.consecutiveFailures.entries()),
+        lastPersist: new Date().toISOString()
       };
-      
       localStorage.setItem('qig_alerting_data', JSON.stringify(data));
     } catch (error) {
       console.error('[Alert] Failed to persist alerts:', error);
@@ -741,13 +748,16 @@ class AlertingService {
    * Load persisted alerts
    */
   private loadPersistedAlerts(): void {
+    // Check if we're on the client side
+    if (typeof window === 'undefined') return;
+    
     try {
       const stored = localStorage.getItem('qig_alerting_data');
       if (stored) {
         const data = JSON.parse(stored);
         
-        if (data.activeAlerts) {
-          this.activeAlerts = new Map(data.activeAlerts);
+        if (data.alerts) {
+          this.activeAlerts = new Map(data.alerts.map((alert: any) => [alert.id, alert as EnhancedAlert]));
         }
         
         if (data.alertHistory) {

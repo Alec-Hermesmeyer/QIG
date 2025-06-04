@@ -70,7 +70,7 @@ class MonitoringService {
   private readonly INTERNAL_APIS = [
     { name: 'GroundX RAG API', url: '/api/groundx/rag' },
     { name: 'Chat Stream API', url: '/api/chat-stream' },
-    { name: 'GraphRAG API', url: '/graph/api/v1/property_graph/query/' },
+    // { name: 'GraphRAG API', url: '/graph/api/v1/property_graph/query/' }, // Disabled - endpoint doesn't exist
     { name: 'Content Proxy API', url: '/api/proxy-content' },
     { name: 'Document Analysis API', url: '/api/analyze_document' }
   ];

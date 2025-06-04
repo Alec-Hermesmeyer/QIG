@@ -2073,7 +2073,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       setHasTriggeredWarmup(true);
       warmupBeforeChat();
     }
-  }, [hasTriggeredWarmup, isWarming, warmupBeforeChat]);
+  }, [hasTriggeredWarmup, isWarming]);
 
   return (
     <motion.div 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronUp, Database, Lightbulb, MessageSquare, FileText, Shield, Eye, EyeOff } from "lucide-react";
 
@@ -935,7 +934,6 @@ export default function FastRAG({
                 >
                   <ReactMarkdown 
                     remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
                   >
                     {parsedAnswerHtml || (typeof processedContent === 'string' ? processedContent : '')}
                   </ReactMarkdown>

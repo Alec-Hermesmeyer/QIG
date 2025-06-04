@@ -9,7 +9,9 @@ import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ 
+      cookies: () => cookies() 
+    });
     
     // Verify authentication
     const { data: { session } } = await supabase.auth.getSession();
@@ -147,4 +149,4 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString()
     }, { status: 500 });
   }
-} 
+}

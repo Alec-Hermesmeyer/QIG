@@ -16,7 +16,8 @@ import {
   FileText,
   Globe,
   Monitor,
-  Package
+  Package,
+  Server
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -103,37 +104,40 @@ export default function AdminDashboard() {
       ]
     },
     {
-      id: 'service-status',
-      title: 'Service Status Dashboard',
-      description: 'Track development and operational status of all QIG services including progress, deadlines, and updates.',
-      icon: Package,
-      iconColor: 'text-indigo-600',
-      bgGradient: 'from-indigo-50 to-purple-50',
+      id: 'services',
+      title: 'Service Management',
+      description: 'Configure and manage QIG platform services, API integrations, and system-wide settings.',
+      icon: Server,
+      iconColor: 'text-green-600',
+      bgGradient: 'from-green-50 to-emerald-50',
       path: '/admin/services',
       status: 'available',
       features: [
-        'Service status tracking',
-        'Development progress',
-        'Team coordination',
-        'Release planning',
-        'Analytics & metrics'
+        'Service configuration',
+        'API endpoint management',
+        'Integration settings',
+        'System preferences'
       ]
     },
     {
       id: 'monitoring',
-      title: 'System Monitoring',
-      description: 'Real-time system health monitoring, API status tracking, and advanced alerting for all services.',
+      title: 'System Monitoring & Performance',
+      description: 'Comprehensive real-time monitoring dashboard with performance analytics, API health tracking, intelligent alerting, and automated optimization.',
       icon: Monitor,
-      iconColor: 'text-cyan-600',
-      bgGradient: 'from-cyan-50 to-blue-50',
+      iconColor: 'text-blue-600',
+      bgGradient: 'from-blue-50 to-indigo-50',
       path: '/admin/monitoring',
       status: 'available',
       features: [
-        'Real-time health monitoring',
-        'API endpoint tracking',
-        'Advanced alerting system',
-        'Performance analytics',
-        'Historical data'
+        'Real-time performance metrics',
+        'API response time monitoring', 
+        'Error rate tracking & analysis',
+        'User activity analytics',
+        'Intelligent auto-fix system',
+        'Smart performance recommendations',
+        'Historical trends & reporting',
+        'Automated system optimization',
+        'Advanced alerting with AI insights'
       ]
     },
     {
@@ -245,7 +249,7 @@ export default function AdminDashboard() {
         >
           <div className="absolute inset-0 bg-gradient-to-r from-black/20 to-transparent"></div>
           
-          <div className="relative max-w-7xl mx-auto px-6 py-16">
+          <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
             <motion.div
               className="text-center"
               variants={fadeIn}
@@ -256,10 +260,10 @@ export default function AdminDashboard() {
                 <Settings size={32} className="text-white" />
               </div>
               
-              <h1 className="text-4xl md:text-5xl font-bold mb-4">
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">
                 System Administration
               </h1>
-              <p className="text-xl text-white/90 max-w-3xl mx-auto leading-relaxed">
+              <p className="text-lg lg:text-xl text-white/90 max-w-2xl mx-auto leading-relaxed">
                 Manage and configure the QIG Intelligence Platform. Control organization settings, 
                 user access, and system-wide features from this central dashboard.
               </p>
@@ -273,12 +277,12 @@ export default function AdminDashboard() {
         </motion.section>
 
         {/* Main Content */}
-        <main className="py-16">
-          <div className="max-w-7xl mx-auto px-6">
+        <main className="py-8 lg:py-12">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             
             {/* Quick Stats */}
             <motion.div 
-              className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12"
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8 lg:mb-12"
               variants={staggerContainer}
               initial="hidden"
               animate="visible"
@@ -291,16 +295,16 @@ export default function AdminDashboard() {
               ].map((stat, index) => (
                 <motion.div
                   key={stat.label}
-                  className="bg-white rounded-xl shadow-lg border border-slate-200/50 p-6"
+                  className="bg-white rounded-xl shadow-lg border border-slate-200/50 p-4 lg:p-6"
                   variants={cardVariant}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-slate-600">{stat.label}</p>
-                      <p className="text-2xl font-bold text-slate-800">{stat.value}</p>
+                      <p className="text-xl lg:text-2xl font-bold text-slate-800">{stat.value}</p>
                     </div>
-                    <div className={`h-12 w-12 rounded-lg bg-slate-50 flex items-center justify-center`}>
-                      <stat.icon size={24} className={stat.color} />
+                    <div className={`h-10 w-10 lg:h-12 lg:w-12 rounded-lg bg-slate-50 flex items-center justify-center`}>
+                      <stat.icon size={20} className={`lg:w-6 lg:h-6 ${stat.color}`} />
                     </div>
                   </div>
                 </motion.div>
@@ -309,20 +313,20 @@ export default function AdminDashboard() {
 
             {/* Admin Features */}
             <motion.div
-              className="mb-12"
+              className="mb-8 lg:mb-12"
               variants={fadeIn}
               initial="hidden"
               animate="visible"
             >
-              <div className="text-center mb-8">
-                <h2 className="text-3xl font-bold text-slate-800 mb-4">Administrative Features</h2>
-                <p className="text-xl text-slate-600 max-w-3xl mx-auto">
+              <div className="text-center mb-6 lg:mb-8">
+                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 mb-4">Administrative Features</h2>
+                <p className="text-lg lg:text-xl text-slate-600 max-w-2xl mx-auto">
                   Comprehensive tools for managing the QIG Intelligence Platform
                 </p>
               </div>
 
               <motion.div
-                className="grid grid-cols-1 md:grid-cols-2 gap-8"
+                className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8"
                 variants={staggerContainer}
                 initial="hidden"
                 animate="visible"
@@ -416,23 +420,23 @@ export default function AdminDashboard() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.8, duration: 0.6 }}
             >
-              <div className="p-8 text-center">
-                <div className="h-16 w-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-                  <HelpCircle size={32} className="text-white" />
+              <div className="p-6 lg:p-8 text-center">
+                <div className="h-14 w-14 lg:h-16 lg:w-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+                  <HelpCircle size={28} className="lg:w-8 lg:h-8 text-white" />
                 </div>
                 
-                <h3 className="text-2xl font-bold text-slate-800 mb-4">Need Help?</h3>
-                <p className="text-slate-600 text-lg leading-relaxed max-w-2xl mx-auto mb-6">
+                <h3 className="text-xl lg:text-2xl font-bold text-slate-800 mb-4">Need Help?</h3>
+                <p className="text-slate-600 text-base lg:text-lg leading-relaxed max-w-xl mx-auto mb-6">
                   Access detailed documentation, system guides, and best practices for managing 
                   the QIG Intelligence Platform.
                 </p>
                 
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50">
+                <div className="flex flex-col sm:flex-row gap-3 lg:gap-4 justify-center max-w-md mx-auto">
+                  <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-sm lg:text-base">
                     <FileText size={16} className="mr-2" />
                     Documentation
                   </Button>
-                  <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50">
+                  <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-sm lg:text-base">
                     <Globe size={16} className="mr-2" />
                     Support Portal
                   </Button>

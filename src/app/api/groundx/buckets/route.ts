@@ -18,8 +18,10 @@ interface ProcessedBucket {
 
 export async function GET(request: NextRequest) {
   try {
-    // Create a Supabase client for auth
-    const supabase = createRouteHandlerClient({ cookies });
+    // Create a Supabase client for auth - FIXED: synchronous cookies
+    const supabase = createRouteHandlerClient({ 
+      cookies: () => cookies() 
+    });
     
     // Get the current session
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();

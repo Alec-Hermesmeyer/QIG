@@ -14,7 +14,7 @@ export async function GET(
   if (DEBUG) console.log(`[org-logo] Received request for organization ID: ${params.id}`);
   
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     
     if (DEBUG) console.log(`[org-logo] Supabase client created, fetching organization data`);
     

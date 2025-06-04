@@ -140,7 +140,7 @@ async function performAIRedaction(
 export async function POST(request: NextRequest) {
   try {
     // Get user's organization
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     const { data: { session } } = await supabase.auth.getSession();
     
     if (!session?.user) {
@@ -213,7 +213,7 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     // Get user's organization to check if redaction is available
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     const { data: { session } } = await supabase.auth.getSession();
     
     if (!session?.user) {

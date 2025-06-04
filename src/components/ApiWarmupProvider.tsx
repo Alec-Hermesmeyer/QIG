@@ -17,7 +17,7 @@ interface ApiWarmupProviderProps {
  */
 export function ApiWarmupProvider({ children }: ApiWarmupProviderProps) {
   const { warmupApisBackground, status, minutesSinceWarmup } = useApiWarmup({
-    autoWarmup: true,
+    autoWarmup: false,
     warmupOnChatNavigation: true,
     debug: process.env.NODE_ENV === 'development'
   });
@@ -29,9 +29,10 @@ export function ApiWarmupProvider({ children }: ApiWarmupProviderProps) {
     }, 3000); // 3 second delay to let the app fully load
 
     return () => clearTimeout(timer);
-  }, [warmupApisBackground]);
+  }, []); // Removed warmupApisBackground dependency to prevent re-runs
 
-  // Periodic warmup check - every 10 minutes
+  // Periodic warmup check - temporarily disabled to prevent loops
+  /*
   useEffect(() => {
     const interval = setInterval(() => {
       // Only warm up if it's been more than 5 minutes since last warmup
@@ -42,6 +43,7 @@ export function ApiWarmupProvider({ children }: ApiWarmupProviderProps) {
 
     return () => clearInterval(interval);
   }, [warmupApisBackground, minutesSinceWarmup]);
+  */
 
   // Development logging
   useEffect(() => {

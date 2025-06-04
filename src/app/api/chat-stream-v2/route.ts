@@ -381,7 +381,7 @@ function createErrorResponse(message: string, status: number, details?: any) {
 export async function POST(request: NextRequest) {
   try {
     // Get authenticated user and organization
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     const { data: { session } } = await supabase.auth.getSession();
     
     if (!session) {

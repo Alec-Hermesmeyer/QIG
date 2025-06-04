@@ -588,7 +588,7 @@ export async function POST(request: NextRequest) {
     console.log('Request body parsed');
     
     // Get user's organization from Supabase auth
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     const { data: { session } } = await supabase.auth.getSession();
     
     let organizationId: string | undefined;
@@ -803,7 +803,7 @@ function isPolicyRelatedQuery(content: string): boolean {
 export async function GET(request: NextRequest) {
   try {
     // Get user's organization from Supabase auth
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createRouteHandlerClient({ cookies: () => cookies() });
     const { data: { session } } = await supabase.auth.getSession();
     
     let organizationId: string | undefined;

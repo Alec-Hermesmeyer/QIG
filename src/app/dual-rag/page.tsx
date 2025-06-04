@@ -47,7 +47,7 @@ export default function DualRAGPage() {
   
   // Initialize API warmup for this page
   const { warmupBeforeChat } = useApiWarmup({
-    autoWarmup: true,
+    autoWarmup: false,
     warmupOnChatNavigation: true,
     debug: process.env.NODE_ENV === 'development'
   });
@@ -90,7 +90,7 @@ export default function DualRAGPage() {
     if (selectedBucketId) {
       warmupBeforeChat();
     }
-  }, [selectedBucketId, warmupBeforeChat]);
+  }, [selectedBucketId]);
 
   // Handle user message
   const handleUserMessage = useCallback(async (content: string) => {

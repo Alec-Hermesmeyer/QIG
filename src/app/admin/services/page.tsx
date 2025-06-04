@@ -27,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 
 // Service Management Hooks
-import { useServiceStatus } from '@/hooks/useServiceStatus';
+import { useStaleServiceStatus } from '@/hooks/useStaleData';
 
 // Task Management Hooks  
 import { useTaskManagement } from '@/hooks/useTaskManagement';
@@ -41,6 +41,8 @@ import { serviceStatusService } from '@/services/serviceStatusService';
 // Components
 import ProtectedRoute from '@/components/ProtectedRoute';
 import QIGOnlyAccess from '@/components/QIGOnlyAccess';
+import { StaleDataIndicator } from '@/components/StaleDataIndicator';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 // Auth
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -1964,13 +1966,25 @@ export default function ServiceStatusDashboard() {
   // Track if this is the first load attempt
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
 
-  // Hooks with better error handling
+  // Stale data for services with enhanced error handling
   const { 
-    services, 
+    data: servicesData, 
     isLoading: servicesLoading, 
+    isValidating: servicesValidating,
     error: servicesError,
     refresh: refreshServices
-  } = useServiceStatus();
+  } = useStaleServiceStatus();
+
+  // Destructure services and metrics from the data
+  const services = servicesData?.services || [];
+  const metrics = servicesData?.metrics || {
+    totalServices: 0,
+    servicesByStatus: {} as Record<ServiceStatus, number>,
+    servicesByCategory: {} as Record<ServiceCategory, number>,
+    completionRate: 0,
+    upcomingDeadlines: [],
+    recentUpdates: []
+  };
 
   const {
     tasks,
@@ -1978,8 +1992,7 @@ export default function ServiceStatusDashboard() {
     updateTask,
     deleteTask,
     isLoading: tasksLoading,
-    error: tasksError,
-    refresh: refreshTasks
+    error: tasksError
   } = useTaskManagement();
 
   // Track loading attempts
@@ -2100,7 +2113,7 @@ export default function ServiceStatusDashboard() {
 
   const handleRefresh = async () => {
     try {
-      await Promise.all([refreshServices(), refreshTasks()]);
+      await refreshServices();
     } catch (error) {
       console.error('Failed to refresh data:', error);
     }
@@ -2134,7 +2147,7 @@ export default function ServiceStatusDashboard() {
           <div className="text-center max-w-md">
             <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
             <h2 className="text-xl font-semibold text-gray-900 mb-2">Failed to Load Services</h2>
-            <p className="text-gray-600 mb-4">{servicesError}</p>
+            <p className="text-gray-600 mb-4">{servicesError.message || 'Unknown error occurred'}</p>
             <div className="space-y-2">
               <button 
                 onClick={handleRefresh}
@@ -2157,115 +2170,128 @@ export default function ServiceStatusDashboard() {
   }
 
   return (
-    <QIGOnlyAccess>
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <div className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Service Management</h1>
-                <p className="mt-2 text-gray-600">Monitor and manage QIG services and projects</p>
-                {(servicesError || tasksError) && (
-                  <div className="mt-2 flex items-center space-x-2">
-                    <AlertTriangle className="w-4 h-4 text-yellow-500" />
-                    <span className="text-sm text-yellow-600">
-                      Some data may be using cached/demo content
-                    </span>
-                    <button 
-                      onClick={handleRefresh}
-                      className="text-sm text-blue-600 hover:text-blue-700 underline"
-                    >
-                      Retry
-                    </button>
+    <ErrorBoundary level="page" context="admin-services">
+      <QIGOnlyAccess>
+        <div className="min-h-screen bg-gray-50">
+          {/* Header */}
+          <div className="bg-white shadow-sm border-b">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900">Service Management</h1>
+                  <p className="mt-2 text-gray-600">Monitor and manage QIG services and projects</p>
+                  {(servicesError || tasksError) && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                      <span className="text-sm text-yellow-600">
+                        Some data may be using cached content
+                      </span>
+                      <button 
+                        onClick={handleRefresh}
+                        className="text-sm text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {/* Add stale data indicator */}
+                  <div className="mt-2">
+                    <StaleDataIndicator
+                      isLoading={servicesLoading && !servicesData}
+                      isValidating={servicesValidating}
+                      error={servicesError}
+                      onRefresh={handleRefresh}
+                      dataSource="Services"
+                      showDetails={false}
+                    />
                   </div>
-                )}
-              </div>
-              <div className="flex space-x-3">
-                <Button 
-                  onClick={() => setShowTaskModal(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  New Task
-                </Button>
-                <Button onClick={handleCreateService} variant="outline">
-                  <Plus className="w-4 h-4 mr-2" />
-                  New Service
-                </Button>
-                <Button onClick={handleRefresh} variant="outline" size="sm">
-                  <RefreshCw className="w-4 h-4" />
-                </Button>
+                </div>
+                <div className="flex space-x-3">
+                  <Button 
+                    onClick={() => setShowTaskModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    New Task
+                  </Button>
+                  <Button onClick={handleCreateService} variant="outline">
+                    <Plus className="w-4 h-4 mr-2" />
+                    New Service
+                  </Button>
+                  <Button onClick={handleRefresh} variant="outline" size="sm">
+                    <RefreshCw className={`w-4 h-4 ${servicesValidating ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Content */}
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <Tabs defaultValue="overview" className="space-y-6">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="services">Services</TabsTrigger>
+                <TabsTrigger value="tasks">Tasks</TabsTrigger>
+                <TabsTrigger value="analytics">Analytics</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="overview" className="space-y-6">
+                <OverviewTab services={displayServices} tasks={tasks || []} />
+              </TabsContent>
+
+              <TabsContent value="services" className="space-y-6">
+                <ServicesTab 
+                  services={filteredServices}
+                  searchTerm={searchTerm}
+                  setSearchTerm={setSearchTerm}
+                  statusFilter={statusFilter}
+                  setStatusFilter={setStatusFilter}
+                  categoryFilter={categoryFilter}
+                  setCategoryFilter={setCategoryFilter}
+                  viewMode={viewMode}
+                  setViewMode={setViewMode}
+                  onViewService={handleViewService}
+                  onEditService={handleEditService}
+                />
+              </TabsContent>
+
+              <TabsContent value="tasks" className="space-y-6">
+                <TasksTab 
+                  tasks={tasks || []}
+                  services={displayServices}
+                  onCreateTask={handleCreateTask}
+                  onUpdateTask={async (id: string, updates: any) => {
+                    await updateTask(id, updates);
+                  }}
+                  onDeleteTask={async (id: string) => {
+                    await deleteTask(id);
+                  }}
+                />
+              </TabsContent>
+
+              <TabsContent value="analytics" className="space-y-6">
+                <AnalyticsTab services={displayServices} tasks={tasks || []} />
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          {/* Modals */}
+          <ServiceModal
+            service={selectedService}
+            isOpen={modalOpen}
+            onClose={() => setModalOpen(false)}
+            mode={modalMode}
+          />
+
+          <TaskCreationModal
+            isOpen={showTaskModal}
+            onClose={() => setShowTaskModal(false)}
+            onCreateTask={handleCreateTask}
+            services={displayServices}
+          />
         </div>
-
-        {/* Content */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="services">Services</TabsTrigger>
-              <TabsTrigger value="tasks">Tasks</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="overview" className="space-y-6">
-              <OverviewTab services={displayServices} tasks={tasks || []} />
-            </TabsContent>
-
-            <TabsContent value="services" className="space-y-6">
-              <ServicesTab 
-                services={filteredServices}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
-                statusFilter={statusFilter}
-                setStatusFilter={setStatusFilter}
-                categoryFilter={categoryFilter}
-                setCategoryFilter={setCategoryFilter}
-                viewMode={viewMode}
-                setViewMode={setViewMode}
-                onViewService={handleViewService}
-                onEditService={handleEditService}
-              />
-            </TabsContent>
-
-            <TabsContent value="tasks" className="space-y-6">
-              <TasksTab 
-                tasks={tasks || []}
-                services={displayServices}
-                onCreateTask={handleCreateTask}
-                onUpdateTask={async (id: string, updates: any) => {
-                  await updateTask(id, updates);
-                }}
-                onDeleteTask={async (id: string) => {
-                  await deleteTask(id);
-                }}
-              />
-            </TabsContent>
-
-            <TabsContent value="analytics" className="space-y-6">
-              <AnalyticsTab services={displayServices} tasks={tasks || []} />
-            </TabsContent>
-          </Tabs>
-        </div>
-
-        {/* Modals */}
-        <ServiceModal
-          service={selectedService}
-          isOpen={modalOpen}
-          onClose={() => setModalOpen(false)}
-          mode={modalMode}
-        />
-
-        <TaskCreationModal
-          isOpen={showTaskModal}
-          onClose={() => setShowTaskModal(false)}
-          onCreateTask={handleCreateTask}
-          services={displayServices}
-        />
-      </div>
-    </QIGOnlyAccess>
+      </QIGOnlyAccess>
+    </ErrorBoundary>
   );
 } 

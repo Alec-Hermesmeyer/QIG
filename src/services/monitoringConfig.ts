@@ -59,7 +59,8 @@ export interface PersistedMonitoringData {
 }
 
 class MonitoringConfigService {
-  private static readonly DEFAULT_CONFIG: MonitoringConfig = {
+  // Default monitoring configuration
+  public static readonly DEFAULT_CONFIG: MonitoringConfig = {
     healthCheck: {
       interval: 30000, // 30 seconds
       timeout: 10000, // 10 seconds
@@ -156,6 +157,9 @@ class MonitoringConfigService {
    */
   saveHealthHistoryPoint(point: HealthHistoryPoint): void {
     if (!this.config.storage.persistHistory) return;
+    
+    // Check if we're on the client side
+    if (typeof window === 'undefined') return;
 
     try {
       const history = this.getHealthHistory();
@@ -197,6 +201,9 @@ class MonitoringConfigService {
    */
   getHealthHistory(): HealthHistoryPoint[] {
     if (!this.config.storage.persistHistory) return [];
+    
+    // Check if we're on the client side
+    if (typeof window === 'undefined') return [];
 
     try {
       const stored = localStorage.getItem(MonitoringConfigService.HISTORY_STORAGE_KEY);
@@ -310,6 +317,11 @@ class MonitoringConfigService {
   }
 
   private loadConfig(): MonitoringConfig {
+    // Check if we're on the client side
+    if (typeof window === 'undefined') {
+      return { ...MonitoringConfigService.DEFAULT_CONFIG };
+    }
+    
     try {
       const stored = localStorage.getItem(MonitoringConfigService.STORAGE_KEY);
       if (stored) {
@@ -364,8 +376,30 @@ class MonitoringConfigService {
   }
 }
 
-// Export singleton instance
-export const monitoringConfigService = new MonitoringConfigService();
+// Make the service instance lazy-loaded
+let monitoringConfigServiceInstance: MonitoringConfigService | null = null;
+
+export const getMonitoringConfigService = (): MonitoringConfigService => {
+  if (typeof window === 'undefined') {
+    // Return a mock service for SSR
+    return {
+      getConfig: () => ({ ...MonitoringConfigService.DEFAULT_CONFIG }),
+      updateConfig: () => {},
+      getHealthHistory: () => [],
+      saveHealthHistoryPoint: () => {},
+      reset: () => {}
+    } as any;
+  }
+  
+  if (!monitoringConfigServiceInstance) {
+    monitoringConfigServiceInstance = new MonitoringConfigService();
+  }
+  return monitoringConfigServiceInstance;
+};
+
+// Replace the direct export
+// export const monitoringConfigService = new MonitoringConfigService();
+export const monitoringConfigService = getMonitoringConfigService();
 
 // Export class for testing
 export { MonitoringConfigService }; 
