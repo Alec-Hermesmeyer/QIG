@@ -43,17 +43,9 @@ export function Sidebar({ className }: SidebarProps) {
   ];
 
   const navigationItems = [
-    ...navItems,
-    // QIG Internal Tools (only visible to QIG team members)
-    ...(canSwitchOrganizations ? [
-      {
-        name: 'QIG Monitoring',
-        href: '/admin/monitoring',
-        icon: Monitor,
-        description: 'System health and monitoring dashboard',
-        badge: 'Internal'
-      }
-    ] : [])
+    ...navItems
+    // QIG Internal Tools are now accessible through the QIG Admin Toolbar
+    // No need for individual sidebar links
   ];
 
   return (

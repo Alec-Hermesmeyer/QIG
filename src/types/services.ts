@@ -208,4 +208,129 @@ export const SERVICE_NAMES: Record<ServiceKey, string> = {
   'contract-analyst': 'Contract Analyst',
   'open-records': 'Open Records',
   'insurance-broker': 'Insurance Broker',
+};
+
+export interface QIGService {
+  id: string;
+  name: string;
+  description: string;
+  category: ServiceCategory;
+  status: ServiceStatus;
+  progress: number; // 0-100 percentage
+  priority: ServicePriority;
+  team: string;
+  owner: string;
+  lastUpdated: string;
+  createdAt: string;
+  targetLaunchDate?: string;
+  actualLaunchDate?: string;
+  keyFeatures: string[];
+  dependencies: string[];
+  technicalStack: string[];
+  clientFacing: boolean;
+  internalOnly: boolean;
+  documentation?: string;
+  demoUrl?: string;
+  repositoryUrl?: string;
+  tags: string[];
+}
+
+export interface ServiceUpdate {
+  id: string;
+  serviceId: string;
+  title: string;
+  description: string;
+  type: UpdateType;
+  author: string;
+  timestamp: string;
+  version?: string;
+  attachments?: string[];
+}
+
+export interface ServiceMetrics {
+  totalServices: number;
+  servicesByStatus: Record<ServiceStatus, number>;
+  servicesByCategory: Record<ServiceCategory, number>;
+  completionRate: number;
+  upcomingDeadlines: QIGService[];
+  recentUpdates: ServiceUpdate[];
+}
+
+export type ServiceCategory = 
+  | 'AI_ANALYSIS'
+  | 'AUTOMATION'
+  | 'DATA_PROCESSING'
+  | 'CLIENT_TOOLS'
+  | 'INTERNAL_TOOLS'
+  | 'INFRASTRUCTURE'
+  | 'INTEGRATIONS';
+
+export type ServiceStatus = 
+  | 'PLANNING'
+  | 'IN_DEVELOPMENT'
+  | 'TESTING'
+  | 'BETA'
+  | 'LIVE'
+  | 'MAINTENANCE'
+  | 'DEPRECATED'
+  | 'ON_HOLD';
+
+export type ServicePriority = 
+  | 'LOW'
+  | 'MEDIUM'
+  | 'HIGH'
+  | 'CRITICAL';
+
+export type UpdateType = 
+  | 'FEATURE'
+  | 'BUGFIX'
+  | 'RELEASE'
+  | 'MILESTONE'
+  | 'ANNOUNCEMENT'
+  | 'ISSUE';
+
+export const SERVICE_CATEGORY_LABELS: Record<ServiceCategory, string> = {
+  AI_ANALYSIS: 'AI Analysis',
+  AUTOMATION: 'Automation',
+  DATA_PROCESSING: 'Data Processing',
+  CLIENT_TOOLS: 'Client Tools',
+  INTERNAL_TOOLS: 'Internal Tools',
+  INFRASTRUCTURE: 'Infrastructure',
+  INTEGRATIONS: 'Integrations'
+};
+
+export const SERVICE_STATUS_LABELS: Record<ServiceStatus, string> = {
+  PLANNING: 'Planning',
+  IN_DEVELOPMENT: 'In Development',
+  TESTING: 'Testing',
+  BETA: 'Beta',
+  LIVE: 'Live',
+  MAINTENANCE: 'Maintenance',
+  DEPRECATED: 'Deprecated',
+  ON_HOLD: 'On Hold'
+};
+
+export const SERVICE_PRIORITY_LABELS: Record<ServicePriority, string> = {
+  LOW: 'Low',
+  MEDIUM: 'Medium', 
+  HIGH: 'High',
+  CRITICAL: 'Critical'
+};
+
+export const SERVICE_STATUS_COLORS: Record<ServiceStatus, { bg: string; text: string; border: string }> = {
+  PLANNING: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
+  IN_DEVELOPMENT: { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300' },
+  TESTING: { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-300' },
+  BETA: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
+  LIVE: { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-300' },
+  MAINTENANCE: { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-300' },
+  DEPRECATED: { bg: 'bg-red-100', text: 'text-red-800', border: 'border-red-300' },
+  ON_HOLD: { bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-300' }
+};
+
+export const SERVICE_PRIORITY_COLORS: Record<ServicePriority, { bg: string; text: string }> = {
+  LOW: { bg: 'bg-gray-100', text: 'text-gray-600' },
+  MEDIUM: { bg: 'bg-blue-100', text: 'text-blue-600' },
+  HIGH: { bg: 'bg-orange-100', text: 'text-orange-600' },
+  CRITICAL: { bg: 'bg-red-100', text: 'text-red-600' }
 }; 

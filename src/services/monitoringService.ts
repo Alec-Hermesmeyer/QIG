@@ -86,6 +86,73 @@ class MonitoringService {
   // Debouncing
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private lastMonitoringDataFetch: number = 0;
+  private isMonitoringActive: boolean = false;
+  private backgroundMonitoringInterval: NodeJS.Timeout | null = null;
+
+  constructor() {
+    // Start background monitoring if in browser environment
+    if (typeof window !== 'undefined') {
+      this.startBackgroundMonitoring();
+    }
+  }
+
+  /**
+   * Start background monitoring that continues regardless of page visibility
+   */
+  private startBackgroundMonitoring(): void {
+    if (this.backgroundMonitoringInterval) return;
+
+    // Background monitoring every 2 minutes to maintain data freshness
+    this.backgroundMonitoringInterval = setInterval(async () => {
+      try {
+        console.log('[Monitoring] Background monitoring tick');
+        await this.performBackgroundHealthChecks();
+      } catch (error) {
+        console.error('[Monitoring] Background monitoring error:', error);
+      }
+    }, 120000); // 2 minutes
+
+    console.log('[Monitoring] Background monitoring started');
+  }
+
+  /**
+   * Perform lightweight background health checks
+   */
+  private async performBackgroundHealthChecks(): Promise<void> {
+    const config = monitoringConfigService.getConfig();
+    
+    // Only do background checks if auto-refresh is enabled in config
+    if (!config.dashboard.autoRefresh) return;
+
+    try {
+      // Lightweight check - just a few critical endpoints
+      const chatStreamHealth = await this.checkEndpointHealth('/api/chat-stream');
+      
+      // Save the health point for system tracking
+      monitoringConfigService.saveHealthHistoryPoint({
+        timestamp: new Date().toISOString(),
+        status: chatStreamHealth.status,
+        responseTime: chatStreamHealth.responseTime,
+        error: chatStreamHealth.error,
+        endpoint: 'chat-stream-background'
+      });
+
+      console.log('[Monitoring] Background health check completed:', chatStreamHealth.status);
+    } catch (error) {
+      console.error('[Monitoring] Background health check failed:', error);
+    }
+  }
+
+  /**
+   * Stop background monitoring
+   */
+  stopBackgroundMonitoring(): void {
+    if (this.backgroundMonitoringInterval) {
+      clearInterval(this.backgroundMonitoringInterval);
+      this.backgroundMonitoringInterval = null;
+      console.log('[Monitoring] Background monitoring stopped');
+    }
+  }
 
   /**
    * Get all active client backend configurations from API with caching
@@ -594,14 +661,25 @@ class MonitoringService {
         overallStatus = 'healthy';
       }
 
+      const overallResponseTime = allEndpoints.length > 0 
+        ? allEndpoints.reduce((sum, e) => sum + e.health.responseTime, 0) / allEndpoints.length 
+        : 0;
+
       const overallHealth: SystemHealth = {
         status: overallStatus,
         lastCheck: new Date().toISOString(),
-        responseTime: allEndpoints.length > 0 
-          ? allEndpoints.reduce((sum, e) => sum + e.health.responseTime, 0) / allEndpoints.length 
-          : 0,
+        responseTime: overallResponseTime,
         error: allEndpoints.find(e => e.health.error)?.health.error
       };
+
+      // Save system-level health history point
+      monitoringConfigService.saveHealthHistoryPoint({
+        timestamp: overallHealth.lastCheck,
+        status: overallHealth.status,
+        responseTime: overallResponseTime,
+        error: overallHealth.error,
+        endpoint: 'system-overview' // Use consistent endpoint name for system health
+      });
 
       const data: Omit<MonitoringData, 'alerts'> = {
         timestamp: new Date().toISOString(),

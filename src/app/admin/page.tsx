@@ -14,7 +14,9 @@ import {
   Zap,
   MessageSquare,
   FileText,
-  Globe
+  Globe,
+  Monitor,
+  Package
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -98,6 +100,40 @@ export default function AdminDashboard() {
         'Organize by topics',
         'Service-specific content',
         'Organization targeting'
+      ]
+    },
+    {
+      id: 'service-status',
+      title: 'Service Status Dashboard',
+      description: 'Track development and operational status of all QIG services including progress, deadlines, and updates.',
+      icon: Package,
+      iconColor: 'text-indigo-600',
+      bgGradient: 'from-indigo-50 to-purple-50',
+      path: '/admin/services',
+      status: 'available',
+      features: [
+        'Service status tracking',
+        'Development progress',
+        'Team coordination',
+        'Release planning',
+        'Analytics & metrics'
+      ]
+    },
+    {
+      id: 'monitoring',
+      title: 'System Monitoring',
+      description: 'Real-time system health monitoring, API status tracking, and advanced alerting for all services.',
+      icon: Monitor,
+      iconColor: 'text-cyan-600',
+      bgGradient: 'from-cyan-50 to-blue-50',
+      path: '/admin/monitoring',
+      status: 'available',
+      features: [
+        'Real-time health monitoring',
+        'API endpoint tracking',
+        'Advanced alerting system',
+        'Performance analytics',
+        'Historical data'
       ]
     },
     {
