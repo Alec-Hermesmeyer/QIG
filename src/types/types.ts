@@ -73,8 +73,22 @@ export interface XRayChunk {
     fileSummary?: string; // Auto-generated document summary
     fileKeywords?: string; // Keywords describing the document
     language?: string; // Detected language
-    searchData?: any; // GroundX search data
-    bucketId?: string; // GroundX bucket ID
+    searchData?: {
+      date_uploaded?: string;
+      document_type?: string;
+      key?: string;
+      [key: string]: any;
+    }; // GroundX search data
+    bucketId?: number; // GroundX bucket ID (changed to number to match backend)
+    boundingBoxes?: Array<{
+      bottomRightX: number;
+      bottomRightY: number;
+      pageNumber: number;
+      topLeftX: number;
+      topLeftY: number;
+      corrected: boolean;
+    }>; // Text location coordinates
+    json?: any[]; // Structured data extracted from document
   }
   
   export interface SearchResults {

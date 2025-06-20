@@ -29,7 +29,7 @@ export function OrganizationSettings() {
   const [name, setName] = useState('');
   const [themeColor, setThemeColor] = useState('bg-red-500');
   const [logo, setLogo] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string>('');
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -232,7 +232,7 @@ export function OrganizationSettings() {
                   src={logoPreview} 
                   alt="Logo Preview" 
                   className="max-w-full max-h-full object-contain"
-                  onError={() => setLogoPreview('/defaultLogo.png')}
+                  onError={() => setLogoPreview(null)}
                 />
               ) : (
                 <div className="text-gray-400 text-sm text-center p-4">

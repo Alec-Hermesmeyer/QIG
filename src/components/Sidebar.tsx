@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Zap, Sparkles, Home, Settings, FileText, User, Monitor } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Zap, Sparkles, Home, Settings, FileText, User, Monitor, Swords } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useOrganizationSwitch } from '@/contexts/OrganizationSwitchContext';
@@ -38,6 +38,7 @@ export function Sidebar({ className }: SidebarProps) {
     { name: 'Home', href: '/', icon: Home },
     { name: 'FastRAG', href: '/fast-rag', icon: Sparkles },
     { name: 'DeepRAG', href: '/deep-rag', icon: Zap },
+    { name: 'LLM Battlefield', href: '/llm-battlefield', icon: Swords },
     { name: 'Profile', href: '/profile', icon: User },
     { name: 'Settings', href: '/settings', icon: Settings }
   ];

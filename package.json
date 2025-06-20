@@ -12,6 +12,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@alan-ai/alan-sdk-web": "^1.8.91",
     "@azure/identity": "^4.9.0",
     "@azure/storage-blob": "^12.27.0",
     "@deepgram/sdk": "^3.12.1",

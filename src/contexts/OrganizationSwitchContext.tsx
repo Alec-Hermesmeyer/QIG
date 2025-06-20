@@ -102,7 +102,8 @@ export function OrganizationSwitchProvider({ children }: OrganizationSwitchProvi
 
   useEffect(() => {
     loadOrganizations();
-  }, [authOrganization, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authOrganization?.id, user?.id]); // Use IDs to prevent object reference changes
 
   // Load persisted organization selection on mount
   useEffect(() => {

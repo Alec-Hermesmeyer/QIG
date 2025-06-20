@@ -7,7 +7,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const supabase = createRouteHandlerClient({ cookies: () => cookies() });
+  const supabase = createRouteHandlerClient({ cookies });
   
   // Check authentication
   const { data: { session } } = await supabase.auth.getSession();
@@ -33,7 +33,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const supabase = createRouteHandlerClient({ cookies: () => cookies() });
+  const supabase = createRouteHandlerClient({ cookies });
   
   // Check authentication
   const { data: { session } } = await supabase.auth.getSession();

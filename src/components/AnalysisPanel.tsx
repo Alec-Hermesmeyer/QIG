@@ -20,6 +20,7 @@ import { GraphVisualization } from "@/components/GraphVisualization";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
 import { getCitationFilePath } from "@/lib/api";
 import { FileText, AlertTriangle, FileImage, FileBadge } from "lucide-react";
+import { getDocumentInfo } from '@/services/backendApi';
 
 // Initialize Fluent UI icons
 initializeIcons();
@@ -252,29 +253,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   // Fetch GroundX document info
   const fetchGroundXDocumentInfo = async (citation: string) => {
     try {
-      // Get the document ID from the citation
       let documentId = citation;
       if (citation.startsWith('groundx:')) {
         documentId = citation.replace('groundx:', '');
       }
+
+      console.log('🔄 Fetching Ground-X document info from backend...');
+      const data = await getDocumentInfo(documentId);
       
-      // Fetch document info from the API
-      const response = await fetch(`/api/groundx/document-info/${documentId}`);
-      const data = await response.json();
-      
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || `Failed to load document: ${response.statusText}`);
+      if (data.success && data.document) {
+        setDocumentInfo(data.document);
+        setViewerUrl(data.document.viewerUrl);
+        console.log('✅ Loaded document info from backend');
+      } else {
+        console.error('Failed to fetch document info:', data.error);
       }
-      
-      setDocumentInfo(data.document);
-      setViewerUrl(data.document.viewerUrl);
-      setCitationLoading(false);
-    } catch (err) {
-      console.error('Error loading document info:', err);
-      setCitationError(
-        err instanceof Error ? err.message : 'Failed to load document information'
-      );
-      setCitationLoading(false);
+    } catch (error) {
+      console.error('Error fetching Ground-X document info:', error);
     }
   };
 

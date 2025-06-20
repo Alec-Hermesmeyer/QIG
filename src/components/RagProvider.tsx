@@ -2,7 +2,9 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
+import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
 import { BucketInfo } from '@/types/groundx';
+import { getGroundXBuckets } from '@/services/backendApi';
 
 // Define the context type
 interface RAGContextType {
@@ -40,6 +42,7 @@ export function RAGProvider({ children }: RAGProviderProps) {
   const [availableBuckets, setAvailableBuckets] = useState<BucketInfo[]>([]);
   const [isLoadingBuckets, setIsLoadingBuckets] = useState<boolean>(false);
   const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Client-side only
   useEffect(() => {
@@ -88,30 +91,41 @@ export function RAGProvider({ children }: RAGProviderProps) {
   }, []);
 
   // Load available buckets from API
-  const loadBuckets = useCallback(async () => {
-    if (!isMounted) return;
+  const loadBuckets = async () => {
+    if (isLoadingBuckets) return;
     
     setIsLoadingBuckets(true);
+    setError(null);
+
     try {
-      const response = await fetch('/api/groundx/buckets');
-      const data = await response.json();
+      console.log('🔄 Loading Ground-X buckets from backend...');
+      const data = await getGroundXBuckets();
       
       if (data.success && data.buckets) {
-        setAvailableBuckets(data.buckets);
+        const mappedBuckets = data.buckets.map((bucket: any) => ({
+          id: bucket.id,
+          name: bucket.name,
+          documentCount: bucket.documentCount || 0
+        }));
         
-        // Auto-select the first bucket if none is selected
-        if (data.buckets.length > 0 && selectedBucket === null) {
-          setSelectedBucket(data.buckets[0].id);
+        setAvailableBuckets(mappedBuckets);
+        
+        // Auto-select first bucket if none selected
+        if (mappedBuckets.length > 0 && !selectedBucket) {
+          setSelectedBucket(mappedBuckets[0].id);
         }
+        
+        console.log(`✅ Loaded ${mappedBuckets.length} buckets from backend`);
       } else {
-        console.error('Failed to load buckets:', data.error);
+        throw new Error(data.error || 'Failed to load buckets');
       }
-    } catch (error) {
-      console.error('Error loading buckets:', error);
+    } catch (err) {
+      console.error('Error loading buckets:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load buckets');
     } finally {
       setIsLoadingBuckets(false);
     }
-  }, [selectedBucket, isMounted]);
+  };
 
   // Load buckets when RAG is enabled
   useEffect(() => {

@@ -10,20 +10,21 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getGroundXBuckets } from '@/services/backendApi';
 
 // Define bucket interface
 interface Bucket {
-  id: number | string;
+  id: number;
   name: string;
-  documentCount?: number;
+  documentCount: number;
   lastUpdated?: string;
   description?: string;
 }
 
 // Props for the BucketSelect component
 interface BucketSelectProps {
-  selectedBucketId: string | null;
-  onBucketSelect: (bucketId: string | null) => void;
+  selectedBucketId: number | null;
+  onBucketSelect: (bucketId: number | null) => void;
   className?: string;
   showDescription?: boolean;
   placeholder?: string;
@@ -80,7 +81,7 @@ export function BucketSelect({
   // Update selected bucket details when buckets load or selection changes
   useEffect(() => {
     if (selectedBucketId && buckets.length > 0) {
-      const selected = buckets.find(b => String(b.id) === selectedBucketId);
+      const selected = buckets.find(b => b.id === selectedBucketId);
       setSelectedBucket(selected || null);
     } else {
       setSelectedBucket(null);
@@ -95,19 +96,9 @@ export function BucketSelect({
     setError(null);
     
     try {
-      const response = await fetch('/api/groundx/buckets');
+      const data = await getGroundXBuckets();
       
-      if (!response.ok) {
-        throw new Error(`Failed to load buckets: ${response.status} ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to load buckets');
-      }
-      
-      if (data.buckets && Array.isArray(data.buckets)) {
+      if (data.success) {
         // Sort buckets by name for easier navigation
         const sortedBuckets = [...data.buckets].sort((a, b) => a.name.localeCompare(b.name));
         setBuckets(sortedBuckets);
@@ -115,7 +106,7 @@ export function BucketSelect({
         
         // Auto-select first bucket if available and none is selected
         if (sortedBuckets.length > 0 && !selectedBucketId) {
-          onBucketSelect(String(sortedBuckets[0].id));
+          onBucketSelect(sortedBuckets[0].id);
         }
       } else {
         // If no buckets found
@@ -133,7 +124,7 @@ export function BucketSelect({
 
   // Handle bucket selection
   const handleBucketSelect = (value: string) => {
-    onBucketSelect(value);
+    onBucketSelect(Number(value));
   };
   
   // Reset search query
@@ -181,7 +172,7 @@ export function BucketSelect({
   // Render normal state
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <Select value={selectedBucketId || undefined} onValueChange={handleBucketSelect}>
+      <Select value={selectedBucketId?.toString() || undefined} onValueChange={handleBucketSelect}>
         <SelectTrigger className="min-w-[220px] h-9">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
@@ -214,16 +205,14 @@ export function BucketSelect({
           ) : (
             filteredBuckets.map(bucket => (
               <SelectItem 
-                key={String(bucket.id)} 
-                value={String(bucket.id)}
+                key={bucket.id} 
+                value={bucket.id.toString()}
               >
                 <div className="flex items-center justify-between">
                   <span>{bucket.name}</span>
-                  {bucket.documentCount !== undefined && (
-                    <Badge variant="outline" className="ml-2 text-xs">
-                      {bucket.documentCount}
-                    </Badge>
-                  )}
+                  <Badge variant="outline" className="ml-2 text-xs">
+                    {bucket.documentCount}
+                  </Badge>
                 </div>
               </SelectItem>
             ))

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { EnhancedSupportingContent } from './SupportingContent';
 import { ThoughtProcess } from './ThoughtProcess';
+import { fetchFromBackend } from '@/services/backendApi';
 
 interface RagResponse {
   success: boolean;
@@ -72,23 +73,16 @@ export const RagIntegration: React.FC<RagIntegrationProps> = ({
       ];
       setConversationHistory(updatedHistory);
 
-      // Call RAG API
-      const response = await fetch('/api/groundx/rag', {
+      // Call RAG API using fetchFromBackend
+      const response = await fetchFromBackend('/api/groundx/rag', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           query: query,
           bucketId: bucketId,
           messages: updatedHistory,
           includeThoughts: includeThoughts
-        }),
+        })
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
 
       const data: RagResponse = await response.json();
       

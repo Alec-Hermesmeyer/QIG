@@ -8,6 +8,7 @@ import { ChevronDown, ChevronUp, Database, Zap, Brain, FileText } from "lucide-r
 import DocumentDetail from "./DocumentDetail";
 import XRayAnalysis from "./XRayAnalysis";
 import { Source, XRayChunk } from "@/types/types";
+import { authService } from "@/services/authService";
 
 // Basic types
 interface SearchResults {
@@ -417,26 +418,22 @@ const formatScoreDisplay = (score: number): string => {
 };
 
 // Process sources and X-ray data from answer
-const processSourcesAndXray = (answerObj: Answer): { sources: Source[], hasXray: boolean } => {
+const processSourcesAndXray = (answerObj: Answer): { sources: Source[]; hasXray: boolean } => {
   let sourceArray: any[] = [];
   let hasXray = false;
-  
-  // Generate a unique ID for each source based on various properties
-  const ensureUniqueId = (source: Partial<Source>, index: number): string => {
-    if (source.id) return ensureStringId(source.id);
-    
-    // Try to create an ID from filename or title
-    if (source.fileName) return `src_${source.fileName.replace(/\W+/g, '_').substring(0, 20)}_${index}`;
-    if (source.title) return `src_${source.title.replace(/\W+/g, '_').substring(0, 20)}_${index}`;
-    
-    // Fallback to using the index
-    return `source_${index}`;
-  };
-  
-  if (!answerObj) return { sources: [], hasXray: false };
-  
-  // Try to find sources in various properties of the answer object with improved extraction
-  if (Array.isArray(answerObj.sources)) {
+
+  // Extract sources from various possible locations
+  if (Array.isArray(answerObj.supportingContent)) {
+    sourceArray = answerObj.supportingContent;
+    console.log('Found supportingContent with X-ray data check:', sourceArray.map(s => ({
+      id: s.id,
+      hasXray: s.hasXray,
+      xrayKeys: s.xray ? Object.keys(s.xray) : 'none',
+      allKeys: Object.keys(s)
+    })));
+  } else if (Array.isArray(answerObj.supporting_content)) {
+    sourceArray = answerObj.supporting_content;
+  } else if (Array.isArray(answerObj.sources)) {
     sourceArray = answerObj.sources;
   } else if (answerObj.content && typeof answerObj.content === 'object' && Array.isArray((answerObj.content as any).sources)) {
     sourceArray = (answerObj.content as any).sources;
@@ -453,53 +450,55 @@ const processSourcesAndXray = (answerObj: Answer): { sources: Source[], hasXray:
             typeof answerObj.content === 'object' && 
             Array.isArray((answerObj.content as any).documents)) {
     sourceArray = (answerObj.content as any).documents;
-  } else if (answerObj.enhancedResults && Array.isArray(answerObj.enhancedResults.sources)) {
-    sourceArray = answerObj.enhancedResults.sources;
-  } else if (answerObj.content && 
-            typeof answerObj.content === 'object' && 
-            (answerObj.content as any).enhancedResults && 
-            Array.isArray((answerObj.content as any).enhancedResults.sources)) {
-    sourceArray = (answerObj.content as any).enhancedResults.sources;
   }
-  
-  // Log the source array for debugging
-  console.log('Source array found:', sourceArray);
-  
-  // If still no sources found, check for supportingContent
-  if (!sourceArray.length && answerObj.supportingContent && Array.isArray(answerObj.supportingContent)) {
-    sourceArray = answerObj.supportingContent;
-  }
-  
-  // If still no sources found, check for supportingContent in content
-  if (!sourceArray.length && 
-      answerObj.content && 
-      typeof answerObj.content === 'object' && 
-      (answerObj.content as any).supportingContent && 
-      Array.isArray((answerObj.content as any).supportingContent)) {
-    sourceArray = (answerObj.content as any).supportingContent;
-  }
-  
-  // Check if we have X-ray data in any of the sources
-  hasXray = sourceArray.some((source: any) => {
-    return (source.hasXray || source.xray);
+
+  // Process each source to normalize the data
+  const processedSources: Source[] = sourceArray.map(source => {
+    const processedSource: Source = {
+      id: source.id || source.documentId || `doc-${Math.random().toString(36).substr(2, 9)}`,
+      title: source.title || source.fileName || source.name,
+      fileName: source.fileName || source.title || source.name,
+      score: source.score || source.relevanceScore || source.rankingScore,
+      excerpts: source.excerpts || source.snippets || (source.text ? [source.text] : []),
+      narrative: source.narrative || [],
+      metadata: source.metadata || {},
+      searchData: source.searchData || {},
+      boundingBoxes: source.boundingBoxes || [],
+      pageImages: source.pageImages || [],
+      fileKeywords: source.fileKeywords || "",
+      multimodalUrl: source.multimodalUrl,
+      json: source.json || [],
+      text: source.text || source.content || "",
+      highlights: source.highlights || [],
+      sourceUrl: source.sourceUrl || source.url,
+      bucketId: typeof source.bucketId === 'string' ? parseInt(source.bucketId) : source.bucketId,
+      xray: source.xray,
+      hasXray: source.hasXray || false
+    };
+
+    // Check if this source has X-ray capabilities
+    if (source.hasXray || source.xray) {
+      hasXray = true;
+      processedSource.hasXray = true;
+      console.log(`Source ${processedSource.id} has X-ray data:`, {
+        hasXray: source.hasXray,
+        xray: source.xray ? 'present' : 'missing',
+        sourceKeys: Object.keys(source)
+      });
+    } else {
+      console.log(`Source ${processedSource.id} NO X-ray data:`, {
+        hasXray: source.hasXray,
+        xray: source.xray,
+        sourceKeys: Object.keys(source)
+      });
+    }
+
+    return processedSource;
   });
-  
-  console.log('Has X-ray data:', hasXray);
-  
-  // Process and normalize each source
-  const processedSources = sourceArray.map((source: any, index: number) => {
-    // Normalize the source
-    const normalizedSource = normalizeSource(source);
-    
-    // Ensure it has a unique ID
-    normalizedSource.id = ensureUniqueId(normalizedSource, index);
-    
-    return normalizedSource;
-  });
-  
+
   return {
     sources: processedSources,
-    hasXray: hasXray
+    hasXray
   };
 };
 
@@ -516,6 +515,7 @@ export default function DeepRAG({
   const [expanded, setExpanded] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState('answer');
   const [xrayLoading, setXrayLoading] = useState<{[key: string]: boolean}>({});
+  const [xrayData, setXrayData] = useState<Record<string, any>>({});
   const [refreshId, setRefreshId] = useState<number>(0);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [activeXrayChunk, setActiveXrayChunk] = useState<XRayChunk | null>(null);
@@ -551,40 +551,96 @@ export default function DeepRAG({
     try {
       console.log(`Fetching X-ray data for source: ${sourceId}`);
       
-      // Use the existing groundx/xray API endpoint
-      const response = await fetch(`/api/groundx/xray?documentId=${sourceId}`, {
+      // Use the Next.js API route instead of direct backend call
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(7);
+      const response = await fetch(`/api/groundx/xray?documentId=${sourceId}&_t=${timestamp}&_r=${random}&nocache=true`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0'
         }
       });
       
+      console.log(`X-ray response status: ${response.status} ${response.statusText}`);
+      console.log('X-ray response headers:', Object.fromEntries(response.headers.entries()));
+      
       if (!response.ok) {
-        throw new Error(`Error fetching X-ray data: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`X-ray error response body:`, errorText);
+        if (response.status === 304) {
+          console.warn(`Received 304 Not Modified for X-ray data: ${sourceId}. This suggests a caching issue.`);
+          throw new Error(`X-ray data not modified (304). Try refreshing the page.`);
+        }
+        throw new Error(`Error fetching X-ray data: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
       const data = await response.json();
+      console.log('Raw X-ray response data:', data);
+      console.log('X-ray response structure:', {
+        hasSuccess: 'success' in data,
+        hasData: 'data' in data,
+        hasXray: 'xray' in data,
+        topLevelKeys: Object.keys(data)
+      });
       
-      if (data.success) {
-        console.log(`Successfully fetched X-ray data for source: ${sourceId}`, data);
-        
-        // Update the sources array without triggering another fetch
-        const updatedSources = [...sources]; // Create a shallow copy
-        const sourceIndex = updatedSources.findIndex(source => ensureStringId(source.id) === sourceId);
-        
-        if (sourceIndex !== -1) {
-          // Update the specific source with its xray data
-          updatedSources[sourceIndex] = {
-            ...updatedSources[sourceIndex],
-            xray: data,
-            hasXray: true
+      // Handle different response structures
+      let xrayData = null;
+      let success = false;
+      
+      if (data.success === true) {
+        success = true;
+        // Check if xray data is in data.data, data.xray, or at the top level
+        if (data.data) {
+          xrayData = data.data;
+        } else if (data.xray) {
+          xrayData = data.xray;
+        } else {
+          // X-ray data might be mixed in with the response
+          xrayData = {
+            chunks: data.chunks,
+            fileKeywords: data.fileKeywords,
+            fileName: data.fileName,
+            fileType: data.fileType,
+            language: data.language,
+            documentPages: data.documentPages,
+            sourceUrl: data.sourceUrl,
+            fileSummary: data.fileSummary
           };
         }
+      }
+      
+      if (success && xrayData) {
+        console.log(`Successfully fetched X-ray data for source: ${sourceId}`, {
+          hasChunks: !!xrayData.chunks,
+          chunksLength: xrayData.chunks ? xrayData.chunks.length : 0,
+          hasPages: !!xrayData.documentPages,
+          pagesLength: xrayData.documentPages ? xrayData.documentPages.length : 0
+        });
         
-        // Force a re-render by incrementing refreshId
-        setRefreshId(prev => prev + 1);
+        // Update the sources array by setting xray data
+        setXrayData(prev => ({
+          ...prev,
+          [sourceId]: {
+            ...xrayData,
+            // Transform chunks to match expected format if needed
+            chunks: xrayData.chunks ? xrayData.chunks.map((chunk: any) => ({
+              id: chunk.chunk,
+              contentType: chunk.contentType,
+              text: chunk.text,
+              suggestedText: chunk.suggestedText,
+              sectionSummary: chunk.sectionSummary,
+              pageNumbers: chunk.pageNumbers,
+              boundingBoxes: chunk.boundingBoxes
+            })) : []
+          }
+        }));
       } else {
-        console.warn(`No X-ray data found for source: ${sourceId} - ${data.error || 'Unknown error'}`);
+        console.warn(`No X-ray data found for source: ${sourceId}`, {
+          success: data.success,
+          error: data.error,
+          dataKeys: Object.keys(data)
+        });
       }
     } catch (error) {
       console.error(`Error fetching X-ray data for source ${sourceId}:`, error);
@@ -596,8 +652,26 @@ export default function DeepRAG({
   // Process sources and X-ray data
   const { sources, hasXray } = React.useMemo(() => {
     console.log('Processing sources and X-ray data (memoized):', answer);
-    return processSourcesAndXray(answer);
-  }, [answer, refreshId]);
+    const result = processSourcesAndXray(answer);
+    
+    // Merge in the fetched X-ray data
+    const updatedSources = result.sources.map(source => {
+      const sourceId = ensureStringId(source.id);
+      if (xrayData[sourceId]) {
+        return {
+          ...source,
+          xray: xrayData[sourceId],
+          hasXray: true
+        };
+      }
+      return source;
+    });
+    
+    return {
+      sources: updatedSources,
+      hasXray: result.hasXray
+    };
+  }, [answer, refreshId, xrayData]);
 
   // Process all X-ray chunks across all sources
   const allXrayChunks = React.useMemo(() => {
@@ -605,7 +679,7 @@ export default function DeepRAG({
     
     sources.forEach(source => {
       if (source.xray && source.xray.chunks) {
-        source.xray.chunks.forEach(chunk => {
+        source.xray.chunks.forEach((chunk: any) => {
           chunks.push({
             chunk,
             sourceId: ensureStringId(source.id),
@@ -628,15 +702,22 @@ export default function DeepRAG({
 
   // Try to fetch X-ray data for sources that have hasXray but no xray data
   useEffect(() => {
-    // Create a ref to track which sources we're already fetching data for
+    // Check if any sources already have X-ray data
+    sources.forEach(source => {
+      if (source.xray || (source.narrative && source.narrative.length > 0) || (source.json && source.json.length > 0)) {
+        console.log(`Source ${source.id} already has X-ray-like data:`, {
+          hasXray: source.hasXray,
+          narrative: source.narrative ? source.narrative.length : 0,
+          json: source.json ? source.json.length : 0,
+          boundingBoxes: source.boundingBoxes ? source.boundingBoxes.length : 0,
+          pageImages: source.pageImages ? source.pageImages.length : 0
+        });
+      }
+    });
+    
+    // X-ray fetching logic
     const sourcesToFetch = sources.filter(source => {
       const sourceId = ensureStringId(source.id);
-      // Only fetch if:
-      // 1. The source has X-ray data available (hasXray is true)
-      // 2. The X-ray data hasn't been loaded yet (source.xray is null)
-      // 3. We're not already loading it (xrayLoading[sourceId] is not true)
-      // 4. The source has a valid ID
-      // 5. We haven't processed this source before
       return source.hasXray && 
              !source.xray && 
              !xrayLoading[sourceId] && 
@@ -644,19 +725,15 @@ export default function DeepRAG({
              !processedSourcesRef.current.has(sourceId);
     });
 
-    // Only fetch if we have sources that meet our criteria
     if (sourcesToFetch.length > 0) {
       console.log(`Found ${sourcesToFetch.length} sources with X-ray data to fetch`);
-      // Only fetch one at a time to avoid multiple simultaneous requests
       const sourceToFetch = sourcesToFetch[0];
       const sourceId = ensureStringId(sourceToFetch.id);
       
-      // Mark this source as processed to prevent future fetches
       processedSourcesRef.current.add(sourceId);
-      
       fetchXrayData(sourceId);
     }
-  }, [sources]); // Only depend on sources, not xrayLoading
+  }, [sources]);
 
   // Log debug info when answer changes
   useEffect(() => {
@@ -703,6 +780,19 @@ export default function DeepRAG({
 
   // Find the currently selected document
   const selectedDocument = sources.find(source => ensureStringId(source.id) === selectedSourceId) || null;
+  
+  // Debug selected document
+  useEffect(() => {
+    if (selectedDocument && activeTab === 'documents') {
+      console.log("=== About to render DocumentDetail ===", {
+        documentId: selectedDocument.id,
+        hasXray: selectedDocument.hasXray,
+        xrayData: selectedDocument.xray,
+        documentKeys: Object.keys(selectedDocument),
+        isAnalyzed: !!(selectedDocument.hasXray && selectedDocument.xray)
+      });
+    }
+  }, [selectedDocument, activeTab]);
   
   return (
     <motion.div
@@ -801,19 +891,21 @@ export default function DeepRAG({
 
           {/* Document detail view */}
           {activeTab === 'documents' && selectedDocument && (
-            <DocumentDetail
-              document={selectedDocument}
-              handleImageClick={handleImageClick}
-              setCurrentDocumentId={setSelectedSourceId}
-              setActiveTab={setActiveTab}
-              setActiveXrayChunk={setActiveXrayChunk}
-              themeStyles={themeStyles}
-              getRelevanceExplanation={getRelevanceExplanation}
-              onCitationClicked={handleCitationClick}
-              onStartXRayAnalysis={handleStartXRayAnalysis}
-              isXRayLoading={xrayLoading[selectedSourceId || '']}
-              isAnalyzed={!!(selectedDocument.hasXray && selectedDocument.xray)}
-            />
+            <>
+              <DocumentDetail
+                document={selectedDocument}
+                handleImageClick={handleImageClick}
+                setCurrentDocumentId={setSelectedSourceId}
+                setActiveTab={setActiveTab}
+                setActiveXrayChunk={setActiveXrayChunk}
+                themeStyles={themeStyles}
+                getRelevanceExplanation={getRelevanceExplanation}
+                onCitationClicked={handleCitationClick}
+                onStartXRayAnalysis={handleStartXRayAnalysis}
+                isXRayLoading={xrayLoading[selectedSourceId || '']}
+                isAnalyzed={!!(selectedDocument.hasXray && selectedDocument.xray)}
+              />
+            </>
           )}
           
           {/* Document list for document tab if no document is selected */}

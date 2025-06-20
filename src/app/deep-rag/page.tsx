@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
 import { ChatHistoryPanel } from "@/components/ChatHistoryPanel";
-import { useChatContext } from "@/components/ChatProvider";
+import { useUnifiedChatContext as useChatContext } from "@/components/ChatStorage/ChatStorageProvider";
 
 // Animation variants
 const fadeIn = {
@@ -46,7 +46,7 @@ export default function DeepRAGPage() {
   const [currentStreamingContent, setCurrentStreamingContent] = useState("");
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
   const [isRAGEnabled, setIsRAGEnabled] = useState(true);
-  const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
+  const [selectedBucketId, setSelectedBucketId] = useState<number | null>(null);
   const [temperature, setTemperature] = useState(0.3);
   const [streamEnabled, setStreamEnabled] = useState(true);
   
@@ -56,9 +56,10 @@ export default function DeepRAGPage() {
   const { user } = useAuth();
   const { canSwitchOrganizations } = useOrganizationSwitch();
 
-  // Get IndexedDB chat context
+  // Get unified chat context (IndexedDB or Backend)
   const {
     activeSession,
+    messages: backendMessages,
     addMessage,
     createSession,
     selectSession,
@@ -90,16 +91,49 @@ export default function DeepRAGPage() {
     currentStreamingContentRef.current = currentStreamingContent;
   }, [currentStreamingContent]);
 
+  // TODO: Re-enable backend message sync once basic chat is working
+  // Load backend messages only on initial mount, not during active conversation
+  // useEffect(() => {
+  //   if (backendMessages && backendMessages.length > 0 && chatHistory.length === 0) {
+  //     console.log('🔄 Loading initial chat history from backend:', backendMessages.length, 'messages');
+  //     
+  //     // Convert backend messages to chat history format
+  //     const convertedMessages = backendMessages.map(msg => {
+  //       const backendMsg = msg as any; // Type assertion for backend messages
+  //       return {
+  //         role: msg.role,
+  //         content: msg.content,
+  //         metadata: {
+  //           isStreaming: false,
+  //           supportingContent: backendMsg.metadata?.supportingContent || [],
+  //           thoughtProcess: backendMsg.metadata?.thoughtProcess || ''
+  //         },
+  //         raw: backendMsg.metadata?.raw || ''
+  //       };
+  //     });
+  //     
+  //     setChatHistory(convertedMessages);
+  //     setConversationStarted(convertedMessages.length > 0);
+  //   }
+  // }, [backendMessages]); // Only sync when backend messages change and chat history is empty
+
   // Handle user message
   const handleUserMessage = useCallback(async (content: string) => {
     setChatHistory(prev => [...prev, { role: 'user', content }]);
     setConversationStarted(true);
     
-    // Save to IndexedDB
-    await addMessage({
+    console.log('💬 Handling user message - letting addMessage handle session creation');
+    
+    // Let addMessage handle session creation - it's designed for this
+    // Save to backend (async, don't wait)
+    addMessage({
       role: 'user',
       content,
       timestamp: new Date().toISOString()
+    }).then(success => {
+      console.log('💬 User message saved to backend:', success);
+    }).catch(error => {
+      console.warn('⚠️ Failed to save user message to backend:', error);
     });
     
     // Reset raw response for new conversation
@@ -194,18 +228,30 @@ export default function DeepRAGPage() {
           return newHistory;
         });
         
-        // Save final message to IndexedDB
-        await addMessage({
+        // Save final message to backend (async, don't wait)
+        console.log('🤖 Saving assistant message - checking active session:', {
+          hasActiveSession: !!activeSession,
+          activeSessionId: activeSession?.id
+        });
+        
+        addMessage({
           role: 'assistant',
           content: finalContent,
           timestamp: new Date().toISOString(),
-          rawResponse: {
+          metadata: {
             raw: currentRawResponseRef.current,
             supportingContent,
-            thoughtProcess
-          },
-          supportingContent,
-          thoughts: thoughtProcess
+            thoughtProcess,
+            rawResponse: {
+              raw: currentRawResponseRef.current,
+              supportingContent,
+              thoughtProcess
+            }
+          }
+        }).then(success => {
+          console.log('🤖 Assistant message saved to backend:', success);
+        }).catch(error => {
+          console.warn('⚠️ Failed to save assistant message to backend:', error);
         });
       } else {
         // Add new message if no streaming was happening
@@ -220,18 +266,25 @@ export default function DeepRAGPage() {
           raw: currentRawResponseRef.current
         }]);
         
-        // Save to IndexedDB
-        await addMessage({
+        // Save to backend (async, don't wait)
+        addMessage({
           role: 'assistant',
           content: finalContent,
           timestamp: new Date().toISOString(),
-          rawResponse: {
+          metadata: {
             raw: currentRawResponseRef.current,
             supportingContent,
-            thoughtProcess
-          },
-          supportingContent,
-          thoughts: thoughtProcess
+            thoughtProcess,
+            rawResponse: {
+              raw: currentRawResponseRef.current,
+              supportingContent,
+              thoughtProcess
+            }
+          }
+        }).then(success => {
+          console.log('🤖 Assistant message (non-streaming) saved to backend:', success);
+        }).catch(error => {
+          console.warn('⚠️ Failed to save assistant message (non-streaming) to backend:', error);
         });
       }
       
@@ -245,18 +298,45 @@ export default function DeepRAGPage() {
   const extractSupportingContent = (metadata?: any): any[] => {
     if (!metadata) return [];
     
-    // Look for sources in various possible locations
-    const sources = metadata.sources || 
-                   metadata.supportingContent || 
-                   metadata.citations || 
-                   metadata.supporting_content ||
-                   [];
-    
-    if (Array.isArray(sources)) {
-      return sources;
+    // Look for sources in various possible locations with the rich metadata
+    let sources = metadata.sources || 
+                  metadata.supportingContent || 
+                  metadata.citations || 
+                  metadata.supporting_content ||
+                  [];
+
+    // Also check if searchResults has sources
+    if (!sources.length && metadata.searchResults?.sources) {
+      sources = metadata.searchResults.sources;
     }
     
-    // If sources is a single object, wrap it in an array
+    if (Array.isArray(sources)) {
+      // Process each source to ensure it has all the rich metadata fields
+      return sources.map(source => ({
+        // Keep all existing fields
+        ...source,
+        // Ensure required ID field
+        id: source.id || source.documentId || `source-${Date.now()}-${Math.random()}`,
+        // Map any alternative field names
+        fileName: source.fileName || source.title || source.name || 'Unknown Document',
+        // Ensure we have the rich fields from your backend
+        pageImages: source.pageImages || [],
+        narrative: source.narrative || [],
+        searchData: source.searchData || {},
+        boundingBoxes: source.boundingBoxes || [],
+        json: source.json || [],
+        fileKeywords: source.fileKeywords || '',
+        multimodalUrl: source.multimodalUrl,
+        bucketId: typeof source.bucketId === 'number' ? source.bucketId : (typeof source.bucketId === 'string' ? parseInt(source.bucketId) : undefined),
+        text: source.text || source.content || '',
+        highlights: source.highlights || [],
+        sourceUrl: source.sourceUrl || source.url,
+        hasXray: source.hasXray || false,
+        xray: source.xray
+      }));
+    }
+    
+    // If sources is a single object, wrap it in an array and process it
     if (typeof sources === 'object' && sources !== null) {
       return [sources];
     }
@@ -297,7 +377,7 @@ export default function DeepRAGPage() {
   };
 
   // Handle bucket selection
-  const handleBucketSelect = (bucketId: string | null) => {
+  const handleBucketSelect = (bucketId: number | null) => {
     setSelectedBucketId(bucketId);
   };
 
@@ -518,7 +598,7 @@ export default function DeepRAGPage() {
                       temperature={temperature}
                       streamResponses={streamEnabled}
                       isRAGEnabled={isRAGEnabled}
-                      selectedBucketId={selectedBucketId}
+                      selectedBucketId={selectedBucketId?.toString() || null}
                     />
                   </div>
                 </div>

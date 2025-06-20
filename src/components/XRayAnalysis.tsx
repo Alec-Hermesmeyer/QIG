@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Source, XRayChunk } from "@/types/types";
 import { formatScoreDisplay, fixDecimalPointIssue } from '@/utils/scoreUtils';
+import { getDocumentXray } from '@/services/backendApi';
 
 interface XRayAnalysisProps {
   xrayViewMode: 'summary' | 'detail';
@@ -1282,59 +1283,21 @@ const XRayAnalysis: React.FC<XRayAnalysisProps> = ({
     setDirectXrayError(null);
 
     try {
-      const response = await fetch(`/api/groundx/xray?documentId=${docId}&includeText=true`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch X-Ray data: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.success && data.xray) {
-        // Save to directXrayData map
-        setDirectXrayData(prev => ({
-          ...prev,
-          [docId]: data.xray
-        }));
-
-        // Find the source object
-        const source = sources.find(s => s.id === docId);
-
-        if (source && data.xray.chunks && data.xray.chunks.length > 0) {
-          // Create chunks that preserve original source properties, especially score
-          const chunks = data.xray.chunks.map((chunk: any) => ({
-            chunk: {
-              id: chunk.id,
-              contentType: chunk.contentType,
-              text: chunk.text,
-              suggestedText: chunk.suggestedText,
-              sectionSummary: chunk.sectionSummary,
-              pageNumbers: chunk.pageNumbers,
-              boundingBoxes: chunk.boundingBoxes
-            },
-            sourceId: docId,
-            source: {
-              ...source, // Preserve original source properties including score
-              xray: data.xray
-            }
-          }));
-
-          setDirectXrayChunks(prev => {
-            // Filter out any existing chunks for this document
-            const filtered = prev.filter(c => c.sourceId !== docId);
-            return [...filtered, ...chunks];
-          });
-        }
+      console.log('🔄 Fetching X-ray data from backend...');
+      const data = await getDocumentXray(docId);
+      
+      if (data.success && data.data) {
+        setDirectXrayData(data.data);
+        console.log('✅ Loaded X-ray data from backend');
       } else {
-        throw new Error(data.error || 'Failed to fetch X-Ray data');
+        console.error('Failed to fetch X-ray data:', data.error);
       }
     } catch (error) {
-      console.error("Error directly fetching X-Ray data:", error);
-      setDirectXrayError(error instanceof Error ? error.message : String(error));
+      console.error('Error fetching X-ray data:', error);
     } finally {
       setIsFetchingDirectly(prev => ({ ...prev, [docId]: false }));
     }
-  }, [sources, isFetchingDirectly]);
+  }, [isFetchingDirectly]);
 
   // Separate function to mark as attempted and fetch
   const markAndFetch = useCallback((docId: string) => {

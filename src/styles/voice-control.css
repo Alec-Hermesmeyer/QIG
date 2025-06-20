@@ -1,0 +1,183 @@
+/* Voice Control Interface Styles */
+.conversational-voice-interface {
+  @apply relative;
+}
+
+/* Voice button animations */
+.conversational-voice-interface button {
+  @apply transition-all duration-200 ease-in-out;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.conversational-voice-interface button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.conversational-voice-interface button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Listening state pulse animation */
+.conversational-voice-interface button.listening {
+  animation: voice-pulse 2s infinite;
+}
+
+@keyframes voice-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+/* Processing state animation */
+.conversational-voice-interface button.processing {
+  animation: voice-processing 1.5s infinite;
+}
+
+@keyframes voice-processing {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+/* Transcription display */
+.conversational-voice-interface .transcription {
+  @apply bg-white border border-gray-200 rounded-lg shadow-lg;
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.conversational-voice-interface .transcription.user {
+  @apply bg-blue-50 border-blue-200;
+}
+
+.conversational-voice-interface .transcription.assistant {
+  @apply bg-green-50 border-green-200;
+}
+
+/* Status indicator styles */
+.voice-status-indicator {
+  @apply fixed top-4 right-4 z-50;
+  @apply bg-white rounded-lg shadow-lg p-3 border;
+  @apply flex items-center gap-2;
+  animation: slideInFromTop 0.3s ease-out;
+}
+
+@keyframes slideInFromTop {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Voice commands guide */
+.voice-commands-guide {
+  @apply fixed bottom-6 left-6 z-40;
+  @apply bg-black bg-opacity-80 text-white p-4 rounded-lg;
+  @apply text-xs max-w-xs;
+  backdrop-filter: blur(5px);
+}
+
+.voice-commands-guide.hidden-mobile {
+  @apply hidden lg:block;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .conversational-voice-interface {
+    @apply bottom-4 right-4;
+  }
+  
+  .conversational-voice-interface button {
+    @apply h-10 w-10;
+  }
+  
+  .conversational-voice-interface .transcription {
+    @apply max-w-xs text-sm;
+  }
+  
+  .voice-commands-guide {
+    @apply hidden;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .conversational-voice-interface .transcription {
+    @apply bg-gray-800 border-gray-700 text-white;
+  }
+  
+  .conversational-voice-interface .transcription.user {
+    @apply bg-blue-900 border-blue-700;
+  }
+  
+  .conversational-voice-interface .transcription.assistant {
+    @apply bg-green-900 border-green-700;
+  }
+  
+  .voice-status-indicator {
+    @apply bg-gray-800 border-gray-700 text-white;
+  }
+}
+
+/* Accessibility improvements */
+.conversational-voice-interface button:focus-visible {
+  @apply outline-none ring-2 ring-offset-2 ring-blue-500;
+}
+
+.conversational-voice-interface [aria-live] {
+  @apply sr-only;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .conversational-voice-interface button {
+    @apply border-2 border-current;
+  }
+  
+  .conversational-voice-interface .transcription {
+    @apply border-2;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .conversational-voice-interface button,
+  .conversational-voice-interface .transcription,
+  .voice-status-indicator {
+    @apply transition-none;
+    animation: none;
+  }
+  
+  .conversational-voice-interface button.listening,
+  .conversational-voice-interface button.processing {
+    animation: none;
+  }
+}
+
+/* Voice interface floating position */
+.voice-control-interface {
+  @apply fixed bottom-6 right-6 z-50;
+}
+
+/* Ensure proper stacking */
+.voice-control-interface,
+.voice-status-indicator,
+.voice-commands-guide {
+  position: fixed;
+  z-index: 9999;
+} 

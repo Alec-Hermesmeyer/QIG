@@ -57,26 +57,10 @@ class ApiWarmupService {
       });
     });
 
-    // GroundX RAG API - lightweight warmup
-    endpoints.push({
-      name: 'GroundX RAG API',
-      url: '/api/groundx/rag',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        query: 'warmup',
-        bucketId: 1,
-        messages: [],
-        config: {
-          maxTokens: 10,
-          temperature: 0,
-          skipCache: true
-        }
-      }),
-      timeout: this.REQUEST_TIMEOUT
-    });
+    // GroundX RAG API - warmup disabled to prevent 400 errors from undefined bucketId
+    // The GroundX RAG API requires valid bucketId and query parameters,
+    // so we'll skip warming this up automatically and rely on on-demand warmup
+    // when users actually use the RAG functionality
 
     // GraphRAG API - ping endpoint
     // NOTE: Disabled because endpoint doesn't exist yet

@@ -19,6 +19,7 @@ import { useOrganizationSwitch } from "@/contexts/OrganizationSwitchContext";
 import { ChatHistoryPanel } from "@/components/ChatHistoryPanel";
 import { useChatContext } from "@/components/ChatProvider";
 import { useApiWarmup } from '@/hooks/useApiWarmup';
+import { fetchFromBackend } from '@/services/backendApi';
 
 // RAG Mode types
 type RAGMode = 'fast' | 'deep' | 'dual';
@@ -26,7 +27,15 @@ type RAGMode = 'fast' | 'deep' | 'dual';
 interface DualRAGMessage {
   role: string;
   content: string;
-  metadata?: any;
+  metadata?: {
+    searchResults?: any;
+    thoughts?: any;
+    sources?: Source[];
+    thoughtProcess?: string;
+    supportingContent?: any[];
+    reasoning?: string;
+    isStreaming?: boolean;
+  };
   raw?: string;
   ragType?: 'fast' | 'deep';
   deepRAGPending?: boolean;
@@ -35,11 +44,39 @@ interface DualRAGMessage {
     metadata?: {
       searchResults?: any;
       thoughts?: any;
-      sources?: any[];
+      sources?: Source[];
+      thoughtProcess?: string;
+      supportingContent?: any[];
+      reasoning?: string;
     };
   };
   timestamp?: number;
   messageId?: string;
+}
+
+interface Source {
+  id: string | number;
+  title?: string;
+  fileName?: string;
+  score?: number;
+  excerpts?: string[];
+  narrative?: string[];
+  metadata?: Record<string, any>;
+  searchData?: Record<string, any>;
+  boundingBoxes?: Array<{
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    text: string;
+  }>;
+  pageImages?: string[];
+  fileKeywords?: string[];
+  multimodalUrl?: string;
+  json?: Record<string, any>;
+  xray?: any;
+  hasXray?: boolean;
 }
 
 export default function DualRAGPage() {
@@ -150,9 +187,8 @@ export default function DualRAGPage() {
     ));
 
     try {
-      const response = await fetch('/api/groundx/rag', {
+      const response = await fetchFromBackend('/api/groundx/rag', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
           bucketId: selectedBucketId,
@@ -556,7 +592,18 @@ export default function DualRAGPage() {
                                       content: message.content,
                                       metadata: message.metadata,
                                       searchResults: message.metadata?.searchResults,
-                                      sources: message.metadata?.sources || []
+                                      sources: message.metadata?.sources?.map((source: Source) => ({
+                                        ...source,
+                                        pageImages: source.pageImages || [],
+                                        narrative: source.narrative || [],
+                                        searchData: source.searchData || {},
+                                        boundingBoxes: source.boundingBoxes || [],
+                                        fileKeywords: source.fileKeywords || [],
+                                        multimodalUrl: source.multimodalUrl,
+                                        json: source.json || {}
+                                      })) || [],
+                                      thoughtProcess: message.metadata?.thoughtProcess,
+                                      supportingContent: message.metadata?.supportingContent
                                     }}
                                     theme="light"
                                   />
@@ -576,8 +623,20 @@ export default function DualRAGPage() {
                                   <DeepRAG 
                                     answer={{
                                       content: message.deepRAGResponse.content,
+                                      metadata: message.deepRAGResponse.metadata,
                                       searchResults: message.deepRAGResponse.metadata?.searchResults,
-                                      sources: message.deepRAGResponse.metadata?.sources || []
+                                      sources: message.deepRAGResponse.metadata?.sources?.map((source: Source) => ({
+                                        ...source,
+                                        pageImages: source.pageImages || [],
+                                        narrative: source.narrative || [],
+                                        searchData: source.searchData || {},
+                                        boundingBoxes: source.boundingBoxes || [],
+                                        fileKeywords: source.fileKeywords || [],
+                                        multimodalUrl: source.multimodalUrl,
+                                        json: source.json || {}
+                                      })) || [],
+                                      thoughtProcess: message.deepRAGResponse.metadata?.thoughtProcess,
+                                      supportingContent: message.deepRAGResponse.metadata?.supportingContent
                                     }}
                                     theme="light"
                                   />

@@ -1,18 +1,16 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw, Home, Bug, Copy, Download } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Home, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { loggingService } from '@/services/loggingService';
 
 interface Props {
   children: ReactNode;
-  level?: 'critical' | 'page' | 'component';
-  context?: string;
   fallback?: ReactNode;
+  level?: 'page' | 'component' | 'critical';
+  context?: string;
+  onError?: (error: Error, errorInfo: ErrorInfo) => void;
 }
 
 interface State {
@@ -20,7 +18,6 @@ interface State {
   error: Error | null;
   errorInfo: ErrorInfo | null;
   errorId: string | null;
-  retryCount: number;
 }
 
 /**
@@ -40,6 +37,7 @@ interface State {
  * ```
  */
 export class ErrorBoundary extends Component<Props, State> {
+  private retryCount = 0;
   private maxRetries = 3;
 
   constructor(props: Props) {
@@ -48,125 +46,92 @@ export class ErrorBoundary extends Component<Props, State> {
       hasError: false,
       error: null,
       errorInfo: null,
-      errorId: null,
-      retryCount: 0
+      errorId: null
     };
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
+    // Update state so the next render will show the fallback UI
     return {
       hasError: true,
-      error
+      error,
+      errorId: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Generate correlation ID for this error
-    const correlationId = loggingService.generateCorrelationId();
+    // Log error with context
+    this.logError(error, errorInfo);
     
-    // Log the error with comprehensive context
-    const errorId = loggingService.logErrorBoundary(
-      error,
-      errorInfo,
-      this.props.context || 'unknown',
-      this.props.level
-    );
-
-    // Log additional error context
-    loggingService.error('Error boundary activated', {
-      errorId,
-      correlationId,
-      component: this.props.context,
-      level: this.props.level,
-      retryCount: this.state.retryCount,
-      errorName: error.name,
-      errorMessage: error.message,
-      componentStack: errorInfo.componentStack,
-      url: typeof window !== 'undefined' ? window.location.href : 'unknown',
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-      timestamp: new Date().toISOString()
-    }, {
-      errorStack: error.stack,
-      props: this.props,
-      state: this.state,
+    // Update state with error info
+    this.setState({
       errorInfo
     });
 
-    // Store error for debugging
-    this.storeErrorLocally(error, errorInfo, errorId, correlationId);
-
-    this.setState({
-      errorInfo,
-      errorId,
-      retryCount: this.state.retryCount + 1
-    });
-
-    // Report critical errors
-    if (this.props.level === 'critical') {
-      this.reportCriticalError(error, errorInfo, errorId, correlationId);
+    // Call custom error handler if provided
+    if (this.props.onError) {
+      this.props.onError(error, errorInfo);
     }
   }
 
-  private storeErrorLocally(error: Error, errorInfo: ErrorInfo, errorId: string, correlationId: string) {
-    try {
-      const errorData = {
-        id: errorId,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        error: {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        },
-        errorInfo,
-        context: this.props.context,
-        level: this.props.level,
-        url: window.location.href,
-        userAgent: navigator.userAgent,
-        retryCount: this.state.retryCount
-      };
+  /**
+   * Centralized error logging with structured data
+   */
+  private logError(error: Error, errorInfo: ErrorInfo) {
+    const errorData = {
+      errorId: this.state.errorId,
+      timestamp: new Date().toISOString(),
+      level: this.props.level || 'component',
+      context: this.props.context || 'unknown',
+      error: {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      },
+      errorInfo: {
+        componentStack: errorInfo.componentStack
+      },
+      userAgent: typeof window !== 'undefined' ? window.navigator.userAgent : 'SSR',
+      url: typeof window !== 'undefined' ? window.location.href : 'SSR',
+      retryCount: this.retryCount
+    };
 
-      const errors = JSON.parse(localStorage.getItem('qig-error-history') || '[]');
-      errors.push(errorData);
-      
-      // Keep only last 50 errors
-      if (errors.length > 50) {
-        errors.splice(0, errors.length - 50);
+    // Console logging for development
+    if (process.env.NODE_ENV === 'development') {
+      console.group(`🚨 Error Boundary Caught Error [${this.props.level}]`);
+      console.error('Error:', error);
+      console.error('Error Info:', errorInfo);
+      console.error('Context:', this.props.context);
+      console.error('Full Error Data:', errorData);
+      console.groupEnd();
+    }
+
+    // Production logging - send to monitoring service
+    if (process.env.NODE_ENV === 'production') {
+      // TODO: Send to monitoring service (e.g., Sentry, LogRocket, etc.)
+      console.error('[ERROR_BOUNDARY]', JSON.stringify(errorData));
+    }
+
+    // Store in localStorage for debugging
+    try {
+      const errorHistory = JSON.parse(localStorage.getItem('qig_error_history') || '[]');
+      errorHistory.unshift(errorData);
+      // Keep only last 10 errors
+      if (errorHistory.length > 10) {
+        errorHistory.splice(10);
       }
-      
-      localStorage.setItem('qig-error-history', JSON.stringify(errors));
+      localStorage.setItem('qig_error_history', JSON.stringify(errorHistory));
     } catch (e) {
-      console.warn('Failed to store error locally:', e);
+      console.warn('Failed to store error in localStorage:', e);
     }
   }
 
-  private async reportCriticalError(error: Error, errorInfo: ErrorInfo, errorId: string, correlationId: string) {
-    try {
-      // In a real app, this would send to an error reporting service
-      loggingService.critical('Critical error reported', {
-        errorId,
-        correlationId,
-        component: this.props.context,
-        errorName: error.name,
-        errorMessage: error.message
-      });
-    } catch (e) {
-      loggingService.error('Failed to report critical error', { 
-        originalErrorId: errorId,
-        reportingError: e 
-      });
-    }
-  }
-
+  /**
+   * Attempt to recover from error by re-rendering
+   */
   private handleRetry = () => {
-    if (this.state.retryCount < this.maxRetries) {
-      loggingService.info('Error boundary retry attempt', {
-        errorId: this.state.errorId,
-        retryCount: this.state.retryCount + 1,
-        maxRetries: this.maxRetries,
-        component: this.props.context
-      });
-
+    if (this.retryCount < this.maxRetries) {
+      this.retryCount++;
       this.setState({
         hasError: false,
         error: null,
@@ -176,173 +141,158 @@ export class ErrorBoundary extends Component<Props, State> {
     }
   };
 
+  /**
+   * Navigate to home page as last resort
+   */
   private handleGoHome = () => {
-    loggingService.userAction('Error boundary - navigate home', {
-      errorId: this.state.errorId,
-      component: this.props.context,
-      level: this.props.level
-    });
-    
-    window.location.href = '/';
+    if (typeof window !== 'undefined') {
+      window.location.href = '/';
+    }
   };
 
+  /**
+   * Report bug to development team
+   */
   private handleReportBug = () => {
-    loggingService.userAction('Error boundary - report bug', {
-      errorId: this.state.errorId,
-      component: this.props.context
-    });
-
     const errorData = {
       errorId: this.state.errorId,
-      component: this.props.context,
-      level: this.props.level,
       error: this.state.error?.message,
-      stack: this.state.error?.stack,
-      url: window.location.href,
-      timestamp: new Date().toISOString()
+      context: this.props.context,
+      stack: this.state.error?.stack
     };
 
-    // Copy error details to clipboard
-    navigator.clipboard.writeText(JSON.stringify(errorData, null, 2));
+    // In a real app, this would open a bug report form or send to issue tracker
+    console.log('Bug report data:', errorData);
     
-    // In a real app, open bug reporting form or mailto
-    alert('Error details copied to clipboard. Please report this to support.');
+    // For now, copy to clipboard
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(JSON.stringify(errorData, null, 2));
+      alert('Error details copied to clipboard');
+    }
   };
 
-  private handleCopyError = () => {
-    loggingService.userAction('Error boundary - copy error details', {
-      errorId: this.state.errorId
-    });
+  private renderFallbackUI() {
+    const { level = 'component', context } = this.props;
+    const { error, errorId } = this.state;
+    const canRetry = this.retryCount < this.maxRetries;
 
-    const errorText = `Error ID: ${this.state.errorId}\nComponent: ${this.props.context}\nError: ${this.state.error?.message}\nStack: ${this.state.error?.stack}`;
-    navigator.clipboard.writeText(errorText);
-  };
+    // Custom fallback if provided
+    if (this.props.fallback) {
+      return this.props.fallback;
+    }
 
-  private handleDownloadLogs = () => {
-    loggingService.userAction('Error boundary - download logs', {
-      errorId: this.state.errorId
-    });
-
-    const logs = loggingService.exportLogs();
-    const blob = new Blob([logs], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `qig-logs-${new Date().toISOString()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  render() {
-    if (this.state.hasError) {
-      // Custom fallback UI
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
-
-      const canRetry = this.state.retryCount < this.maxRetries;
-      const isCritical = this.props.level === 'critical';
-
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-          <Card className="max-w-lg w-full">
-            <CardHeader>
-              <div className="flex items-center space-x-3">
-                <div className={`p-2 rounded-full ${isCritical ? 'bg-red-100' : 'bg-yellow-100'}`}>
-                  <AlertTriangle className={`w-6 h-6 ${isCritical ? 'text-red-600' : 'text-yellow-600'}`} />
+    // Different UIs based on error level
+    switch (level) {
+      case 'critical':
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-red-50">
+            <Card className="w-full max-w-md mx-4 border-red-200">
+              <CardHeader className="text-center">
+                <div className="mx-auto w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                  <AlertTriangle className="w-6 h-6 text-red-600" />
                 </div>
-                <div>
-                  <CardTitle className="text-lg">
-                    {isCritical ? 'Critical Error' : 'Something went wrong'}
-                  </CardTitle>
-                  <CardDescription>
-                    {this.props.context ? `Error in ${this.props.context}` : 'An unexpected error occurred'}
-                  </CardDescription>
+                <CardTitle className="text-red-800">Critical Error</CardTitle>
+                <CardDescription className="text-red-600">
+                  The application encountered a critical error and cannot continue.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded border">
+                  <strong>Error ID:</strong> {errorId}<br />
+                  <strong>Context:</strong> {context}<br />
+                  <strong>Message:</strong> {error?.message}
                 </div>
-              </div>
-            </CardHeader>
-            
-            <CardContent className="space-y-4">
-              {/* Error Level Badge */}
-              <div className="flex items-center space-x-2">
-                <Badge variant={isCritical ? 'destructive' : 'secondary'}>
-                  {this.props.level?.toUpperCase() || 'UNKNOWN'}
-                </Badge>
-                {this.state.errorId && (
-                  <Badge variant="outline" className="font-mono text-xs">
-                    ID: {this.state.errorId.slice(0, 8)}
-                  </Badge>
-                )}
-              </div>
-
-              {/* Error Message */}
-              {this.state.error && (
-                <Alert>
-                  <AlertDescription className="text-sm">
-                    <strong>Error:</strong> {this.state.error.message}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Retry Information */}
-              {this.state.retryCount > 0 && (
-                <Alert>
-                  <AlertDescription className="text-sm">
-                    This error has occurred {this.state.retryCount} time{this.state.retryCount > 1 ? 's' : ''}.
-                    {canRetry && ` You can try ${this.maxRetries - this.state.retryCount} more time${this.maxRetries - this.state.retryCount > 1 ? 's' : ''}.`}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex flex-col space-y-2">
-                {canRetry && (
-                  <Button onClick={this.handleRetry} className="w-full">
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Try Again
-                  </Button>
-                )}
-                
-                <div className="grid grid-cols-2 gap-2">
-                  <Button onClick={this.handleGoHome} variant="outline">
+                <div className="flex flex-col gap-2">
+                  <Button onClick={this.handleGoHome} className="w-full">
                     <Home className="w-4 h-4 mr-2" />
-                    Go Home
+                    Return to Home
                   </Button>
-                  
-                  <Button onClick={this.handleReportBug} variant="outline">
+                  <Button onClick={this.handleReportBug} variant="outline" className="w-full">
                     <Bug className="w-4 h-4 mr-2" />
                     Report Bug
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        );
 
-                <div className="grid grid-cols-2 gap-2">
-                  <Button onClick={this.handleCopyError} variant="ghost" size="sm">
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copy Error
-                  </Button>
-                  
-                  <Button onClick={this.handleDownloadLogs} variant="ghost" size="sm">
-                    <Download className="w-4 h-4 mr-2" />
-                    Download Logs
+      case 'page':
+        return (
+          <div className="min-h-96 flex items-center justify-center p-8">
+            <Card className="w-full max-w-lg">
+              <CardHeader className="text-center">
+                <div className="mx-auto w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mb-4">
+                  <AlertTriangle className="w-6 h-6 text-orange-600" />
+                </div>
+                <CardTitle className="text-orange-800">Page Error</CardTitle>
+                <CardDescription>
+                  This page encountered an error. You can try refreshing or return to the home page.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded border">
+                    <strong>Error:</strong> {error?.message}<br />
+                    <strong>Context:</strong> {context}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  {canRetry && (
+                    <Button onClick={this.handleRetry} variant="default" className="flex-1">
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Try Again ({this.maxRetries - this.retryCount} left)
+                    </Button>
+                  )}
+                  <Button onClick={this.handleGoHome} variant="outline" className="flex-1">
+                    <Home className="w-4 h-4 mr-2" />
+                    Home
                   </Button>
                 </div>
-              </div>
+              </CardContent>
+            </Card>
+          </div>
+        );
 
-              {/* Development Info */}
-              {process.env.NODE_ENV === 'development' && this.state.error && (
-                <details className="mt-4">
-                  <summary className="cursor-pointer text-sm font-medium">
-                    Development Details
-                  </summary>
-                  <pre className="mt-2 text-xs bg-gray-100 p-2 rounded overflow-auto max-h-32">
-                    {this.state.error.stack}
-                  </pre>
-                </details>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      );
+      case 'component':
+      default:
+        return (
+          <div className="border border-red-200 bg-red-50 rounded-lg p-4 my-4">
+            <div className="flex items-start space-x-3">
+              <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-medium text-red-800">
+                  Component Error
+                </h3>
+                <p className="text-sm text-red-600 mt-1">
+                  A component in {context || 'this section'} failed to render.
+                </p>
+                {process.env.NODE_ENV === 'development' && (
+                  <p className="text-xs text-red-500 mt-2 font-mono">
+                    {error?.message}
+                  </p>
+                )}
+                {canRetry && (
+                  <Button 
+                    onClick={this.handleRetry} 
+                    size="sm" 
+                    variant="outline" 
+                    className="mt-3 text-red-700 border-red-200 hover:bg-red-100"
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Retry
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.renderFallbackUI();
     }
 
     return this.props.children;

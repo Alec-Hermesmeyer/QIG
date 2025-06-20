@@ -136,7 +136,7 @@ function LandingPageContent() {
   const { user, organization } = useAuth();
   const { canSwitchOrganizations, activeOrganization, userOrganization } = useOrganizationSwitch();
   
-  const [logoUrl, setLogoUrl] = useState<string>('/defaultLogo.png');
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [themeColor, setThemeColor] = useState<string>('from-slate-900 via-gray-800 to-slate-900');
   const [clientConfig, setClientConfig] = useState<ClientConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
@@ -208,14 +208,13 @@ function LandingPageContent() {
 
   // Fetch organization data and configuration
   useEffect(() => {
-    // Prevent multiple simultaneous loading attempts
-    if (loadingRef.current) {
-      console.log('Already loading landing data, skipping...');
+    const currentDisplayOrganization = activeOrganization || organization;
+    
+    if (!currentDisplayOrganization?.id) {
+      console.log('No organization ID available');
       return;
     }
 
-    const currentDisplayOrganization = activeOrganization || organization;
-    
     // Generate services based on organization configuration
     const generateAvailableServices = (config: ClientConfiguration | null) => {
       const allServices: ServiceInfo[] = [
@@ -310,23 +309,16 @@ function LandingPageContent() {
     };
     
     const fetchOrganizationData = async () => {
-      if (!currentDisplayOrganization?.id) {
-        console.log('No organization ID available');
-        setLoading(false);
-        loadingRef.current = false;
-        return;
-      }
-      
       setLoading(true);
       loadingRef.current = true;
       console.log('Fetching data for organization:', currentDisplayOrganization.name);
       
       try {
-        // Fetch client configuration
+        // Fetch client configuration first
         const config = await clientConfigService.getClientConfig(currentDisplayOrganization.id);
         setClientConfig(config);
         
-        // Fetch complete organization data from database to get theme info
+        // Fetch organization data for theme
         const { data: orgData, error: orgError } = await supabase
           .from('organizations')
           .select('id, name, theme_color, logo_url, created_at')
@@ -337,22 +329,7 @@ function LandingPageContent() {
           console.warn('Error fetching organization details:', orgError);
         }
         
-        // Fetch logo
-        const { data: files, error } = await supabase.storage
-          .from(LOGOS_BUCKET)
-          .list(currentDisplayOrganization.id.toString());
-          
-        if (!error && files && files.length > 0) {
-          const logoPath = `${currentDisplayOrganization.id.toString()}/${files[0].name}`;
-          const url = getOrganizationLogoUrl(logoPath);
-          setLogoUrl(url);
-        } else if (orgData?.logo_url) {
-          setLogoUrl(orgData.logo_url);
-        } else {
-          setLogoUrl('/defaultLogo.png');
-        }
-        
-        // Set enhanced theme gradient based on organization theme
+        // Set theme color
         if (orgData?.theme_color) {
           const color = orgData.theme_color.toLowerCase();
           if (color.includes('blue')) {
@@ -365,37 +342,45 @@ function LandingPageContent() {
             setThemeColor('from-red-900 via-rose-800 to-pink-900');
           } else if (color.includes('orange')) {
             setThemeColor('from-orange-900 via-amber-800 to-yellow-900');
-          } else {
-            setThemeColor('from-slate-900 via-gray-800 to-slate-900');
           }
-        } else {
-          // Default theme
-          setThemeColor('from-slate-900 via-gray-800 to-slate-900');
+        }
+
+        // Try to fetch logo, but don't let it block the page
+        try {
+          const { data: files, error } = await supabase.storage
+            .from(LOGOS_BUCKET)
+            .list(currentDisplayOrganization.id.toString());
+            
+          if (!error && files && files.length > 0) {
+            const logoPath = `${currentDisplayOrganization.id.toString()}/${files[0].name}`;
+            const url = getOrganizationLogoUrl(logoPath);
+            setLogoUrl(url);
+          } else if (orgData?.logo_url) {
+            setLogoUrl(orgData.logo_url);
+          }
+        } catch (logoError) {
+          console.warn('Error fetching logo:', logoError);
+          if (orgData?.logo_url) {
+            setLogoUrl(orgData.logo_url);
+          }
         }
 
         // Generate available services based on configuration
         generateAvailableServices(config);
         
-        // Mark as initialized on first successful load
-        initializedRef.current = true;
-        
       } catch (err) {
         console.error('Failed to fetch organization data:', err);
         // Set fallback theme on error
         setThemeColor('from-slate-900 via-gray-800 to-slate-900');
-        setLogoUrl('/defaultLogo.png');
+        setLogoUrl(null);
+        generateAvailableServices(null);
       } finally {
-        // Use a small timeout to ensure state updates are processed
-        setTimeout(() => {
-          setLoading(false);
-          loadingRef.current = false;
-        }, 100);
+        setLoading(false);
+        loadingRef.current = false;
       }
     };
     
     const fetchRecentActivity = async () => {
-      if (!currentDisplayOrganization?.id) return;
-      
       setActivityLoading(true);
       try {
         // Fetch recent documents
@@ -436,7 +421,7 @@ function LandingPageContent() {
           sessionsCreated: analytics.totalSessions,
           totalInteractions: analytics.totalMessages,
           topService: analytics.totalSessions > 0 ? 'AI Document Chat' : 'No activity',
-          avgResponseTime: 1.8, // Keep as estimated average for now
+          avgResponseTime: 1.8,
           recentDocuments: currentMonthDocs,
           activeToday: analytics.activeToday,
           monthlyGrowth: analytics.monthlySessionGrowth
@@ -452,7 +437,7 @@ function LandingPageContent() {
     
     fetchOrganizationData();
     fetchRecentActivity();
-  }, [activeOrganization?.id, organization?.id, userOrganization?.name]);
+  }, [activeOrganization?.id, organization?.id]); // Only depend on organization ID changes
 
   const navigateToService = (service: ServiceInfo) => {
     if (service.available && service.path) {
@@ -624,7 +609,7 @@ function LandingPageContent() {
                       width={72} 
                       height={72}
                       className="rounded-xl shadow-lg"
-                      onError={() => setLogoUrl('/defaultLogo.png')}
+                      onError={() => setLogoUrl(null)}
                       priority
                       unoptimized
                     />

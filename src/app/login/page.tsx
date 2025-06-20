@@ -21,10 +21,15 @@ export default function LoginPage() {
       return;
     }
 
-    const { error } = await signIn(email, password);
-    
-    if (error) {
-      setError(error.message);
+    try {
+      const { error: loginError } = await signIn(email, password);
+      
+      if (loginError) {
+        setError(loginError.message || 'Login failed. Please check your credentials.');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('An unexpected error occurred. Please try again.');
     }
   };
 

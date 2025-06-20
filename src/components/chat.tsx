@@ -15,6 +15,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useRAG } from './RagChatProvider';
 import { useOrganizationAwareAPI } from '@/hooks/useOrganizationAwareAPI';
 import { useApiWarmup } from '@/hooks/useApiWarmup';
+import { streamBackendChat } from '@/services/backendChatService';
+import { useUnifiedChatContext } from '@/components/ChatStorage/ChatStorageProvider';
 
 // Define interface for search configuration
 interface SearchConfig {
@@ -39,7 +41,7 @@ interface ChatConfig {
 
 interface ChatProps {
   onUserMessage: (message: string) => void;
-  onAssistantMessage: (message: string) => void;
+  onAssistantMessage: (message: string, metadata?: any) => void;
   onConversationStart?: () => void;
   onStreamingChange?: (isStreaming: boolean) => void;
   isDisabled?: boolean;
@@ -73,11 +75,18 @@ const slideUp = {
   visible: { y: 0, opacity: 1, transition: { duration: 0.3 } }
 };
 
-// Configuration for Deepgram and ElevenLabs
-const DEEPGRAM_API_URL = 'wss://api.deepgram.com/v1/listen';
-const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
+// Configuration for backend STT and TTS endpoints
+// These can be configured via environment variables:
+// NEXT_PUBLIC_BACKEND_STT_WS_URL - WebSocket URL for STT (default: ws://localhost:8080/ws/audio)
+// NEXT_PUBLIC_BACKEND_TTS_URL - HTTP URL for TTS (default: http://localhost:8080/api/tts)
+// NEXT_PUBLIC_DEFAULT_STT_ENGINE - STT engine to use: 'deepgram' or 'whisper' (default: deepgram)
+const BACKEND_STT_WS_URL = process.env.NEXT_PUBLIC_BACKEND_STT_WS_URL || 'ws://localhost:8080/ws/audio';
+const BACKEND_TTS_URL = process.env.NEXT_PUBLIC_BACKEND_TTS_URL || 'http://localhost:8080/api/tts';
 
-// Define proper TypeScript interfaces for Deepgram response
+// STT Engine options: 'deepgram' or 'whisper'
+const DEFAULT_STT_ENGINE = process.env.NEXT_PUBLIC_DEFAULT_STT_ENGINE || 'deepgram';
+
+  // Define proper TypeScript interfaces for STT response (compatible with Deepgram format from backend)
 interface DeepgramWordInfo {
   word: string;
   start: number;
@@ -132,6 +141,17 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
   // Initialize organization-aware API hook
   const { organizationAwareFetch, activeOrganization, isActingAsOtherOrg } = useOrganizationAwareAPI();
+  
+  // Get session context for persistence
+  const { activeSession } = useUnifiedChatContext();
+  
+  // Voice UI control helper function (exposed globally by VoiceUIWrapper)
+  const processVoiceUICommand = useCallback(async (text: string) => {
+    if (typeof window !== 'undefined' && (window as any).processVoiceUICommand) {
+      return await (window as any).processVoiceUICommand(text);
+    }
+    return false;
+  }, []);
  
   // Original state
   const [input, setInput] = useState('');
@@ -206,6 +226,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     promptTemplate,
     searchConfig
   });
+
+  // Always use backend mode now
+  const useBackendMode = true;
 
   // Wake words and action words configuration
   const WAKE_WORDS = ['hey assistant', 'hello chat', 'hey chat', 'assistant'];
@@ -428,16 +451,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       // Clean up any existing resources first
       cleanupSpeechResources();
 
-      // Get the API key
-      const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-      
-      if (!apiKey) {
-        const error = 'Deepgram API key is missing. Please add NEXT_PUBLIC_DEEPGRAM_API_KEY to your .env.local file.';
-        console.error('[STT] ' + error);
-        setSpeechError(error);
-        setIsConnecting(false);
-        return;
-      }
+      // No API key needed - backend handles the Deepgram integration
+      console.log('[STT] Using backend STT service');
 
       console.log('[STT] API key found, requesting microphone access...');
       
@@ -463,14 +478,14 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         return;
       }
 
-      // Create WebSocket connection with proper authentication
-      const wsUrl = `${DEEPGRAM_API_URL}?encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
+      // Create WebSocket connection to backend STT service
+      const wsUrl = `${BACKEND_STT_WS_URL}?stt_engine=${DEFAULT_STT_ENGINE}&encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
       
-      console.log('[STT] Connecting to WebSocket...');
+      console.log('[STT] Connecting to backend WebSocket...');
       
       try {
-        // Connect using the token subprotocol as required by Deepgram
-        const socket = new WebSocket(wsUrl, ['token', apiKey]);
+        // Connect to backend - no authentication needed as backend handles API keys
+        const socket = new WebSocket(wsUrl);
         socketRef.current = socket;
 
         // Set up connection timeout
@@ -485,10 +500,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
         socket.onopen = async () => {
           clearTimeout(connectionTimeout);
-          console.log('[STT] WebSocket connection opened');
+          console.log('[STT] Backend WebSocket connection opened');
           
-          // Authentication is handled via the subprotocol
-          console.log('[STT] Authenticated via token subprotocol');
+          // Authentication is handled by the backend
+          console.log('[STT] Connected to backend STT service');
           
           try {
             // Create AudioContext
@@ -588,7 +603,64 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                   const fullText = input + transcription.trim() + ' ';
                   console.log('[STT] Full text would be:', `"${fullText}"`);
                   
-                  // Check for action words FIRST (immediate submit)
+                  // Check if this is a UI command (when voice UI control is available)
+                  if (wakeWordActive) {
+                    console.log('[STT] 🎮 Checking for UI command:', fullText);
+                    
+                    // Check if this looks like a UI command
+                    const uiCommandPatterns = [
+                      /go to|navigate to|open/i,
+                      /click|press|tap/i,
+                      /scroll|move/i,
+                      /search for|find/i,
+                      /close|open|toggle/i,
+                      /back|forward|refresh/i,
+                      /fill|type|enter/i,
+                      /select|choose/i
+                    ];
+                    
+                    const isUICommand = uiCommandPatterns.some(pattern => pattern.test(fullText));
+                    
+                    if (isUICommand) {
+                      console.log('[STT] 🎯 UI COMMAND DETECTED - PROCESSING');
+                      const cleanCommand = extractMessageFromTranscript(fullText);
+                      
+                      if (cleanCommand.trim()) {
+                        clearAutoSubmitTimer();
+                        setInterimTranscript('Processing UI command...');
+                        
+                        // Process as UI command
+                        processVoiceUICommand(cleanCommand.trim())
+                          .then((handled) => {
+                            if (handled) {
+                              console.log('[STT] UI command processed successfully');
+                              setInterimTranscript('');
+                              setInput('');
+                              setIsWakeWordDetected(false);
+                              wakeWordDetectedRef.current = false;
+                              
+                              // Resume wake word listening
+                              if (isHandsFreeMode) {
+                                setTimeout(() => {
+                                  startWakeWordListening();
+                                }, 1000);
+                              }
+                            } else {
+                              console.log('[STT] UI command not handled, treating as regular message');
+                              setInterimTranscript('');
+                            }
+                          })
+                          .catch((error: any) => {
+                            console.error('[STT] Error processing UI command:', error);
+                            setInterimTranscript('');
+                          });
+                        
+                        return;
+                      }
+                    }
+                  }
+                  
+                  // Check for action words FIRST (immediate submit for chat messages)
                   if (wakeWordActive && containsActionWord(fullText)) {
                     console.log('[STT] 🎯 ACTION WORD DETECTED - IMMEDIATE SUBMIT');
                     
@@ -672,7 +744,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
                       if (cleanMessage.trim()) {
                         console.log('[STT] Executing immediate submit for interim action word');
                         setInput(cleanMessage.trim());
-                        setTimeout(() => {
+              setTimeout(() => {
                           handleHandsFreeSubmit();
                         }, 200);
                         return;
@@ -830,7 +902,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     
     // Split text into sentences for more granular control
     const sentences = cleanText.split(/(?<=[.!?])\s+/);
-  
+    
     // Build a coherent summary from sentences
     let summary = '';
     for (let i = 0; i < Math.min(sentences.length, 7); i++) {
@@ -874,20 +946,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       .replace(/\s{2,}/g, ' ');
   };
 
-  // IMPROVED: Text-to-speech generation with better error handling and quality settings
+  // IMPROVED: Text-to-speech generation using backend TTS service
   const generateTTS = async (text: string) => {
     try {
       setIsTTSLoading(true);
-      
-      // Get ElevenLabs API key and voice ID from environment variables
-      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
-      const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM'; // Default voice ID
-      
-      if (!apiKey) {
-        console.error('ElevenLabs API key is missing');
-        setIsTTSLoading(false);
-        return;
-      }
       
       // Generate a meaningful summary to speak
       const summary = generateSummary(text);
@@ -905,18 +967,16 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       // Clear any existing audio
       cleanupAudioResources();
       
-      // Make request to ElevenLabs API with improved error handling
+      // Make request to backend TTS service
       try {
-        const response = await fetch(`${ELEVENLABS_API_URL}/${voiceId}`, {
+        const response = await fetch(BACKEND_TTS_URL, {
           method: 'POST',
           headers: {
             'Accept': 'audio/mpeg',
-            'Content-Type': 'application/json',
-            'xi-api-key': apiKey
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             text: summary,
-            model_id: 'eleven_multilingual_v2',
             voice_settings: {
               stability: 0.6,
               similarity_boost: 0.7,
@@ -927,7 +987,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         });
         
         if (!response.ok) {
-          throw new Error(`ElevenLabs API error: ${response.status}`);
+          throw new Error(`Backend TTS API error: ${response.status}`);
         }
         
         // Convert response to blob and create URL
@@ -976,10 +1036,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         };
         
       } catch (error) {
-        console.error('Error with ElevenLabs API:', error);
-        // Don't show audio controls if TTS failed
+          console.error('Error with backend TTS API:', error);
+          // Don't show audio controls if TTS failed
         setAudioSrc(null);
-      }
+        }
     } catch (error) {
       console.error('Error generating TTS:', error);
     } finally {
@@ -1008,6 +1068,75 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   const activeBucketId = ragBucketId || ragContext.selectedBucket || null; // Ensure fallback if selectedBucket is undefined
 
 
+    const handleBackendSubmit = async (userMessage: string) => {
+    try {
+      // Format all messages for context
+      const formattedMessages = allMessages.map(msg => ({
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: typeof msg.content === 'object' ? 
+          (msg.content as any).content || JSON.stringify(msg.content) : 
+          msg.content
+      }));
+      
+      // Add the new user message
+      formattedMessages.push({
+        role: 'user' as const,
+        content: userMessage
+      });
+
+      // Use backend chat service with streaming
+      const response = await streamBackendChat({
+        messages: formattedMessages,
+        temperature: config.temperature || 0,
+        includeThoughts: true,
+        streamResponse: true,
+        useRAG: props.isRAGEnabled && !!props.selectedBucketId,
+        bucketId: props.selectedBucketId || undefined,
+        sessionId: activeSession?.id, // Include session ID for persistence
+        onChunk: (chunk: string) => {
+          setAccumulatedContent(prev => prev + chunk);
+          setWaitingForFirstChunk(false);
+        },
+        onThoughts: (thought: string) => {
+          console.log('[Backend Chat] Thought:', thought);
+        },
+        onSearchResults: (results: any) => {
+          console.log('[Backend Chat] Search results:', results);
+        },
+        onComplete: (fullResponse: string, metadata?: any) => {
+          // Add complete response to history
+          const assistantMessage = {
+            role: 'assistant',
+            content: fullResponse
+          };
+          setAllMessages(prev => [...prev, assistantMessage]);
+          // Pass both content and metadata to the callback
+          if (typeof onAssistantMessage === 'function') {
+            if (onAssistantMessage.length > 1) {
+              // If the callback accepts metadata, pass it
+              (onAssistantMessage as (content: string, metadata?: any) => void)(fullResponse, metadata);
+            } else {
+              // Fallback for callbacks that only accept content
+              onAssistantMessage(fullResponse);
+            }
+          }
+        },
+        onError: (error: Error) => {
+          console.error('[Backend Chat] Error:', error);
+          const errorMessage = "I'm sorry, I encountered an error processing your request with the backend.";
+          setAllMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
+          onAssistantMessage(errorMessage);
+        }
+      });
+
+    } catch (error) {
+      console.error('Error with backend chat:', error);
+      const errorMessage = "I'm sorry, the backend service is not available.";
+      setAllMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
+      onAssistantMessage(errorMessage);
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -1027,214 +1156,16 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
   
     // Notify parent component
     onUserMessage(userMessage);
-  
-    try {
-      // Create a session ID
-      const sessionId = localStorage.getItem('chat_session_id') ||
-        Math.random().toString(36).substring(2, 15) +
-        Math.random().toString(36).substring(2, 15);
-  
-      // Store session ID for future use
-      localStorage.setItem('chat_session_id', sessionId);
-  
-      // Include all previous messages for context, plus the new message
-      const formattedMessages = allMessages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
-      
-      // Add the new user message
-      formattedMessages.push({
-        role: 'user',
-        content: userMessage
-      });
 
-      // Determine which RAG system to use
-      let endpoint = '/api/chat-stream';
-      let useGroundX = false;
-      
-      // Check if RAG should be used
-      if (props.isRAGEnabled && props.selectedBucketId) {
-        console.log('[ImprovedChat] Using GroundX RAG with bucket:', props.selectedBucketId);
-        endpoint = '/api/groundx/rag';
-        useGroundX = true;
-      } else if (useRAG || ragContext.isRAGEnabled) {
-        console.log('[ImprovedChat] Using FastRAG');
-        // Keep using the default /api/chat-stream endpoint for FastRAG
-      }
-      
-      console.log('[ImprovedChat] Using endpoint:', endpoint);
-      
-      // Prepare request body based on RAG system
-      const requestBody = useGroundX ? {
-        query: userMessage,
-        bucketId: props.selectedBucketId,
-        messages: formattedMessages,
-        config: {
-          temperature: config.temperature || 0,
-          stream: false // GroundX RAG doesn't support streaming yet
-        }
-      } : {
-        messages: formattedMessages,
-        context: {
-          overrides: {
-            prompt_template: config.promptTemplate,
-            top: 3,
-            temperature: config.temperature || 0,
-            minimum_search_score: config.searchConfig?.minSearchScore || 0,
-            minimum_reranker_score: config.searchConfig?.minRerankerScore || 0,
-            retrieval_mode: config.searchConfig?.retrievalMode || "hybrid",
-            semantic_ranker: config.searchConfig?.useSemanticRanker || true,
-            semantic_captions: config.searchConfig?.useSemanticCaptions || false,
-            query_rewriting: false,
-            suggest_followup_questions: config.suggestFollowUpQuestions || false,
-            use_oid_security_filter: false,
-            use_groups_security_filter: false,
-            vector_fields: ["embedding"],
-            use_gpt4v: false,
-            gpt4v_input: "textAndImages",
-            language: "en"
-          }
-        },
-        session_state: sessionId
-      };
-
-      console.log('[ImprovedChat] Request details:', {
-        endpoint,
-        ragEnabled: props.isRAGEnabled,
-        selectedBucket: props.selectedBucketId,
-        messageCount: formattedMessages.length,
-        activeOrganization: activeOrganization?.name,
-        isActingAsOtherOrg
-      });
-      
-      // Send the request using organization-aware fetch
-      const response = await organizationAwareFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      // Choose appropriate response handler
-      if (useGroundX) {
-        // GroundX RAG always uses non-streaming
-        await handleNonStreamingRAGResponse(response);
-      } else if (config.streamResponse) {
-        // FastRAG with streaming
-        await handleStreamingResponse(response);
-      } else {
-        // FastRAG without streaming
-        await handleNonStreamingResponse(response);
-      }
-      
-      // Save the timestamp of the latest response
-      setLastResponseTimestamp(Date.now());
-    } catch (error) {
-      console.error('Error fetching response:', error);
-      const errorMessage = "I'm sorry, I encountered an error processing your request.";
-  
-      // Add error message to history
-      setAllMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
-  
-      // Notify parent component
-      onAssistantMessage(errorMessage);
-    } finally {
-      setIsLoading(false);
-      if (onStreamingChange) onStreamingChange(false);
-    }
+    // Always use backend now
+    await handleBackendSubmit(userMessage);
+    setIsLoading(false);
+    if (onStreamingChange) onStreamingChange(false);
   };
-  const handleNonStreamingRAGResponse = async (response: Response) => {
-    try {
-      const data = await response.json();
-      console.log('[ImprovedChat] Raw GroundX RAG response:', data);
-      
-      let content = '';
-      let searchResults = null;
 
-      if (data && data.success) {
-        // Handle GroundX RAG response format
-        if (data.response) {
-          console.log('[ImprovedChat] GroundX response data:', data.response);
-          
-          // Handle nested response structure
-          if (typeof data.response === 'object') {
-            // Find the first key that contains the summary
-            const summaryKey = Object.keys(data.response).find(key => 
-              key.toLowerCase().includes('summary') || 
-              key.toLowerCase().includes('proposal')
-            );
-            
-            if (summaryKey) {
-              const summaryData = data.response[summaryKey];
-              // Convert the summary object to a formatted string
-              content = Object.entries(summaryData)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join('\n');
-            } else {
-              // If no summary key found, stringify the entire response
-              content = JSON.stringify(data.response, null, 2);
-            }
-          } else {
-            content = data.response;
-          }
-          
-          searchResults = data.searchResults || null;
-          console.log('[ImprovedChat] Extracted GroundX content:', content.substring(0, 100) + '...');
-        } else {
-          console.log('[ImprovedChat] No GroundX response data found');
-          content = "No content received from the GroundX RAG API.";
-        }
-      } else {
-        console.log('[ImprovedChat] Error in GroundX response:', data.error);
-        content = data.error || "Error processing your request with the document search.";
-      }
-
-      // Update UI with content
-      setAccumulatedContent(content);
-
-      // Add response to history with search results and sources
-      const messageWithSearchResults = {
-        role: 'assistant', 
-        content: content,
-        searchResults: searchResults,
-        sources: data.searchResults?.sources || []
-      };
-      
-      console.log('[ImprovedChat] Adding GroundX message to history');
-      setAllMessages(prev => [...prev, messageWithSearchResults]);
-
-      // Notify parent component with content and metadata
-      console.log('[ImprovedChat] Notifying parent component about GroundX response');
-      if (typeof onAssistantMessage === 'function') {
-        if (onAssistantMessage.length > 1) {
-          // If the function accepts metadata
-          const metadata = { 
-            searchResults,
-            sources: data.searchResults?.sources || [],
-            thoughtProcess: data.thoughts || '',
-            supportingContent: data.searchResults?.sources || []
-          };
-          (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
-        } else {
-          // Basic version that only accepts content
-          onAssistantMessage(content);
-        }
-      }
-      
-      // Generate TTS for the response
-      if (content) {
-        generateTTS(content);
-      }
-    } catch (error) {
-      console.error('[ImprovedChat] Error handling GroundX response:', error);
-      setAccumulatedContent("Error processing GroundX RAG response. Please try again.");
-    }
-  };
   
+  // DEPRECATED: These handlers are no longer used since we migrated to Express backend
+  // TODO: Remove in future cleanup
   // Advanced handler for streaming responses with complete context filtering
   const handleStreamingResponse = async (response: Response) => {
     if (!response.body) {
@@ -1752,14 +1683,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       // Clean up any existing wake word resources
       cleanupHandsFreeResources();
 
-      const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-      
-      if (!apiKey) {
-        const error = 'Deepgram API key is missing for hands-free mode.';
-        console.error('[HANDS-FREE] ' + error);
-        setHandsFreeFeedback(error);
-        return;
-      }
+      // Backend handles API key management
+      console.log('[HANDS-FREE] Using backend STT service for wake word detection');
 
       // Request microphone access for continuous listening
       try {
@@ -1783,10 +1708,10 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       }
 
       // Create WebSocket connection for wake word detection
-      const wsUrl = `${DEEPGRAM_API_URL}?encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
+      const wsUrl = `${BACKEND_STT_WS_URL}?stt_engine=${DEFAULT_STT_ENGINE}&encoding=linear16&sample_rate=16000&channels=1&model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true`;
       
       try {
-        const socket = new WebSocket(wsUrl, ['token', apiKey]);
+        const socket = new WebSocket(wsUrl);
         wakeWordSocketRef.current = socket;
 
         socket.onopen = async () => {
@@ -2375,6 +2300,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           </Button>
         </motion.div>
 
+
+
         <motion.div
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -2393,6 +2320,21 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         </motion.div>
       </motion.form>
 
+      {/* Backend Mode Indicator */}
+      <motion.div 
+        className="mt-2 text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 border border-blue-200"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.35 }}
+      >
+        <span className="font-medium">
+          🔗 Express Backend Active
+          {props.isRAGEnabled && props.selectedBucketId && (
+            <span className="ml-2 text-green-600">+ Ground-X RAG</span>
+          )}
+        </span>
+      </motion.div>
+
       {/* Optional: Configuration Indicator */}
       {process.env.NODE_ENV === 'development' && (
         <motion.div 
@@ -2402,6 +2344,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           transition={{ delay: 0.4 }}
         >
           {/* Show current configuration settings for debugging */}
+          <span>Mode: Express Backend | </span>
           <span>T: {config.temperature?.toFixed(1)} | </span>
           {config.seed && <span>Seed: {config.seed} | </span>}
           <span>Stream: {config.streamResponse ? 'On' : 'Off'} | </span>

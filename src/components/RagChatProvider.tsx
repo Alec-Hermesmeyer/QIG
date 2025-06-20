@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
+import { getGroundXBuckets } from '@/services/backendApi';
 
 // Define the types for our context
 interface RAGContextType {
@@ -60,8 +61,8 @@ export function RAGProvider({ children }: RAGProviderProps) {
   const loadBuckets = useCallback(async () => {
     setIsLoadingBuckets(true);
     try {
-      const response = await fetch('/api/groundx/buckets');
-      const data = await response.json();
+      console.log('🔄 Loading Ground-X buckets from backend...');
+      const data = await getGroundXBuckets();
       
       if (data.success && data.buckets) {
         setAvailableBuckets(data.buckets);
@@ -69,6 +70,7 @@ export function RAGProvider({ children }: RAGProviderProps) {
         if (data.buckets.length > 0 && selectedBucket === null) {
           setSelectedBucket(data.buckets[0].id);
         }
+        console.log(`✅ Loaded ${data.buckets.length} buckets from backend`);
       } else {
         console.error('Failed to load buckets:', data.error);
       }

@@ -100,7 +100,7 @@ const ChatProviderInner: React.FC<ChatProviderProps> = ({ children }) => {
     clearSessionMessages,
     getStorageStats,
     cleanupOldSessions,
-    clearError
+    clearError: clearChatError
   } = useIndexedDBChat();
 
   const [showChatHistory, setShowChatHistory] = useState(false);
@@ -171,7 +171,7 @@ const ChatProviderInner: React.FC<ChatProviderProps> = ({ children }) => {
     // Utilities
     getStorageStats,
     cleanupOldSessions,
-    clearError
+    clearError: clearChatError
   };
 
   return (

@@ -18,6 +18,7 @@ import {
   Code,
   Filter
 } from 'lucide-react';
+import { queryGroundXRag } from '@/services/backendApi';
 
 // Define the source information type
 interface Source {
@@ -57,6 +58,7 @@ export default function RagDebugPage() {
   const [temperature, setTemperature] = useState(0.3);
   const [viewMode, setViewMode] = useState<'raw' | 'formatted'>('formatted');
   const [expandedDocs, setExpandedDocs] = useState<Set<number>>(new Set());
+  const [error, setError] = useState<string | null>(null);
 
   // Toggle document expansion
   const toggleDocExpansion = (index: number) => {
@@ -120,39 +122,20 @@ export default function RagDebugPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!query || !bucketId) return;
+
     setIsLoading(true);
-    
+    setError(null);
+    setResponse(null);
+
     try {
-      const apiRequest = {
-        query,
-        bucketId,
-        messages: [],
-        includeThoughts: includeThoughts,
-        limit,
-        maxTokens,
-        temperature
-      };
+      console.log('🔄 Querying Ground-X RAG from backend...');
+      const data = await queryGroundXRag(query, bucketId);
       
-      console.log('Sending RAG API request:', apiRequest);
-      
-      const res = await fetch('/api/groundx/rag', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(apiRequest)
-      });
-      
-      if (!res.ok) {
-        throw new Error(`API request failed with status ${res.status}`);
-      }
-      
-      const data = await res.json();
-      console.log('RAG API response:', data);
       setResponse(data);
-    } catch (error) {
-      console.error('Error making RAG API request:', error);
-      alert('Error making RAG API request. Check console for details.');
+      console.log('✅ Got RAG response from backend');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setIsLoading(false);
     }

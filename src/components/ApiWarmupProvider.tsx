@@ -8,11 +8,11 @@ interface ApiWarmupProviderProps {
 }
 
 /**
- * Provider component that handles API warmup initialization
+ * Provider that automatically warms up APIs in the background
  * 
- * This component:
- * 1. Automatically warms up APIs when the app loads
- * 2. Provides background warmup functionality
+ * This provider:
+ * 1. Automatically warms up APIs when the component mounts
+ * 2. Periodically checks if APIs need warming up
  * 3. Ensures APIs are ready before users start chatting
  */
 export function ApiWarmupProvider({ children }: ApiWarmupProviderProps) {
@@ -30,20 +30,6 @@ export function ApiWarmupProvider({ children }: ApiWarmupProviderProps) {
 
     return () => clearTimeout(timer);
   }, []); // Removed warmupApisBackground dependency to prevent re-runs
-
-  // Periodic warmup check - temporarily disabled to prevent loops
-  /*
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only warm up if it's been more than 5 minutes since last warmup
-      if (minutesSinceWarmup === null || minutesSinceWarmup >= 5) {
-        warmupApisBackground();
-      }
-    }, 10 * 60 * 1000); // 10 minutes
-
-    return () => clearInterval(interval);
-  }, [warmupApisBackground, minutesSinceWarmup]);
-  */
 
   // Development logging
   useEffect(() => {
