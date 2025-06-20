@@ -1,4 +1,4 @@
-export const runtime = 'edge';
+export const runtime = 'nodejs'; // Use Node.js runtime for better proxy support
 
 interface KernelMemorySearchResult {
   id: string;
@@ -37,11 +37,23 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { 
       query,
-      stream = true,
       index = "polaris-and-zodiac-days",
       filters = [],
       minRelevance = 0.0
     } = body;
+
+    // Validate required parameters
+    if (!query) {
+      return new Response(
+        JSON.stringify({ 
+          error: "Query parameter is required" 
+        }),
+        { 
+          status: 400, 
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
 
     // Get the Kernel Memory API key from environment
     const KERNEL_API_KEY = process.env.KERNEL_API_KEY;
@@ -69,17 +81,19 @@ export async function POST(req: Request) {
       stream: false // Always disable streaming to avoid SSE parsing issues
     };
 
-    console.log("Sending request to Kernel Memory:", JSON.stringify(payload, null, 2));
+    console.log("Proxying request to Kernel Memory:", JSON.stringify(payload, null, 2));
 
-    // Call the Kernel Memory API
+    // Proxy the request to Kernel Memory with proper error handling
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 second timeout for proxy
     
     const response = await fetch(`${KERNEL_BASE_URL}/ask`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": KERNEL_API_KEY,
+        "User-Agent": "NextJS-Kernel-Memory-Proxy/1.0",
+        "Accept": "application/json"
       },
       body: JSON.stringify(payload),
       signal: controller.signal
@@ -87,11 +101,28 @@ export async function POST(req: Request) {
     
     clearTimeout(timeoutId);
 
+    console.log(`Kernel Memory proxy response: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`Kernel Memory API error: ${response.status} ${response.statusText}`);
       console.error('Error details:', errorText);
       
+      // Handle specific error cases
+      if (response.status === 403) {
+        return new Response(
+          JSON.stringify({
+            error: "Access denied to Kernel Memory service",
+            details: "The proxy server was denied access. This may be due to IP restrictions or invalid credentials.",
+            status: response.status
+          }),
+          {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+
       // Try to parse error details
       let errorDetails = errorText;
       try {
@@ -104,7 +135,8 @@ export async function POST(req: Request) {
       return new Response(
         JSON.stringify({
           error: `Kernel Memory API error: ${response.status} ${response.statusText}`,
-          details: errorDetails
+          details: errorDetails,
+          status: response.status
         }),
         {
           status: response.status,
@@ -117,7 +149,7 @@ export async function POST(req: Request) {
     try {
       const responseData = await response.json() as KernelMemoryResponse;
       
-      console.log(`[Kernel Memory] Processing response with ${responseData.relevantSources?.length || 0} sources`);
+      console.log(`[Kernel Memory Proxy] Processing response with ${responseData.relevantSources?.length || 0} sources`);
       
       // Extract the main content (keep it simple like chat-stream API)
       let content = responseData.text || "";
@@ -151,12 +183,16 @@ export async function POST(req: Request) {
         hasResults: !responseData.noResult
       };
 
-      console.log(`[Kernel Memory] Clean response prepared: ${JSON.stringify(cleanResponse).length} characters`);
+      console.log(`[Kernel Memory Proxy] Clean response prepared: ${JSON.stringify(cleanResponse).length} characters`);
 
       return new Response(
         JSON.stringify(cleanResponse),
         {
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Proxy-Status': 'success',
+            'X-Source-Count': supportingContent.length.toString()
+          }
         }
       );
     } catch (error) {
@@ -174,10 +210,25 @@ export async function POST(req: Request) {
     }
 
   } catch (error) {
-    console.error('Kernel Memory API route error:', error);
+    console.error('Kernel Memory proxy error:', error);
+    
+    // Handle timeout errors specifically
+    if (error instanceof Error && error.name === 'AbortError') {
+      return new Response(
+        JSON.stringify({
+          error: 'Request timeout',
+          details: 'The request to Kernel Memory service timed out. Please try again.'
+        }),
+        {
+          status: 504,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
     return new Response(
       JSON.stringify({
-        error: 'Internal server error',
+        error: 'Internal proxy server error',
         details: error instanceof Error ? error.message : 'Unknown error'
       }),
       {
