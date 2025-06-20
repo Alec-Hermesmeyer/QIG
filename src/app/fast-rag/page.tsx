@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { History, Settings, Info, SearchIcon, FileText, Shield, MessagesSquare } from "lucide-react";
+import { History, Settings, Info, SearchIcon, FileText, Shield, MessagesSquare, Zap, Database } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImprovedChatHandle, ImprovedChat } from "@/components/chat";
 import FastRAG from "@/components/FastRag";
 import { RAGProvider } from '@/components/RagProvider';
@@ -50,6 +51,12 @@ export default function FastRAGPage() {
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
   const [temperature, setTemperature] = useState(0.7);
   const [streamEnabled, setStreamEnabled] = useState(true);
+  const [kernelMemoryStatus, setKernelMemoryStatus] = useState<'unknown' | 'connected' | 'error'>('unknown');
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [selectedBackend, setSelectedBackend] = useState<'organization' | 'kernel-memory'>('organization');
+  const [availableIndexes, setAvailableIndexes] = useState<Array<{name: string}>>([]);
+  const [selectedIndex, setSelectedIndex] = useState<string>('polaris-and-zodiac-days');
+  const [isLoadingIndexes, setIsLoadingIndexes] = useState(false);
   
   const chatRef = useRef<ImprovedChatHandle>(null);
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
@@ -75,6 +82,75 @@ export default function FastRAGPage() {
       console.log(`[FastRAG] ${message}`, data);
     }
   };
+
+  // Fetch available indexes
+  const fetchAvailableIndexes = useCallback(async () => {
+    setIsLoadingIndexes(true);
+    try {
+      const response = await fetch('/api/kernel-memory?action=indexes', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'success' && data.indexes) {
+          setAvailableIndexes(data.indexes);
+          debugLog('Available indexes fetched', data.indexes);
+          
+          // If current selected index is not in the list, select the first available
+          if (data.indexes.length > 0 && !data.indexes.some((idx: {name: string}) => idx.name === selectedIndex)) {
+            setSelectedIndex(data.indexes[0].name);
+          }
+        } else {
+          debugLog('Failed to fetch indexes', data);
+        }
+      } else {
+        debugLog('Failed to fetch indexes HTTP error', response.status);
+      }
+    } catch (error) {
+      debugLog('Error fetching indexes', error);
+    } finally {
+      setIsLoadingIndexes(false);
+    }
+  }, [selectedIndex]);
+
+  // Test Kernel Memory connection
+  const testKernelMemoryConnection = useCallback(async () => {
+    setIsTestingConnection(true);
+    try {
+      const response = await fetch('/api/kernel-memory', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'connected') {
+          setKernelMemoryStatus('connected');
+          debugLog('Kernel Memory connection successful', data);
+          // Fetch indexes when connection is successful
+          await fetchAvailableIndexes();
+        } else {
+          setKernelMemoryStatus('error');
+          debugLog('Kernel Memory connection failed', data);
+        }
+      } else {
+        setKernelMemoryStatus('error');
+        debugLog('Kernel Memory HTTP error', response.status);
+      }
+    } catch (error) {
+      setKernelMemoryStatus('error');
+      debugLog('Kernel Memory connection error', error);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  }, [fetchAvailableIndexes]);
+
+  // Test connection on component mount
+  useEffect(() => {
+    testKernelMemoryConnection();
+  }, [testKernelMemoryConnection]);
 
   // Refs to track accumulated data
   const currentRawResponseRef = useRef<string>("");
@@ -107,129 +183,57 @@ export default function FastRAGPage() {
     currentRawResponseRef.current = "";
   }, [addMessage]);
 
-  // Handle assistant message
+  // Handle assistant message from chat
   const handleAssistantMessage = useCallback(async (content: string, metadata?: any) => {
-    debugLog('Message received', { 
-      contentPreview: content.substring(0, 50) + '...', 
-      isPartial: metadata?.isPartial,
-      hasRaw: metadata?.raw !== undefined
+    debugLog('Assistant message received', { 
+      contentLength: content.length, 
+      hasMetadata: !!metadata,
+      backend: metadata?.backend,
+      sourceCount: metadata?.sourceCount || metadata?.supportingContent?.length || 0
     });
     
-    // Accumulate raw response if provided
-    if (metadata?.raw) {
-      const rawData = metadata.raw;
-      currentRawResponseRef.current += rawData;
-      debugLog('Accumulated raw data', { length: currentRawResponseRef.current.length });
-    } else {
-      // If no raw data, treat content as raw
-      currentRawResponseRef.current += content;
-    }
+    const timestamp = Date.now();
+    const newMessage = { 
+      role: 'assistant', 
+      content, 
+      metadata,
+      timestamp 
+    };
     
-    const isStreamingChunk = metadata?.isPartial === true;
-    
-    if (isStreamingChunk) {
-      // Accumulate content for streaming
-      setCurrentStreamingContent(prevContent => prevContent + content);
+    // Enhanced logging for Kernel Memory responses
+    if (metadata?.backend === 'kernel-memory') {
+      debugLog('Kernel Memory response details', {
+        hasResults: metadata.hasResults,
+        sourceCount: metadata.sourceCount,
+        citationCount: metadata.citations?.length || 0,
+        hasThoughtProcess: !!metadata.thoughtProcess,
+        streamingComplete: metadata.streamingComplete
+      });
       
-      if (streamingIndexRef.current === null) {
-        // First chunk - create a new message
-        setChatHistory(prev => {
-          const newMessage = { 
-            role: 'assistant', 
-            content, 
-            metadata: {
-              isStreaming: true,
-              supportingContent: [],
-              thoughtProcess: ''
-            },
-            raw: currentRawResponseRef.current
-          };
-          const newHistory = [...prev, newMessage];
-          setStreamingIndex(newHistory.length - 1);
-          return newHistory;
-        });
-      } else {
-        // Update existing message with accumulated content
-        setChatHistory(prev => {
-          const newHistory = [...prev];
-          if (newHistory[streamingIndexRef.current!]) {
-            newHistory[streamingIndexRef.current!] = {
-              ...newHistory[streamingIndexRef.current!],
-              content: currentStreamingContentRef.current + content,
-              metadata: {
-                ...newHistory[streamingIndexRef.current!].metadata,
-                isStreaming: true
-              },
-              raw: currentRawResponseRef.current 
-            };
-          }
-          return newHistory;
-        });
-      }
-    } else {
-      // Final message with complete content
-      const finalContent = currentStreamingContentRef.current + content;
-      
-      // Extract supporting content from metadata if available
-      const supportingContent = extractSupportingContent(metadata);
-      
-      // Extract thought process from metadata if available
-      const thoughtProcess = extractThoughtProcess(metadata);
-      
-      if (streamingIndexRef.current !== null) {
-        // Update the streaming message with final content and metadata
-        setChatHistory(prev => {
-          const newHistory = [...prev];
-          if (newHistory[streamingIndexRef.current!]) {
-            newHistory[streamingIndexRef.current!] = {
-              role: 'assistant',
-              content: finalContent,
-              metadata: {
-                isStreaming: false,
-                supportingContent,
-                thoughtProcess
-              },
-              raw: currentRawResponseRef.current
-            };
-          }
-          return newHistory;
-        });
-        
-        // Save final message to IndexedDB
-        await addMessage({
-          role: 'assistant',
-          content: finalContent,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Reset streaming state
-        setTimeout(() => {
-          setStreamingIndex(null);
-          setCurrentStreamingContent('');
-          isStreamingTransitioning.current = false;
-        }, 100);
-      } else {
-        // Non-streaming message - add directly
-        setChatHistory(prev => [...prev, {
-          role: 'assistant',
-          content,
-          metadata: {
-            isStreaming: false,
-            supportingContent,
-            thoughtProcess
-          },
-          raw: metadata?.raw || content
-        }]);
-        
-        // Save to IndexedDB
-        await addMessage({
-          role: 'assistant',
-          content,
-          timestamp: new Date().toISOString()
-        });
+      // Log supporting content structure
+      if (metadata.supportingContent?.length > 0) {
+        debugLog('Supporting content structure', 
+          metadata.supportingContent.map((item: any, idx: number) => ({
+            index: idx,
+            title: item.title?.substring(0, 50),
+            contentLength: item.content?.length || 0,
+            score: item.score,
+            hasMetadata: !!item.metadata
+          }))
+        );
       }
     }
-  }, [addMessage]);
+    
+    setChatHistory(prev => [...prev, newMessage]);
+    
+    // Save to IndexedDB
+    await addMessage({
+      role: 'assistant',
+      content,
+      timestamp: new Date().toISOString(),
+      metadata
+    });
+  }, [addMessage, debugLog]);
 
   // Extract supporting content from various locations in metadata
   const extractSupportingContent = (metadata?: any): any[] => {
@@ -389,9 +393,33 @@ export default function FastRAGPage() {
                       <Badge variant="outline" className="ml-3 text-xs font-normal bg-blue-50">
                         v2.0
                       </Badge>
+                      <Badge variant="outline" className="ml-2 text-xs font-normal bg-green-50 text-green-700">
+                        Kernel Memory
+                      </Badge>
                     </h1>
                   </div>
-                  <div className="flex items-center space-x-3">
+                                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-2 h-2 rounded-full ${
+                          kernelMemoryStatus === 'connected' ? 'bg-green-500' :
+                          kernelMemoryStatus === 'error' ? 'bg-red-500' : 'bg-yellow-500'
+                        }`}></div>
+                        <span className="text-sm text-gray-600">
+                          Kernel Memory {
+                            kernelMemoryStatus === 'connected' ? 'Connected' :
+                            kernelMemoryStatus === 'error' ? 'Error' : 'Testing...'
+                          }
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={testKernelMemoryConnection}
+                          disabled={isTestingConnection}
+                          className="text-gray-500 hover:text-gray-700 p-1"
+                        >
+                          <Zap size={14} className={isTestingConnection ? 'animate-spin' : ''} />
+                        </Button>
+                      </div>
                     <Button 
                       variant="outline" 
                       size="sm" 
@@ -424,6 +452,95 @@ export default function FastRAGPage() {
                     <OrganizationSwitcher />
                   </div>
                 )}
+
+                {/* Backend Selector for QIG employees */}
+                {canSwitchOrganizations && (
+                  <div className="mb-6">
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <Database className="h-5 w-5 text-gray-600" />
+                          <div>
+                            <h3 className="text-sm font-medium text-gray-900">Backend Selection</h3>
+                            <p className="text-xs text-gray-500">Choose between organizational backend or Kernel Memory for testing</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <Select value={selectedBackend} onValueChange={(value: 'organization' | 'kernel-memory') => setSelectedBackend(value)}>
+                            <SelectTrigger className="w-48">
+                              <SelectValue placeholder="Select backend" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="organization">
+                                <div className="flex items-center space-x-2">
+                                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                  <span>Organization Backend</span>
+                                </div>
+                              </SelectItem>
+                              <SelectItem value="kernel-memory">
+                                <div className="flex items-center space-x-2">
+                                  <div className={`w-2 h-2 rounded-full ${
+                                    kernelMemoryStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'
+                                  }`}></div>
+                                  <span>Kernel Memory (Test)</span>
+                                </div>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {selectedBackend === 'kernel-memory' && (
+                            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-300">
+                              Testing Mode
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Index Selector - shown when Kernel Memory is selected */}
+                      {selectedBackend === 'kernel-memory' && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-sm font-medium text-gray-700">Knowledge Index:</span>
+                              <span className="text-xs text-gray-500">
+                                {availableIndexes.length} available
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Select 
+                                value={selectedIndex} 
+                                onValueChange={setSelectedIndex}
+                                disabled={isLoadingIndexes || availableIndexes.length === 0}
+                              >
+                                <SelectTrigger className="w-64">
+                                  <SelectValue placeholder={isLoadingIndexes ? "Loading..." : "Select index"} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableIndexes.map((index) => (
+                                    <SelectItem key={index.name} value={index.name}>
+                                      <div className="flex items-center space-x-2">
+                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                        <span>{index.name}</span>
+                                      </div>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={fetchAvailableIndexes}
+                                disabled={isLoadingIndexes}
+                                className="text-gray-500 hover:text-gray-700 p-1"
+                              >
+                                <Zap size={14} className={isLoadingIndexes ? 'animate-spin' : ''} />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 
                 <div className="shadow-sm overflow-hidden">
                   <div className="p-6">
@@ -442,7 +559,7 @@ export default function FastRAGPage() {
                               Document Intelligence Platform
                             </h2>
                             <p className="text-gray-600 max-w-2xl mx-auto">
-                              Get precise answers and insights from your documents with our advanced retrieval-augmented generation system.
+                              Get precise answers and insights from your documents with our advanced Kernel Memory RAG system. Now powered by Azure's enterprise-grade document intelligence.
                             </p>
                           </motion.div>
 
@@ -521,6 +638,8 @@ export default function FastRAGPage() {
                         streamResponses={streamEnabled}
                         isRAGEnabled={true}
                         selectedBucketId={selectedBucketId}
+                        selectedBackend={selectedBackend}
+                        selectedIndex={selectedIndex}
                       />
                     </div>
                   </div>

@@ -47,6 +47,8 @@ interface ChatProps {
   ragBucketId?: number | null;
   isRAGEnabled?: boolean;
   selectedBucketId?: string | null;
+  selectedBackend?: 'organization' | 'kernel-memory';
+  selectedIndex?: string;
   // Configuration props
   temperature?: number;
   seed?: string;
@@ -121,6 +123,8 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     ragBucketId = null,
     isRAGEnabled,
     selectedBucketId,
+    selectedBackend = 'organization',
+    selectedIndex = 'polaris-and-zodiac-days',
     searchConfig
   } = props;
 
@@ -1049,18 +1053,27 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
         content: userMessage
       });
 
-      // Determine which RAG system to use
+      // Determine which backend system to use
       let endpoint = '/api/chat-stream';
       let useGroundX = false;
+      let useKernelMemory = false;
       
-      // Check if RAG should be used
-      if (props.isRAGEnabled && props.selectedBucketId) {
+      // Check if Kernel Memory backend is selected (for testing)
+      if (selectedBackend === 'kernel-memory') {
+        console.log('[ImprovedChat] Using Kernel Memory backend for testing');
+        endpoint = '/api/kernel-memory';
+        useKernelMemory = true;
+      }
+      // Check if GroundX RAG should be used (when specific bucket is selected)
+      else if (props.isRAGEnabled && props.selectedBucketId) {
         console.log('[ImprovedChat] Using GroundX RAG with bucket:', props.selectedBucketId);
         endpoint = '/api/groundx/rag';
         useGroundX = true;
-      } else if (useRAG || ragContext.isRAGEnabled) {
-        console.log('[ImprovedChat] Using FastRAG');
-        // Keep using the default /api/chat-stream endpoint for FastRAG
+      }
+      // Default to organization backend via chat-stream
+      else {
+        console.log('[ImprovedChat] Using organization backend via chat-stream');
+        endpoint = '/api/chat-stream';
       }
       
       console.log('[ImprovedChat] Using endpoint:', endpoint);
@@ -1074,6 +1087,12 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
           temperature: config.temperature || 0,
           stream: false // GroundX RAG doesn't support streaming yet
         }
+      } : useKernelMemory ? {
+        query: userMessage,
+        stream: config.streamResponse || true,
+        index: selectedIndex,
+        filters: [],
+        minRelevance: config.searchConfig?.minSearchScore || 0.0
       } : {
         messages: formattedMessages,
         context: {
@@ -1101,6 +1120,7 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
 
       console.log('[ImprovedChat] Request details:', {
         endpoint,
+        selectedBackend,
         ragEnabled: props.isRAGEnabled,
         selectedBucket: props.selectedBucketId,
         messageCount: formattedMessages.length,
@@ -1123,6 +1143,9 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
       if (useGroundX) {
         // GroundX RAG always uses non-streaming
         await handleNonStreamingRAGResponse(response);
+      } else if (useKernelMemory) {
+        // Kernel Memory always uses non-streaming (we disabled streaming to avoid SSE parsing issues)
+        await handleKernelMemoryResponse(response);
       } else if (config.streamResponse) {
         // FastRAG with streaming
         await handleStreamingResponse(response);
@@ -1232,6 +1255,166 @@ export const ImprovedChat = forwardRef<ImprovedChatHandle, ChatProps>(function I
     } catch (error) {
       console.error('[ImprovedChat] Error handling GroundX response:', error);
       setAccumulatedContent("Error processing GroundX RAG response. Please try again.");
+    }
+  };
+
+  // Handler for Kernel Memory non-streaming responses
+  const handleKernelMemoryResponse = async (response: Response) => {
+    try {
+      const data = await response.json();
+      console.log('[ImprovedChat] Kernel Memory response size:', JSON.stringify(data).length, 'characters');
+      
+      let content = '';
+      let supportingContent = [];
+      let thoughtProcess = '';
+
+      if (data && data.content) {
+        content = data.content;
+        // Direct properties (no nested metadata)
+        supportingContent = data.supportingContent || [];
+        thoughtProcess = data.thoughtProcess || '';
+        
+        console.log('[ImprovedChat] Processed:', content.substring(0, 100) + '...', 'with', supportingContent.length, 'sources');
+      } else if (data.error) {
+        console.log('[ImprovedChat] Error:', data.error);
+        content = data.error || "Error processing your request with Kernel Memory.";
+      } else {
+        console.log('[ImprovedChat] No content found');
+        content = "No content received from the Kernel Memory API.";
+      }
+
+      // Update UI with content
+      setAccumulatedContent(content);
+
+      // Add response to history (simple format)
+      const messageWithMetadata = {
+        role: 'assistant', 
+        content: content,
+        supportingContent: supportingContent,
+        thoughtProcess: thoughtProcess
+      };
+      
+      setAllMessages(prev => [...prev, messageWithMetadata]);
+
+      // Notify parent component (simple format)
+      if (typeof onAssistantMessage === 'function') {
+        if (onAssistantMessage.length > 1) {
+          const metadata = { 
+            supportingContent,
+            thoughtProcess,
+            sourceCount: supportingContent.length,
+            hasResults: data.hasResults || false,
+            backend: 'kernel-memory'
+          };
+          (onAssistantMessage as (content: string, metadata?: any) => void)(content, metadata);
+        } else {
+          onAssistantMessage(content);
+        }
+      }
+      
+      // Generate TTS for the response
+      if (content) {
+        generateTTS(content);
+      }
+    } catch (error) {
+      console.error('[ImprovedChat] Error handling Kernel Memory response:', error);
+      setAccumulatedContent("Error processing Kernel Memory response. Please try again.");
+    }
+  };
+
+  // Handler for Kernel Memory streaming responses
+  const handleKernelMemoryStreamingResponse = async (response: Response) => {
+    if (!response.body) {
+      console.error('[ImprovedChat] No response body available for Kernel Memory streaming');
+      throw new Error('No response body available');
+    }
+
+    console.log('[ImprovedChat] Starting Kernel Memory streaming...');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullContent = '';
+    let supportingContent: any[] = [];
+    let thoughtProcess = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          console.log('[ImprovedChat] Kernel Memory stream complete');
+          break;
+        }
+
+        if (waitingForFirstChunk) {
+          setWaitingForFirstChunk(false);
+        }
+
+        const text = decoder.decode(value, { stream: true });
+        const lines = text.split('\n').filter(line => line.trim());
+        
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            
+            // Handle content chunks
+            if (data.content) {
+              fullContent += data.content;
+              setAccumulatedContent(fullContent);
+            }
+            
+            // Handle final metadata (direct properties, no nesting)
+            if (data.isStreaming === false) {
+              supportingContent = data.supportingContent || [];
+              thoughtProcess = data.thoughtProcess || '';
+              console.log('[ImprovedChat] Final metadata received with', supportingContent.length, 'sources');
+            }
+            
+          } catch (e) {
+            // Non-JSON content, add directly
+            if (line.trim()) {
+              fullContent += line;
+              setAccumulatedContent(fullContent);
+            }
+          }
+        }
+      }
+
+      console.log('[ImprovedChat] Stream complete, content length:', fullContent.length);
+      
+      // Add final message to history (simple format)
+      const newMessage = {
+        role: 'assistant', 
+        content: fullContent,
+        supportingContent: supportingContent,
+        thoughtProcess: thoughtProcess
+      };
+      
+      setAllMessages(prev => [...prev, newMessage]);
+
+      // Notify parent component (simple format)
+      if (typeof onAssistantMessage === 'function') {
+        if (onAssistantMessage.length > 1) {
+          const metadata = { 
+            supportingContent,
+            thoughtProcess,
+            sourceCount: supportingContent.length,
+            hasResults: supportingContent.length > 0,
+            backend: 'kernel-memory',
+            streamingComplete: true
+          };
+          (onAssistantMessage as (content: string, metadata?: any) => void)(fullContent, metadata);
+        } else {
+          onAssistantMessage(fullContent);
+        }
+      }
+
+      if (fullContent) {
+        generateTTS(fullContent);
+      }
+
+    } catch (error) {
+      console.error('[ImprovedChat] Error in streaming:', error);
+      setAccumulatedContent("Error processing Kernel Memory streaming response. Please try again.");
     }
   };
   
